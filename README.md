@@ -19,6 +19,7 @@ Important security status:
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; default desktop and all Android runtime paths remain offline/non-production.
 - Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
+- Android can detect generic NIP-55 external signer apps through the `nostrsigner:` intent scheme and surfaces signer availability on the login screen. Full Android signer login/sign/encrypt/decrypt flow is still scaffolded only and is not wired into runtime sync.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -69,6 +70,17 @@ Relay changes are planned through a migration use case that identifies added and
 Current direct `nsec` use is session-only. Other Note does not persist `nsec` values or private keys, and saved-key mode is disabled until platform secure storage or signer delegation is implemented and tested.
 
 The key-management policy is documented in [docs/key-management.md](docs/key-management.md). Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side.
+
+## Android External Signer Status
+
+Android builds include a NIP-55 discovery scaffold:
+
+- The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
+- Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
+- The login screen shows whether an Android signer is available and keeps the direct `nsec` field as a session-only fallback.
+- Pressing "Use Android signer" does not log in yet. It reports that external signer support was detected and that the login flow is not implemented.
+- Other Note does not request signing, NIP-44 encryption/decryption, or public-key import through Android signer in this pass.
+- No `nsec` or private key is stored, logged, or sent to a relay/server as part of signer discovery.
 
 ## Build And Run
 
@@ -146,7 +158,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-OS keyring persistence, Amber/NIP-55, NIP-46, profile rendering, and inline media rendering are intentionally future work.
+OS keyring persistence, full Amber/NIP-55 signing/encryption integration, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
@@ -229,7 +241,7 @@ Platform code:
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Keep desktop developer relay runtime gated until storage and failure handling are reviewed for normal runtime use.
-- Implement Android encrypted key storage and decide on a Linux desktop secret-service integration.
+- Implement Android NIP-55 public-key request/sign/encrypt/decrypt flow, Android encrypted key storage, and Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
 - Add inline image/video loading with size limits and timeouts.

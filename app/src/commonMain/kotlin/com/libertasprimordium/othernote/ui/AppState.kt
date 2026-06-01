@@ -75,6 +75,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val diagnosticMessage: StateFlow<String> = _diagnosticMessage
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
+    val externalSignerAvailable: Boolean = services.externalSignerProvider.isAvailable
+    val externalSignerDisplayName: String? = services.externalSignerProvider.displayName
+    val externalSignerStatus: String = if (services.externalSignerProvider.isAvailable) {
+        "External signer detected: ${services.externalSignerProvider.displayName ?: "NIP-55 signer"}"
+    } else {
+        services.externalSignerProvider.unavailableReason ?: "External signer unavailable"
+    }
 
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {
@@ -112,6 +119,14 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = decoded.reason
                 false
             }
+        }
+    }
+
+    fun externalSignerLoginNotImplemented() {
+        _message.value = if (externalSignerAvailable) {
+            "External signer support detected; login flow not implemented yet."
+        } else {
+            "No Android signer found. Install a NIP-55 signer such as Amber, or paste an nsec for this session."
         }
     }
 

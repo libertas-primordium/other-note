@@ -4,6 +4,11 @@ interface NostrSignerProvider {
     val mode: SignerMode
     val isAvailable: Boolean
     val unavailableReason: String?
+    val displayName: String? get() = null
+    val canGetPublicKey: Boolean get() = false
+    val canSignEvent: Boolean get() = false
+    val canNip44EncryptDecrypt: Boolean get() = false
+    val safeDiagnostics: List<String> get() = emptyList()
 }
 
 class UnavailableExternalSignerProvider(

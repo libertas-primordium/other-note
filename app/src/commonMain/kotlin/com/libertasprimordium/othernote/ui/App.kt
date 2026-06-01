@@ -88,10 +88,18 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         Text("Other Note", color = OtherNoteText, fontSize = 34.sp, fontWeight = FontWeight.Bold)
         Text("Private Nostr-backed notes", color = OtherNoteMuted)
         Spacer(Modifier.height(24.dp))
+        Text(appState.externalSignerStatus, color = OtherNoteMuted)
+        TextButton(
+            onClick = { appState.externalSignerLoginNotImplemented() },
+            enabled = appState.externalSignerAvailable,
+        ) {
+            Text(if (appState.externalSignerAvailable) "Use Android signer" else "Install a NIP-55 signer such as Amber")
+        }
+        Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = nsec,
             onValueChange = { nsec = it },
-            label = { Text("Paste nsec") },
+            label = { Text("Paste nsec for this session") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
