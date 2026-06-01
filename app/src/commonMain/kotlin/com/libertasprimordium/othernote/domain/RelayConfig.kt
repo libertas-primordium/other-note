@@ -17,4 +17,6 @@ val DefaultRelays = listOf(
     RelayConfig("wss://relay.damus.io"),
     RelayConfig("wss://relay.primal.net"),
     RelayConfig("wss://relay.nostr.net"),
+    RelayConfig("wss://nos.lol"),
+    RelayConfig("wss://relay.ditto.pub"),
 )

@@ -8,6 +8,7 @@ import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
+import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
@@ -27,6 +28,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AppModeTests {
+    @Test
+    fun sharedDefaultRelaysUseMaintainedDevSet() {
+        val urls = DefaultRelays.map { it.url }
+
+        assertTrue("wss://nos.lol" in urls)
+        assertTrue("wss://relay.ditto.pub" in urls)
+        assertFalse(urls.any { it.contains("relay.nostr.band") })
+    }
+
     @Test
     fun localOnlyModeAllowsNoteEditingWithoutSession() = runBlocking {
         val state = AppState()
@@ -88,7 +98,7 @@ class AppModeTests {
 
         assertTrue(state.externalSignerAvailable)
         assertEquals("External signer detected: Test NIP-55 Signer", state.externalSignerStatus)
-        assertTrue(state.message.value.contains("note sync through signer is not implemented yet"))
+        assertTrue(state.message.value.contains("relay sync can run with signer prompts"))
         assertEquals(AppMode.Authenticated, state.mode.value)
         val session = state.session.value ?: error("Missing signer session")
         assertEquals(SessionAuthMethod.ExternalSigner, session.authMethod)
@@ -97,6 +107,29 @@ class AppModeTests {
         assertEquals(pubkeyHex, session.publicKeyHex)
         assertEquals(npub, session.npub)
         assertEquals("com.example.signer", session.signerPackage)
+    }
+
+    @Test
+    fun signerLoginStatusDoesNotExposeDevelopmentTestActions() {
+        val pubkeyHex = "02".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x02 }) ?: error("npub encode failed")
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+
+        assertFalse(state.message.value.contains("Test signer"))
+        assertFalse(state.message.value.contains("test signer"))
+        assertTrue(state.message.value.contains("relay sync can run"))
     }
 
     @Test
@@ -323,11 +356,11 @@ private class TestNip44Operator(
 
     override fun decryptFromSelf(
         ciphertext: String,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         currentUserPubkey: String,
         signerPackage: String?,
     ): SignerNip44OperationResult =
-        SignerNip44OperationResult.Decrypted(expectedPlaintext, signerPackage)
+        SignerNip44OperationResult.Decrypted(expectedPlaintext.orEmpty(), signerPackage)
 }
 
 private object AvailableTestSignerProvider : NostrSignerProvider {

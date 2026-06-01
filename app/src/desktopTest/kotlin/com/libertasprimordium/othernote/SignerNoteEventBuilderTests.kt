@@ -212,11 +212,11 @@ class SignerNoteEventBuilderTests {
 
         override fun decryptFromSelf(
             ciphertext: String,
-            expectedPlaintext: String,
+            expectedPlaintext: String?,
             currentUserPubkey: String,
             signerPackage: String?,
         ): SignerNip44OperationResult =
-            SignerNip44OperationResult.Decrypted(decryptOverride ?: expectedPlaintext, signerPackage)
+            SignerNip44OperationResult.Decrypted(decryptOverride ?: expectedPlaintext.orEmpty(), signerPackage)
     }
 
     private inner class SigningEventSigner(

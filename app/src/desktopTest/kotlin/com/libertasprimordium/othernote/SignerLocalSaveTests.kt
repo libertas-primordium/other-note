@@ -3,10 +3,12 @@ package com.libertasprimordium.othernote
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.domain.NotePayload
 import com.libertasprimordium.othernote.domain.RelayStatus
+import com.libertasprimordium.othernote.nostr.FanoutNostrClient
+import com.libertasprimordium.othernote.nostr.IncrementalNostrClient
 import com.libertasprimordium.othernote.nostr.NostrClient
-import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProfileMetadata
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
+import com.libertasprimordium.othernote.nostr.PublishBestEffortHandle
 import com.libertasprimordium.othernote.nostr.RelayFetchResult
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
@@ -22,7 +24,12 @@ import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -36,7 +43,8 @@ class SignerLocalSaveTests {
     fun externalSignerSaveCreatesVisibleLocalNoteAndEncryptedPendingEvent() = runBlocking {
         val fixture = fixture()
         val nip44 = LocalSaveNip44Operator()
-        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
+        val client = AcceptingNostrClient()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey), client = client)
         val body = "normal editor note"
 
         state.requestExternalSignerPublicKey()
@@ -44,16 +52,60 @@ class SignerLocalSaveTests {
 
         assertTrue(saved)
         assertEquals(body, state.notes.notes.value.single().bodyMarkdown)
-        assertEquals("Saved locally", state.message.value.substringBefore(" ("))
-        assertTrue(state.message.value.contains("Not synced to relays"))
+        assertTrue(state.message.value.startsWith("Saved to"))
+        assertTrue(state.message.value.contains("relays"))
         val pendingEvent = state.notes.pendingEvents.value.single()
         assertEquals(30078, pendingEvent.kind)
         assertTrue(pendingEvent.tags.any { it == listOf("t", "other-note") })
         assertTrue(pendingEvent.tags.any { it.firstOrNull() == "d" && it.getOrNull(1)?.startsWith("other-note:note:") == true })
         assertEquals(nip44.latestCiphertext, pendingEvent.content)
         assertTrue(crypto.validate(pendingEvent).getOrThrow())
+        assertEquals(pendingEvent, client.published.single())
         assertFalse(state.message.value.contains(body))
         assertFalse(state.message.value.contains(nip44.latestCiphertext))
+    }
+
+    @Test
+    fun externalSignerSaveDoesNotCreateNoteWhenNoRelayAccepts() = runBlocking {
+        val fixture = fixture()
+        val state = state(
+            fixture,
+            signer = TestEventSigner(fixture.privateKey),
+            client = AcceptingNostrClient(
+                publishStatuses = listOf(RelayStatus("wss://relay.example.com", writable = false, message = "rejected")),
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+        val saved = state.save(existing = null, markdown = "not accepted")
+
+        assertFalse(saved)
+        assertTrue(state.notes.notes.value.isEmpty())
+        assertTrue(state.message.value.contains("no relay accepted"))
+    }
+
+    @Test
+    fun externalSignerSaveUsesFanoutAndKeepsLateRelayStatuses() = runBlocking {
+        val fixture = fixture()
+        val client = AcceptingNostrClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = true, message = "accepted late"),
+            ),
+            autoCompletePublish = false,
+        )
+        val state = state(fixture, signer = TestEventSigner(fixture.privateKey), client = client)
+
+        state.requestExternalSignerPublicKey()
+        val saved = state.save(existing = null, markdown = "fanout note")
+
+        assertTrue(saved)
+        assertEquals("fanout note", state.notes.notes.value.single().bodyMarkdown)
+        assertEquals(1, client.publishBestEffortCalls)
+        assertTrue(state.message.value.startsWith("Saved to 1/5 relays"))
+        client.completePendingPublish()
+        assertTrue(client.statusUpdates.flatten().none { it.message.contains("skipped") })
     }
 
     @Test
@@ -123,7 +175,8 @@ class SignerLocalSaveTests {
     fun externalSignerDeleteCreatesLocalTombstoneAndHidesNote() = runBlocking {
         val fixture = fixture()
         val nip44 = LocalSaveNip44Operator()
-        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
+        val client = AcceptingNostrClient()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey), client = client)
         val body = "keep this signer note"
 
         state.requestExternalSignerPublicKey()
@@ -135,19 +188,93 @@ class SignerLocalSaveTests {
 
         assertTrue(deleted)
         assertTrue(state.notes.notes.value.isEmpty())
-        assertTrue(state.message.value.startsWith("Deleted locally"))
-        assertTrue(state.message.value.contains("Not synced to relays"))
+        assertTrue(state.message.value.startsWith("Deleted locally and sent to"))
+        assertTrue(state.message.value.contains("relays"))
         val tombstoneEvent = state.notes.pendingEvents.value.single { it.id != savedEvent.id }
         assertEquals(30078, tombstoneEvent.kind)
         assertEquals(savedEvent.tags.first { it.firstOrNull() == "d" }, tombstoneEvent.tags.first { it.firstOrNull() == "d" })
         assertTrue(tombstoneEvent.tags.any { it == listOf("t", "other-note") })
         assertTrue(crypto.validate(tombstoneEvent).getOrThrow())
+        assertEquals(tombstoneEvent, client.published.last())
         val tombstonePayload = JsonNotePayloadCodec.decode(nip44.lastPlaintext ?: error("missing tombstone plaintext")).getOrThrow()
         assertEquals(note.id, tombstonePayload.noteId)
         assertEquals("", tombstonePayload.bodyMarkdown)
         assertTrue(tombstonePayload.deleted)
         assertFalse(state.message.value.contains(body))
         assertFalse(state.message.value.contains("nsec1"))
+    }
+
+    @Test
+    fun externalSignerDeleteDoesNotHideNoteWhenNoRelayAccepts() = runBlocking {
+        val fixture = fixture()
+        val client = AcceptingNostrClient()
+        val state = state(fixture, signer = TestEventSigner(fixture.privateKey), client = client)
+        state.requestExternalSignerPublicKey()
+        assertTrue(state.save(existing = null, markdown = "keep"))
+        val note = state.notes.notes.value.single()
+        val rejected = listOf(RelayStatus("wss://relay.example.com", writable = false, message = "rejected"))
+        client.publishStatuses = rejected
+        client.firstAcceptedStatuses = rejected
+        client.completeStatuses = rejected
+
+        val deleted = state.delete(note)
+
+        assertFalse(deleted)
+        assertEquals(note, state.notes.notes.value.single())
+        assertTrue(state.message.value.contains("no relay accepted"))
+    }
+
+    @Test
+    fun externalSignerSyncRecoversFetchedRelayEvent() = runBlocking {
+        val fixture = fixture()
+        val nip44 = LocalSaveNip44Operator()
+        val saveClient = AcceptingNostrClient()
+        val firstState = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey), client = saveClient)
+        firstState.requestExternalSignerPublicKey()
+        assertTrue(firstState.save(existing = null, markdown = "recover signer note"))
+        val savedEvent = saveClient.published.single()
+        val secondNip44 = LocalSaveNip44Operator().also { it.plaintextByCiphertext += nip44.plaintextByCiphertext }
+        val fetchClient = AcceptingNostrClient(
+            fetchEvents = listOf(savedEvent),
+            fetchStatuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+        )
+        val secondState = state(fixture, nip44 = secondNip44, signer = TestEventSigner(fixture.privateKey), client = fetchClient)
+
+        secondState.requestExternalSignerPublicKey()
+        secondState.sync()
+
+        assertEquals("recover signer note", secondState.notes.notes.value.single().bodyMarkdown)
+        assertTrue(fetchClient.fetchAuthorPubkeys.single() == fixture.publicKeyHex)
+        assertFalse(secondState.message.value.contains("recover signer note"))
+    }
+
+    @Test
+    fun externalSignerSyncAppliesFastRelayBeforeSlowRelayCompletes() = runBlocking {
+        val fixture = fixture()
+        val nip44 = LocalSaveNip44Operator()
+        val saveClient = AcceptingNostrClient()
+        val firstState = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey), client = saveClient)
+        firstState.requestExternalSignerPublicKey()
+        assertTrue(firstState.save(existing = null, markdown = "fast signer relay"))
+        val savedEvent = saveClient.published.single()
+        val secondNip44 = LocalSaveNip44Operator().also { it.plaintextByCiphertext += nip44.plaintextByCiphertext }
+        val fetchClient = AcceptingNostrClient(
+            incrementalResults = listOf(
+                RelayFetchResult(listOf(savedEvent), listOf(RelayStatus("wss://fast.example.com", readable = true, message = "ok"))),
+                RelayFetchResult(emptyList(), listOf(RelayStatus("wss://slow.example.com", readable = false, message = "timeout"))),
+            ),
+            incrementalDelayAfterFirstMs = 1_000,
+        )
+        val secondState = state(fixture, nip44 = secondNip44, signer = TestEventSigner(fixture.privateKey), client = fetchClient)
+
+        secondState.requestExternalSignerPublicKey()
+        val syncJob = launch { secondState.sync() }
+        withTimeout(500) {
+            while (secondState.notes.notes.value.none { it.bodyMarkdown == "fast signer relay" }) delay(10)
+        }
+        syncJob.join()
+
+        assertEquals("fast signer relay", secondState.notes.notes.value.single().bodyMarkdown)
     }
 
     @Test
@@ -270,11 +397,12 @@ class SignerLocalSaveTests {
         fixture: Fixture,
         nip44: LocalSaveNip44Operator = LocalSaveNip44Operator(),
         signer: NostrSignerEventSigner,
+        client: NostrClient = AcceptingNostrClient(),
     ): AppState {
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
             crypto = crypto,
-            client = OfflineNostrClient(),
+            client = client,
             externalSignerProvider = AvailableSignerProvider,
             externalSignerPublicKeyRequester = TestPublicKeyRequester(
                 SignerPublicKeyRequestResult.Success(
@@ -338,6 +466,7 @@ private class LocalSaveNip44Operator(
     var encryptResult: SignerNip44OperationResult? = null,
     var decryptOverride: String? = null,
 ) : NostrSignerNip44Operator {
+    val plaintextByCiphertext = mutableMapOf<String, String>()
     var lastPlaintext: String? = null
     var latestCiphertext: String = ""
         private set
@@ -350,16 +479,20 @@ private class LocalSaveNip44Operator(
     ): SignerNip44OperationResult {
         lastPlaintext = plaintext
         latestCiphertext = "$ciphertextPrefix-${++encryptCount}"
+        plaintextByCiphertext[latestCiphertext] = plaintext
         return encryptResult ?: SignerNip44OperationResult.Encrypted(latestCiphertext, signerPackage)
     }
 
     override fun decryptFromSelf(
         ciphertext: String,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         currentUserPubkey: String,
         signerPackage: String?,
     ): SignerNip44OperationResult =
-        SignerNip44OperationResult.Decrypted(decryptOverride ?: expectedPlaintext, signerPackage)
+        SignerNip44OperationResult.Decrypted(
+            decryptOverride ?: expectedPlaintext ?: plaintextByCiphertext[ciphertext].orEmpty(),
+            signerPackage,
+        )
 }
 
 private object AvailableSignerProvider : NostrSignerProvider {
@@ -373,12 +506,77 @@ private object AvailableSignerProvider : NostrSignerProvider {
     override val safeDiagnostics: List<String> = listOf("safe test signer available")
 }
 
-private class AcceptingNostrClient : NostrClient {
-    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
-        RelayFetchResult(emptyList(), relays.map { RelayStatus(it, readable = true, message = "test read") })
+private class AcceptingNostrClient(
+    private val fetchEvents: List<NostrEvent> = emptyList(),
+    private val fetchStatuses: List<RelayStatus> = emptyList(),
+    var publishStatuses: List<RelayStatus> = emptyList(),
+    var firstAcceptedStatuses: List<RelayStatus> = publishStatuses,
+    var completeStatuses: List<RelayStatus> = publishStatuses,
+    private val autoCompletePublish: Boolean = true,
+    private val incrementalResults: List<RelayFetchResult> = emptyList(),
+    private val incrementalDelayAfterFirstMs: Long = 0,
+) : NostrClient, FanoutNostrClient, IncrementalNostrClient {
+    val published = mutableListOf<NostrEvent>()
+    val statusUpdates = mutableListOf<List<RelayStatus>>()
+    val fetchAuthorPubkeys = mutableListOf<String>()
+    var publishBestEffortCalls = 0
+    private var pendingComplete: CompletableDeferred<RelayPublishResult>? = null
+    private var pendingOnStatus: ((List<RelayStatus>) -> Unit)? = null
 
-    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult =
-        RelayPublishResult(relays.map { RelayStatus(it, writable = true, message = "accepted") })
+    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
+        RelayFetchResult(fetchEvents, fetchStatuses.ifEmpty { relays.map { RelayStatus(it, readable = true, message = "test read") } })
+
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
+        published += event
+        return RelayPublishResult(publishStatuses.ifEmpty { relays.map { RelayStatus(it, writable = true, message = "accepted") } })
+    }
+
+    override fun publishBestEffort(
+        relays: List<String>,
+        event: NostrEvent,
+        scope: CoroutineScope,
+        onStatus: (List<RelayStatus>) -> Unit,
+    ): PublishBestEffortHandle {
+        publishBestEffortCalls++
+        published += event
+        val first = firstAcceptedStatuses.ifEmpty { relays.map { RelayStatus(it, writable = true, message = "accepted") } }
+        val complete = completeStatuses.ifEmpty { first }
+        pendingOnStatus = onStatus
+        statusUpdates += first
+        onStatus(first)
+        val firstAccepted = CompletableDeferred(RelayPublishResult(first))
+        val completeDeferred = CompletableDeferred<RelayPublishResult>()
+        pendingComplete = completeDeferred
+        if (autoCompletePublish) completePendingPublish()
+        return PublishBestEffortHandle(firstAccepted, completeDeferred)
+    }
+
+    fun completePendingPublish() {
+        val complete = completeStatuses.ifEmpty { statusUpdates.lastOrNull() ?: emptyList() }
+        statusUpdates += complete
+        pendingOnStatus?.invoke(complete)
+        pendingComplete?.complete(RelayPublishResult(complete))
+    }
+
+    override suspend fun fetchNotesIncrementally(
+        relays: List<String>,
+        authorPubkey: String,
+        onRelayResult: suspend (RelayFetchResult) -> Unit,
+    ): RelayFetchResult {
+        fetchAuthorPubkeys += authorPubkey
+        if (incrementalResults.isEmpty()) {
+            return fetchNotes(relays, authorPubkey).also { onRelayResult(it) }
+        }
+        val events = mutableListOf<NostrEvent>()
+        val statuses = mutableListOf<RelayStatus>()
+        incrementalResults.forEachIndexed { index, result ->
+            if (index > 0 && incrementalDelayAfterFirstMs > 0) delay(incrementalDelayAfterFirstMs)
+            events += result.events
+            statuses += result.statuses
+            onRelayResult(result)
+        }
+        return RelayFetchResult(events, statuses)
+    }
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
 }

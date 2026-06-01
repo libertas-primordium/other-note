@@ -18,7 +18,7 @@ interface NostrSignerNip44Operator {
 
     fun decryptFromSelf(
         ciphertext: String,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         currentUserPubkey: String,
         signerPackage: String?,
     ): SignerNip44OperationResult
@@ -35,7 +35,7 @@ class UnavailableSignerNip44Operator(
 
     override fun decryptFromSelf(
         ciphertext: String,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         currentUserPubkey: String,
         signerPackage: String?,
     ): SignerNip44OperationResult = SignerNip44OperationResult.Unavailable(safeReason)
@@ -116,12 +116,12 @@ object SignerNip44ResponseParser {
 
     fun parseDecryptResult(
         result: String?,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         signerPackage: String?,
     ): SignerNip44OperationResult {
         val decrypted = result?.takeIf { it.isNotBlank() }
             ?: return SignerNip44OperationResult.InvalidResponse("Signer decryption failed")
-        if (decrypted != expectedPlaintext) {
+        if (expectedPlaintext != null && decrypted != expectedPlaintext) {
             return SignerNip44OperationResult.InvalidResponse("Signer decryption failed")
         }
         return SignerNip44OperationResult.Decrypted(
