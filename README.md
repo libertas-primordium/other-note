@@ -56,6 +56,7 @@ Default relays are editable:
 - `wss://relay.damus.io`
 - `wss://relay.primal.net`
 - `wss://relay.nostr.net`
+- `wss://relay.ditto.pub`
 
 Public relays may purge old events. Add a relay you control for stronger long-term retention.
 
