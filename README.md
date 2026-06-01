@@ -14,7 +14,8 @@ Important security status:
 - The login field hides pasted `nsec` text and clears it after successful validation or local-only entry.
 - Local-only mode is explicit. Notes can be created, viewed, edited, and deleted without a Nostr session.
 - Secure private-key persistence is intentionally disabled until platform secure storage is implemented.
-- Production Nostr crypto is not wired yet. The current `NonProductionNostrCrypto` validates NIP-19 `nsec` format but refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
+- Production Nostr crypto is wired for offline desktop/JVM tests through `ProductionNostrCryptoFactory`. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until relay and storage behavior are ready.
+- `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Relay networking is represented by clean interfaces and an offline adapter. Publishing and fetching surface explicit non-success status instead of fake success.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
@@ -106,7 +107,7 @@ Desktop package validation when the active JDK includes `jpackage`:
 ./gradlew :app:packageDeb
 ```
 
-Relay integration tests are intentionally opt-in and currently stop with a clear failure until a production crypto adapter is wired:
+Relay integration tests are intentionally opt-in and transport is still not implemented:
 
 ```sh
 OTHER_NOTE_RELAY_TESTS=1 OTHER_NOTE_TEST_RELAYS=wss://relay.example.com ./gradlew :app:desktopTest
@@ -118,7 +119,7 @@ Generated relay-test notes are disposable. If relay tests are enabled in the fut
 
 The production crypto boundary is `NostrCrypto` plus `ProductionNostrCryptoFactory`.
 
-Required production capabilities before real relay publishing:
+The offline adapter is backed by Quartz `1.03.0` for:
 
 - Throwaway private-key generation.
 - NIP-19 `nsec`/`npub` encode/decode.
@@ -126,7 +127,9 @@ Required production capabilities before real relay publishing:
 - NIP-01 canonical event preimage, id hashing, Schnorr signing, and signature validation.
 - NIP-44 v2 encryption/decryption to self.
 
-Quartz was evaluated as the preferred Kotlin Multiplatform Nostr path because it is MIT-licensed and therefore GPLv3-compatible, and because it targets Nostr crypto across JVM/Android. Current Quartz artifacts resolve Kotlin 2.x metadata and transitive Kotlin 2.x standard libraries, while this project currently uses Kotlin 1.9.24 and Compose Multiplatform 1.6.11. To avoid destabilizing the build, Quartz is not integrated yet. The next crypto phase should either upgrade the Kotlin/Compose toolchain first or find a production Nostr crypto library that remains compatible with Kotlin 1.9.24.
+Quartz is MIT-licensed and therefore GPLv3-compatible. Integrating it required moving the project to Kotlin `2.1.21`, Compose Multiplatform `1.8.2`, Android Gradle Plugin `8.9.1`, Gradle `8.11.1`, and Android compile/target SDK `36`.
+
+The real crypto round-trip test lives under `desktopTest`. Android compiles and packages the adapter, but Android host-side unit tests do not run the JNI-backed secp256k1 round trip.
 
 ## Architecture
 

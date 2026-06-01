@@ -55,3 +55,9 @@ class NonProductionNostrCrypto : NostrCrypto {
 }
 
 fun ByteArray.toHex(): String = joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
+
+fun String.hexToBytes(): ByteArray {
+    require(length % 2 == 0) { "Hex string must have an even length" }
+    require(all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) { "Invalid hex string" }
+    return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+}

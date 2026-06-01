@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.domain.NotePayload
 import com.libertasprimordium.othernote.domain.noteDTag
 import com.libertasprimordium.othernote.nostr.NostrEventSerialization
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.sync.planRelayMigration
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
@@ -69,6 +70,14 @@ class UtilityTests {
             ),
         )
         assertEquals("""[0,"pub",123,30078,[["d","other-note:note:abc"],["t","other-note"]],"encrypted-content"]""", preimage)
+    }
+
+    @Test
+    fun nip19RejectsMixedCaseAndAcceptsLowercase() {
+        val encoded = Nip19.encode("npub", ByteArray(32) { it.toByte() }) ?: error("npub encode failed")
+        assertEquals("npub", Nip19.decode(encoded)?.hrp)
+        val mixedCase = encoded.take(8).uppercase() + encoded.drop(8)
+        assertEquals(null, Nip19.decode(mixedCase))
     }
 
     @Test
