@@ -24,9 +24,9 @@ kotlin {
                 implementation(compose.foundation)
                 implementation(compose.material3)
                 implementation(compose.components.resources)
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-                implementation("com.vitorpamplona.quartz:quartz:1.03.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+                implementation("com.vitorpamplona.quartz:quartz:1.11.0")
             }
         }
         val commonTest by getting {
@@ -37,8 +37,8 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 implementation("androidx.activity:activity-compose:1.9.1")
-                implementation("androidx.compose.ui:ui-tooling-preview:1.6.8")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+                implementation("androidx.compose.ui:ui-tooling-preview:1.11.1")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
             }
         }
         val desktopMain by getting {
@@ -51,7 +51,7 @@ kotlin {
 
 android {
     namespace = "com.libertasprimordium.othernote"
-    compileSdk = 36
+    compileSdkPreview = "CinnamonBun"
 
     defaultConfig {
         applicationId = "com.libertasprimordium.othernote"

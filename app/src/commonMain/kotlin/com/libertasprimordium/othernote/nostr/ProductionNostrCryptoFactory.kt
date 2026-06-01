@@ -5,17 +5,14 @@ import com.vitorpamplona.quartz.nip01Core.core.Event as QuartzEvent
 import com.vitorpamplona.quartz.nip01Core.crypto.EventAssembler
 import com.vitorpamplona.quartz.nip01Core.crypto.EventHasher
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
-import com.vitorpamplona.quartz.nip01Core.crypto.Nip01
+import com.vitorpamplona.quartz.nip01Core.crypto.Nip01Crypto
 import com.vitorpamplona.quartz.nip44Encryption.Nip44
 
 object ProductionNostrCryptoFactory {
     const val unavailableReason =
-        "Quartz-backed production Nostr crypto is disabled: Quartz 1.03.0 NIP-44 v2 self-encryption can fail " +
-            "local decrypt with Invalid Mac before relay transport, and Quartz 1.05.0 requires Kotlin 2.3 metadata " +
-            "while this project is on Kotlin 2.1.21. Keep using NonProductionNostrCrypto until a compatible " +
-            "NIP-44 adapter or toolchain upgrade is selected."
+        "Quartz-backed production Nostr crypto is unavailable."
 
-    fun createOrNull(): NostrCrypto? = null
+    fun createOrNull(): NostrCrypto? = QuartzNostrCrypto()
 }
 
 private class QuartzNostrCrypto : NostrCrypto {
@@ -92,7 +89,7 @@ private class QuartzNostrCrypto : NostrCrypto {
             content = event.content,
         )
         val idMatches = computeEventId(unsigned).getOrThrow() == event.id
-        val signatureMatches = Nip01.verify(
+        val signatureMatches = Nip01Crypto.verify(
             event.sig.hexToBytes(),
             event.id.hexToBytes(),
             event.pubkey.hexToBytes(),

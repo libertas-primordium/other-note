@@ -14,7 +14,7 @@ Important security status:
 - The login field hides pasted `nsec` text and clears it after successful validation or local-only entry.
 - Local-only mode is explicit. Notes can be created, viewed, edited, and deleted without a Nostr session.
 - Secure private-key persistence is intentionally disabled until platform secure storage is implemented.
-- `ProductionNostrCryptoFactory` is intentionally disabled after local Quartz NIP-44 testing found an invalid-MAC self-decrypt failure before relay transport. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until a compatible production crypto path is selected.
+- `ProductionNostrCryptoFactory` is enabled for offline desktop/JVM tests after upgrading Quartz and the Kotlin/Compose/AGP toolchain. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until relay sync and storage behavior are reviewed.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
@@ -119,7 +119,7 @@ Public relay behavior varies; the integration test requires at least one configu
 
 The production crypto boundary is `NostrCrypto` plus `ProductionNostrCryptoFactory`.
 
-Quartz `1.03.0` remains present as the previously evaluated dependency for:
+The offline production adapter is backed by Quartz `1.11.0` for:
 
 - Throwaway private-key generation.
 - NIP-19 `nsec`/`npub` encode/decode.
@@ -127,9 +127,9 @@ Quartz `1.03.0` remains present as the previously evaluated dependency for:
 - NIP-01 canonical event preimage, id hashing, Schnorr signing, and signature validation.
 - NIP-44 v2 encryption/decryption to self.
 
-Quartz is MIT-licensed and therefore GPLv3-compatible. The currently compatible `1.03.0` adapter is disabled because focused desktop/JVM tests reproduced a local NIP-44 v2 `Invalid Mac` failure when decrypting ciphertext created with the same generated keypair. The failure happens before Nostr wire serialization, event signing, or relay transport. A patch-level Quartz `1.05.0` attempt was not integrated because its Kotlin metadata requires Kotlin `2.3.x`, while this project currently uses Kotlin `2.1.21`.
+Quartz is MIT-licensed and therefore GPLv3-compatible. The previous Quartz `1.03.0` adapter was disabled after focused desktop/JVM tests reproduced a local NIP-44 v2 `Invalid Mac` failure when decrypting ciphertext created with the same generated keypair. The current spike upgrades to Kotlin `2.3.21`, Compose Multiplatform `1.11.0`, Android Gradle Plugin `8.13.2`, Gradle `8.13`, Quartz `1.11.0`, kotlinx.coroutines `1.11.0`, kotlinx.serialization JSON `1.11.0`, and Android compile SDK preview `CinnamonBun`.
 
-The real crypto round-trip tests live under `desktopTest` and are retained so they run as soon as a production adapter is re-enabled. Relay integration tests should not be run until those offline crypto tests pass with an enabled production adapter.
+The real crypto round-trip tests live under `desktopTest`. They generate throwaway keypairs, perform repeated NIP-44 self-encryption round trips, sign and validate kind `30078` events, decrypt event content, and cover tombstone payloads before relay integration tests are run.
 
 ## Relay Transport Status
 
@@ -161,7 +161,7 @@ Platform code:
 
 ## Known Limitations And TODOs
 
-- Select a compatible production Nostr crypto path for NIP-19, secp256k1 Schnorr signing, event id validation, and NIP-44 v2 encryption/decryption. Options include a deliberate Kotlin/toolchain upgrade for a newer Quartz release or a separate audited NIP-44 implementation.
+- Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Wire the bounded WebSocket relay client into explicit developer/test runtime paths, then production sync after storage and failure handling are reviewed.
 - Add encrypted local cache storage. Do not persist private keys until platform secure storage exists.
 - Implement Android encrypted key storage and decide on a Linux desktop secret-service integration.

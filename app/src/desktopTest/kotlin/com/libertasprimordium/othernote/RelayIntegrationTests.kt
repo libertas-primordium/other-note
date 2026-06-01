@@ -70,12 +70,14 @@ class RelayIntegrationTests {
         )
 
         val initialPublish = client.publish(relays, initialEvent)
+        reportRelayStatuses("initial publish", initialPublish.statuses)
         assertTrue(
             initialPublish.statuses.any { it.writable },
             "No relay accepted initial write. Statuses: ${initialPublish.statuses.safeSummary()}",
         )
 
         val initialFetch = client.fetchNotes(relays, publicKey.hex)
+        reportRelayStatuses("initial fetch", initialFetch.statuses)
         val initialClassifications = initialFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
         val validInitial = initialClassifications.validEvents()
         assertTrue(
@@ -94,12 +96,14 @@ class RelayIntegrationTests {
         )
         val updatedEvent = signPayload(crypto, privateKey, publicKey, updatedPayload, createdAt = initialEvent.createdAt + 2)
         val updatedPublish = client.publish(relays, updatedEvent)
+        reportRelayStatuses("update publish", updatedPublish.statuses)
         assertTrue(
             updatedPublish.statuses.any { it.writable },
             "No relay accepted update write. Statuses: ${updatedPublish.statuses.safeSummary()}",
         )
 
         val updatedFetch = client.fetchNotes(relays, publicKey.hex)
+        reportRelayStatuses("update fetch", updatedFetch.statuses)
         val updatedClassifications = updatedFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
         val validUpdated = updatedClassifications.validEvents()
         val reducedUpdated = reduceNoteEvents(validUpdated) { event ->
@@ -117,12 +121,14 @@ class RelayIntegrationTests {
         )
         val tombstoneEvent = signPayload(crypto, privateKey, publicKey, tombstonePayload, createdAt = updatedEvent.createdAt + 2)
         val tombstonePublish = client.publish(relays, tombstoneEvent)
+        reportRelayStatuses("tombstone publish", tombstonePublish.statuses)
         assertTrue(
             tombstonePublish.statuses.any { it.writable },
             "No relay accepted tombstone write. Statuses: ${tombstonePublish.statuses.safeSummary()}",
         )
 
         val tombstoneFetch = client.fetchNotes(relays, publicKey.hex)
+        reportRelayStatuses("tombstone fetch", tombstoneFetch.statuses)
         val tombstoneClassifications = tombstoneFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
         val validTombstone = tombstoneClassifications.validEvents()
         val reducedTombstone = reduceNoteEvents(validTombstone) { event ->
@@ -204,6 +210,15 @@ class RelayIntegrationTests {
         joinToString("; ") { status ->
             "${status.url} read=${status.readable} write=${status.writable} message=${status.message.take(180)}"
         }
+
+    private fun reportRelayStatuses(stage: String, statuses: List<RelayStatus>) {
+        statuses.forEach { status ->
+            println(
+                "RelayIntegrationTests $stage ${status.url} " +
+                    "read=${status.readable} write=${status.writable} message=${status.message.take(180)}",
+            )
+        }
+    }
 
     private fun List<EventClassification>.validEvents(): List<NostrEvent> =
         filter { it.valid }.map { it.event }

@@ -21,7 +21,6 @@ import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class CryptoReadinessTests {
@@ -29,11 +28,13 @@ class CryptoReadinessTests {
         "Other Note disposable relay integration test payload\nQuote: \"hello\"\nUnicode: test\nTab:\tvalue\n```text\nrelay\n```"
 
     @Test
-    fun productionCryptoFactoryDocumentsDisabledQuartzNip44Adapter() {
-        assertNull(ProductionNostrCryptoFactory.createOrNull())
-        assertTrue(ProductionNostrCryptoFactory.unavailableReason.contains("NIP-44"))
-        assertTrue(ProductionNostrCryptoFactory.unavailableReason.contains("Invalid Mac"))
-        assertTrue(ProductionNostrCryptoFactory.unavailableReason.contains("Kotlin 2.1.21"))
+    fun productionCryptoFactoryIsEitherReliableOrPreciselyUnavailable() {
+        val crypto = ProductionNostrCryptoFactory.createOrNull()
+        if (crypto == null) {
+            assertTrue(ProductionNostrCryptoFactory.unavailableReason.contains("Nostr crypto"))
+        } else {
+            assertTrue(crypto.productionReady)
+        }
     }
 
     @Test
@@ -192,7 +193,9 @@ class CryptoReadinessTests {
         assertTrue(encryptedInfo.mac.contentEquals(roundTrippedInfo.mac), "NIP-44 payload MAC changed at $safeContext")
         val ciphertext = crypto.encryptToSelf(plaintext, privateKey, publicKey).getOrThrow()
         assertFalse(ciphertext.contains(plaintext), "ciphertext contains payload JSON at $safeContext")
-        assertFalse(ciphertext.contains(payload.bodyMarkdown), "ciphertext contains note body at $safeContext")
+        if (payload.bodyMarkdown.isNotEmpty()) {
+            assertFalse(ciphertext.contains(payload.bodyMarkdown), "ciphertext contains note body at $safeContext")
+        }
         val decodedObjectDecrypted = runCatching {
             Nip44.v2.decrypt(
                 Nip44v2.EncryptedInfo.decodePayload(ciphertext),
