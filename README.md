@@ -19,7 +19,7 @@ Important security status:
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; default desktop and all Android runtime paths remain offline/non-production.
 - Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
-- Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create local-only signer-backed notes from the normal editor. Signer-backed relay save/sync is not wired yet.
+- Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete local-only signer-backed notes from the normal editor. Signer-backed relay save/sync is not wired yet.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -73,7 +73,7 @@ The key-management policy is documented in [docs/key-management.md](docs/key-man
 
 ## Android External Signer Status
 
-Android builds include NIP-55 discovery, public-key request, harmless test signing, a harmless NIP-44 round-trip test, an unpublished signer-backed note-event build test, and local-only signer-backed note creation:
+Android builds include NIP-55 discovery, public-key request, harmless test signing, a harmless NIP-44 round-trip test, an unpublished signer-backed note-event build test, and local-only signer-backed note creation/edit/delete:
 
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
 - Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
@@ -84,9 +84,9 @@ Android builds include NIP-55 discovery, public-key request, harmless test signi
 - The returned event is validated locally: pubkey must match the signer-backed session, content/kind/tags must match the test event, and the NIP-01 event id/signature must verify.
 - "Test signer encryption" uses NIP-55 `ContentResolver` methods `NIP44_ENCRYPT` and `NIP44_DECRYPT` against the logged-in signer package. It self-encrypts the harmless text `Other Note NIP-44 signer test` to the signer session pubkey, then asks the signer to decrypt it and verifies the result in memory.
 - "Test signer note event" encodes a real Other Note `NotePayload`, encrypts it through signer NIP-44, builds a kind `30078` event with the standard `d`/`t`/`alt`/`client` tags, signs it through signer `SIGN_EVENT`, validates the returned event id/signature locally, then decrypts and decodes the event content through the signer. The event is not published.
-- Normal editor save in an Android signer session now creates or edits a local-only note through the same signer-backed pipeline. The signed encrypted event is held in app memory for local display only in this branch; it is not published to relays and Android relay sync remains disabled.
+- Normal editor save in an Android signer session creates or edits a local-only note through the same signer-backed pipeline. Delete creates a local signer-backed tombstone event with the same d tag and hides the note locally. Signed encrypted events are held in app memory for local display only in this branch; they are not published to relays and Android relay sync remains disabled.
 - Safe NIP-55 diagnostics can be enabled with `OTHER_NOTE_SHOW_NIP55_DIAGNOSTICS=1` or `-Dothernote.showNip55Diagnostics=true`. Diagnostics include only path, shape, lengths, booleans, abbreviated ids/pubkeys, result status, and result column/key names.
-- Signer-backed relay save/sync is not implemented yet. Delete through signer remains unsupported in this pass.
+- Signer-backed relay save/sync is not implemented yet.
 - No `nsec` or private key is stored, logged, or sent to a relay/server as part of signer discovery.
 
 Manual Android signer test with Amber or another NIP-55 signer:
@@ -108,8 +108,11 @@ Manual Android signer test with Amber or another NIP-55 signer:
 15. Create a normal note through the editor and tap "Save."
 16. Approve required signer encrypt/sign/decrypt requests.
 17. Confirm the note appears locally and the app reports that it is not synced to relays.
-18. If it fails, enable NIP-55 diagnostics and capture the safe request path, payload length, field booleans, result status, and result columns.
-19. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
+18. Open the note, tap "Delete", and confirm.
+19. Approve required signer encrypt/sign/decrypt requests.
+20. Confirm the note disappears locally and the app does not claim relay sync or publish.
+21. If it fails, enable NIP-55 diagnostics and capture the safe request path, payload length, field booleans, result status, and result columns.
+22. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
 
 ## Build And Run
 

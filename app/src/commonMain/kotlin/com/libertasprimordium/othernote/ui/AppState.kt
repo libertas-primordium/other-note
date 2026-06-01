@@ -437,14 +437,67 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun delete(note: Note): Boolean {
         val session = _session.value
+        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+            return deleteWithExternalSigner(note, session)
+        }
         if (session != null && !session.hasSessionPrivateKey()) {
-            _message.value = "Signer-backed delete is not implemented yet."
+            _message.value = "Deleting requires a session key or Android signer."
             return false
         }
         val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
         _message.value = result.toCompactMessage()
         _diagnosticMessage.value = result.toDiagnosticMessage()
         return result !is SaveResult.Failed
+    }
+
+    private suspend fun deleteWithExternalSigner(note: Note, session: UserSession): Boolean {
+        if (!externalSignerCanSignEvent || !externalSignerCanNip44RoundTrip) {
+            _message.value = "External signer local delete is unavailable."
+            return false
+        }
+        _message.value = "Waiting for signer..."
+        val result = signerNoteEventBuilder.buildLocalTombstoneEvent(
+            session = session,
+            signerPackage = session.signerPackage,
+            existing = note,
+            onStage = ::handleSignerTombstoneStage,
+        )
+        return when (result) {
+            is SignerNoteEventBuildResult.Success -> {
+                notes.upsertLocal(result.note, result.signedEvent)
+                services.localEventCache.upsertEvents(session.publicKeyHex, listOf(result.signedEvent))
+                _message.value = "${result.safeSummary}. Not synced to relays."
+                true
+            }
+            SignerNoteEventBuildResult.Cancelled -> {
+                _message.value = "Signer note delete cancelled"
+                false
+            }
+            is SignerNoteEventBuildResult.Unavailable -> {
+                _message.value = result.safeReason
+                false
+            }
+            is SignerNoteEventBuildResult.Failed -> {
+                _message.value = result.safeReason
+                false
+            }
+            is SignerNoteEventBuildResult.InvalidResponse -> {
+                _message.value = result.safeReason
+                false
+            }
+        }
+    }
+
+    private fun handleSignerTombstoneStage(stage: SignerNoteEventBuildStage) {
+        _message.value = when (stage) {
+            SignerNoteEventBuildStage.PayloadEncoded -> "Waiting for signer..."
+            SignerNoteEventBuildStage.Encrypted -> "Signer encrypted tombstone"
+            SignerNoteEventBuildStage.EventBuilt -> "Waiting for signer..."
+            SignerNoteEventBuildStage.Signed -> "Signer signed tombstone"
+            SignerNoteEventBuildStage.Validated -> "Signer signed tombstone"
+            SignerNoteEventBuildStage.Decrypted -> "Signer decrypted tombstone"
+            SignerNoteEventBuildStage.PayloadDecoded -> "Deleting locally..."
+        }
     }
 
     suspend fun sync() {
