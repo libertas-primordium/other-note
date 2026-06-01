@@ -4,6 +4,11 @@ import com.libertasprimordium.othernote.security.KeyManagementPolicy
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
+import com.libertasprimordium.othernote.security.SignerNip44Operation
+import com.libertasprimordium.othernote.security.SignerNip44OperationResult
+import com.libertasprimordium.othernote.security.SignerNip44RequestBuilder
+import com.libertasprimordium.othernote.security.SignerNip44ResponseParser
+import com.libertasprimordium.othernote.security.SignerNip44TestPayload
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyResponseParser
@@ -257,6 +262,88 @@ class KeyManagementPolicyTests {
         assertTrue(diagnostics.contains("event_contains_id=false"))
         assertTrue(diagnostics.contains("event_contains_sig=false"))
         assertTrue(diagnostics.contains("data_uri_has_payload=true"))
+    }
+
+    @Test
+    fun nip44EncryptRequestDiagnosticsAreSanitized() {
+        val pubkey = "0f".repeat(32)
+        val request = SignerNip44RequestBuilder.build(
+            operation = SignerNip44Operation.Encrypt,
+            payload = SignerNip44TestPayload.Plaintext,
+            peerPubkey = pubkey,
+            currentUserPubkey = pubkey,
+            signerPackage = "com.example.signer",
+        ).getOrThrow()
+        val diagnostics = request.safeDiagnostics.joinToString(" ")
+
+        assertEquals(SignerNip44Operation.Encrypt, request.operation)
+        assertFalse(diagnostics.contains(pubkey))
+        assertFalse(diagnostics.contains(SignerNip44TestPayload.Plaintext))
+        assertFalse(diagnostics.contains(suppliedNsec))
+        assertTrue(diagnostics.contains("operation=nip44_encrypt"))
+        assertTrue(diagnostics.contains("request_path=content_resolver"))
+        assertTrue(diagnostics.contains("payload_length=${SignerNip44TestPayload.Plaintext.length}"))
+    }
+
+    @Test
+    fun nip44DecryptRequestDiagnosticsAreSanitized() {
+        val pubkey = "10".repeat(32)
+        val ciphertext = "nip44-ciphertext-value"
+        val request = SignerNip44RequestBuilder.build(
+            operation = SignerNip44Operation.Decrypt,
+            payload = ciphertext,
+            peerPubkey = pubkey,
+            currentUserPubkey = pubkey,
+            signerPackage = "com.example.signer",
+        ).getOrThrow()
+        val diagnostics = request.safeDiagnostics.joinToString(" ")
+
+        assertEquals(SignerNip44Operation.Decrypt, request.operation)
+        assertFalse(diagnostics.contains(pubkey))
+        assertFalse(diagnostics.contains(ciphertext))
+        assertFalse(diagnostics.contains(suppliedNsec))
+        assertTrue(diagnostics.contains("operation=nip44_decrypt"))
+        assertTrue(diagnostics.contains("payload_length=${ciphertext.length}"))
+    }
+
+    @Test
+    fun nip44EncryptResponseRejectsBlankAndPlaintextLeak() {
+        val blank = SignerNip44ResponseParser.parseEncryptResult(
+            result = "",
+            plaintext = SignerNip44TestPayload.Plaintext,
+            signerPackage = null,
+        )
+        val leaked = SignerNip44ResponseParser.parseEncryptResult(
+            result = "wrapped ${SignerNip44TestPayload.Plaintext}",
+            plaintext = SignerNip44TestPayload.Plaintext,
+            signerPackage = null,
+        )
+
+        assertIs<SignerNip44OperationResult.InvalidResponse>(blank)
+        assertIs<SignerNip44OperationResult.InvalidResponse>(leaked)
+    }
+
+    @Test
+    fun nip44EncryptAndDecryptResponsesValidateExpectedValues() {
+        val encrypted = SignerNip44ResponseParser.parseEncryptResult(
+            result = "nip44-valid-ciphertext",
+            plaintext = SignerNip44TestPayload.Plaintext,
+            signerPackage = "com.example.signer",
+        )
+        val decrypted = SignerNip44ResponseParser.parseDecryptResult(
+            result = SignerNip44TestPayload.Plaintext,
+            expectedPlaintext = SignerNip44TestPayload.Plaintext,
+            signerPackage = "com.example.signer",
+        )
+        val mismatch = SignerNip44ResponseParser.parseDecryptResult(
+            result = "wrong",
+            expectedPlaintext = SignerNip44TestPayload.Plaintext,
+            signerPackage = null,
+        )
+
+        assertIs<SignerNip44OperationResult.Encrypted>(encrypted)
+        assertIs<SignerNip44OperationResult.Decrypted>(decrypted)
+        assertIs<SignerNip44OperationResult.InvalidResponse>(mismatch)
     }
 
     @Test

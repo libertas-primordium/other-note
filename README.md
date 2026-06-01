@@ -19,7 +19,7 @@ Important security status:
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; default desktop and all Android runtime paths remain offline/non-production.
 - Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
-- Android can detect generic NIP-55 external signer apps, request signer public identity, and request a harmless local test-event signature through the `nostrsigner:` intent scheme. Signer-backed note save/sync is not wired yet.
+- Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, and run a harmless local NIP-44 encrypt/decrypt round trip. Signer-backed note save/sync is not wired yet.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -73,7 +73,7 @@ The key-management policy is documented in [docs/key-management.md](docs/key-man
 
 ## Android External Signer Status
 
-Android builds include NIP-55 discovery, public-key request, and harmless test signing:
+Android builds include NIP-55 discovery, public-key request, harmless test signing, and a harmless NIP-44 round-trip test:
 
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
 - Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
@@ -82,8 +82,9 @@ Android builds include NIP-55 discovery, public-key request, and harmless test s
 - After signer login, "Test signer signing" uses the NIP-55 `ContentResolver` `SIGN_EVENT` path for a harmless unpublished kind `1` event with content `Other Note signer test`. The request queries `content://<signer-package>.SIGN_EVENT` with projection `[eventJson, "", current_user]` and expects `result` plus `event` columns.
 - The initial `get_public_key` request asks for the optional kind `1` `sign_event` permission so Amber can allow the ContentResolver signing request.
 - The returned event is validated locally: pubkey must match the signer-backed session, content/kind/tags must match the test event, and the NIP-01 event id/signature must verify.
+- "Test signer encryption" uses NIP-55 `ContentResolver` methods `NIP44_ENCRYPT` and `NIP44_DECRYPT` against the logged-in signer package. It self-encrypts the harmless text `Other Note NIP-44 signer test` to the signer session pubkey, then asks the signer to decrypt it and verifies the result in memory.
 - Safe NIP-55 diagnostics can be enabled with `OTHER_NOTE_SHOW_NIP55_DIAGNOSTICS=1` or `-Dothernote.showNip55Diagnostics=true`. Diagnostics include only path, shape, lengths, booleans, abbreviated ids/pubkeys, result status, and result column/key names.
-- Signer-backed note save/sync is not implemented yet. Other Note does not request NIP-44 encryption/decryption through Android signer in this pass.
+- Signer-backed note save/sync is not implemented yet. Other Note requests NIP-44 operations only for the explicit harmless local test payload in this pass.
 - No `nsec` or private key is stored, logged, or sent to a relay/server as part of signer discovery.
 
 Manual Android signer test with Amber or another NIP-55 signer:
@@ -96,8 +97,11 @@ Manual Android signer test with Amber or another NIP-55 signer:
 6. Tap "Test signer signing."
 7. Confirm the signer does not show "nothing to approve yet" or "nothing to sign"; approve or allow the signing request if Amber prompts.
 8. Confirm Other Note reports "Signer test event signed and verified."
-9. If it still fails, enable NIP-55 diagnostics and capture the safe request path, payload length, field booleans, result status, and result columns.
-10. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
+9. Tap "Test signer encryption."
+10. Approve or allow NIP-44 encrypt/decrypt requests if Amber prompts.
+11. Confirm Other Note reports "Signer decrypted and verified test payload."
+12. If it fails, enable NIP-55 diagnostics and capture the safe request path, payload length, field booleans, result status, and result columns.
+13. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
 
 ## Build And Run
 
@@ -175,7 +179,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-OS keyring persistence, full Amber/NIP-55 note signing/encryption integration beyond test-event signing, NIP-46, profile rendering, and inline media rendering are intentionally future work.
+OS keyring persistence, full Amber/NIP-55 note save/sync integration beyond local signer tests, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
@@ -258,7 +262,7 @@ Platform code:
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Keep desktop developer relay runtime gated until storage and failure handling are reviewed for normal runtime use.
-- Implement Android NIP-55 note signing plus NIP-44 encrypt/decrypt flow, Android encrypted key storage, and Linux desktop secret-service integration.
+- Implement Android NIP-55 note save/sync flow, Android encrypted key storage, and Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
 - Add inline image/video loading with size limits and timeouts.

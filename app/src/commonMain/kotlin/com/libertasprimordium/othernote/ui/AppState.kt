@@ -10,6 +10,10 @@ import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
+import com.libertasprimordium.othernote.security.SignerNip44Operation
+import com.libertasprimordium.othernote.security.SignerNip44OperationResult
+import com.libertasprimordium.othernote.security.SignerNip44RequestBuilder
+import com.libertasprimordium.othernote.security.SignerNip44TestPayload
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
@@ -85,6 +89,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val externalSignerAvailable: Boolean = services.externalSignerProvider.isAvailable
     val externalSignerDisplayName: String? = services.externalSignerProvider.displayName
     val externalSignerCanSignEvent: Boolean = services.externalSignerProvider.canSignEvent
+    val externalSignerCanNip44RoundTrip: Boolean = services.externalSignerProvider.canNip44RoundTrip
     val externalSignerStatus: String = if (services.externalSignerProvider.isAvailable) {
         "External signer detected: ${services.externalSignerProvider.displayName ?: "NIP-55 signer"}"
     } else {
@@ -218,6 +223,85 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             }
             is SignEventRequestResult.InvalidResponse -> {
                 _message.value = result.safeReason
+            }
+        }
+    }
+
+    fun requestExternalSignerNip44Test() {
+        val session = _session.value
+        if (session?.authMethod != SessionAuthMethod.ExternalSigner) {
+            _message.value = "Use Android signer before testing signer encryption."
+            return
+        }
+        if (!externalSignerCanNip44RoundTrip) {
+            _message.value = "External signer NIP-44 encryption is unavailable."
+            return
+        }
+        val plaintext = SignerNip44TestPayload.Plaintext
+        if (showNip55Diagnostics) {
+            _diagnosticMessage.value = SignerNip44RequestBuilder.build(
+                operation = SignerNip44Operation.Encrypt,
+                payload = plaintext,
+                peerPubkey = session.publicKeyHex,
+                currentUserPubkey = session.publicKeyHex,
+                signerPackage = session.signerPackage,
+            ).map { it.safeDiagnostics.joinToString("\n") }
+                .getOrElse { "Could not build signer encryption diagnostics." }
+        }
+        _message.value = "Waiting for signer..."
+        val encrypted = services.externalSignerNip44Operator.encryptToSelf(
+            plaintext = plaintext,
+            currentUserPubkey = session.publicKeyHex,
+            signerPackage = session.signerPackage,
+        )
+        when (encrypted) {
+            is SignerNip44OperationResult.Encrypted -> {
+                _message.value = "Signer encrypted test payload"
+                val decrypted = services.externalSignerNip44Operator.decryptFromSelf(
+                    ciphertext = encrypted.payload,
+                    expectedPlaintext = plaintext,
+                    currentUserPubkey = session.publicKeyHex,
+                    signerPackage = session.signerPackage,
+                )
+                handleSignerNip44DecryptResult(decrypted)
+            }
+            SignerNip44OperationResult.Cancelled -> {
+                _message.value = "Signer encryption cancelled"
+            }
+            is SignerNip44OperationResult.Unavailable -> {
+                _message.value = encrypted.safeReason
+            }
+            is SignerNip44OperationResult.Failed -> {
+                _message.value = encrypted.safeReason
+            }
+            is SignerNip44OperationResult.InvalidResponse -> {
+                _message.value = encrypted.safeReason
+            }
+            is SignerNip44OperationResult.Decrypted -> {
+                _message.value = "Signer returned invalid encryption result"
+            }
+        }
+    }
+
+    private fun handleSignerNip44DecryptResult(result: SignerNip44OperationResult) {
+        when (result) {
+            is SignerNip44OperationResult.Decrypted -> {
+                _message.value = "Signer decrypted and verified test payload"
+            }
+            SignerNip44OperationResult.Cancelled -> {
+                _message.value = "Signer decryption cancelled"
+            }
+            is SignerNip44OperationResult.Unavailable -> {
+                _message.value = result.safeReason
+            }
+            is SignerNip44OperationResult.Failed -> {
+                _message.value = result.safeReason
+            }
+            is SignerNip44OperationResult.InvalidResponse -> {
+                _message.value = result.safeReason
+            }
+            is SignerNip44OperationResult.Encrypted -> {
+                _message.value = "Signer decryption failed"
             }
         }
     }

@@ -172,6 +172,9 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
                 TextButton(onClick = { appState.requestExternalSignerTestSignature() }) {
                     Text("Test signer signing")
                 }
+                TextButton(onClick = { appState.requestExternalSignerNip44Test() }) {
+                    Text("Test signer encryption")
+                }
             }
             Text(message, color = OtherNoteMuted)
             if ((appState.showRelayDiagnostics || appState.showNip55Diagnostics) && diagnostics.isNotBlank()) {

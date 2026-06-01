@@ -15,7 +15,7 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
     override val displayName: String? = discovery?.displayName
     override val canGetPublicKey: Boolean = discovery != null
     override val canSignEvent: Boolean = discovery != null
-    override val canNip44EncryptDecrypt: Boolean = false
+    override val canNip44EncryptDecrypt: Boolean = discovery != null
     override val safeDiagnostics: List<String> = listOf(
         if (discovery == null) {
             "NIP-55 discovery found 0 signer apps"
