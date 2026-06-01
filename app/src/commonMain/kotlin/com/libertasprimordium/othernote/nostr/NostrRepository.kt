@@ -30,6 +30,17 @@ class NostrRepository(
             )
     }
 
+    fun validateSignedNoteEvent(note: Note, event: NostrEvent, session: UserSession): Result<Unit> = runCatching {
+        require(event.pubkey == session.publicKeyHex) { "Signed event author did not match session" }
+        require(crypto.validate(event).getOrThrow()) { "Signed event failed local validation" }
+        val privateKey = NostrPrivateKey(session.privateKeyHex)
+        val publicKey = NostrPublicKey(session.publicKeyHex, session.npub)
+        val decoded = crypto.decryptFromSelf(event.content, privateKey, publicKey)
+            .mapCatching { JsonNotePayloadCodec.decode(it).getOrThrow() }
+            .getOrThrow()
+        require(decoded == note.toPayload()) { "Signed event payload failed local decrypt/decode control" }
+    }
+
     suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult = client.publish(relays, event)
     suspend fun fetch(relays: List<String>, pubkey: String): RelayFetchResult = client.fetchNotes(relays, pubkey)
 }

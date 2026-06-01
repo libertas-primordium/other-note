@@ -8,6 +8,7 @@ import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 data class ReducedNoteState(
     val notes: List<Note>,
     val selectedEvents: List<NostrEvent>,
+    val selectedNoteIds: Set<String>,
     val rejectedCount: Int,
 )
 
@@ -36,6 +37,7 @@ fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<S
     return ReducedNoteState(
         notes = selected.map { it.second }.filterNot { it.deleted }.sortedByDescending { it.updatedAtMs },
         selectedEvents = selected.map { it.first },
+        selectedNoteIds = selected.map { it.second.id }.toSet(),
         rejectedCount = rejected,
     )
 }

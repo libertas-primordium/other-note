@@ -1,14 +1,11 @@
 package com.libertasprimordium.othernote.ui
 
-import com.libertasprimordium.othernote.data.InMemoryNoteRepository
-import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.domain.Note
+import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
-import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrRepository
-import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
@@ -23,12 +20,13 @@ enum class AppMode {
     Authenticated,
 }
 
-class AppState {
-    private val crypto = NonProductionNostrCrypto()
-    private val client = OfflineNostrClient()
+class AppState(private val services: AppServices = defaultAppServices()) {
+    private val crypto = services.crypto
+    private val client = services.client
     private val nostr = NostrRepository(crypto, client)
-    val notes = InMemoryNoteRepository()
-    val relaySettings = RelaySettingsStore()
+    val runtimeMode: AppRuntimeMode = services.mode
+    val notes = services.notes
+    val relaySettings = services.relaySettings
     private val saveNote = SaveNoteUseCase(notes, nostr)
     private val deleteNote = DeleteNoteUseCase(notes, nostr)
     private val syncNotes = SyncNotesUseCase(notes, nostr, crypto)
@@ -40,23 +38,42 @@ class AppState {
     private val _mode = MutableStateFlow(AppMode.SignedOut)
     val mode: StateFlow<AppMode> = _mode
 
-    private val _syncState = MutableStateFlow(SyncState(warnings = listOf("Production Nostr crypto is not wired yet")))
+    private val _syncState = MutableStateFlow(SyncState(warnings = services.startupWarnings))
     val syncState: StateFlow<SyncState> = _syncState
 
-    private val _message = MutableStateFlow("Desktop key persistence is disabled; nsec is kept in memory only.")
+    private val _message = MutableStateFlow(startupMessage())
     val message: StateFlow<String> = _message
 
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {
             is KeyDecodeResult.Valid -> {
+                if (!crypto.productionReady) {
+                    _message.value = "Validated nsec format only. Relay sync is disabled in offline runtime."
+                    _session.value = UserSession(
+                        nsec = "nsec-redacted",
+                        privateKeyHex = decoded.privateKey.hex,
+                        npub = "npub unavailable in offline runtime",
+                        publicKeyHex = "unavailable",
+                    )
+                    _mode.value = AppMode.Authenticated
+                    return true
+                }
+                val publicKey = crypto.derivePublicKey(decoded.privateKey).getOrElse {
+                    _message.value = it.message ?: "Could not derive public key"
+                    return false
+                }
                 _session.value = UserSession(
                     nsec = "nsec-redacted",
                     privateKeyHex = decoded.privateKey.hex,
-                    npub = "npub unavailable until secp256k1 integration",
-                    publicKeyHex = "unavailable",
+                    npub = publicKey.npub,
+                    publicKeyHex = publicKey.hex,
                 )
                 _mode.value = AppMode.Authenticated
-                _message.value = "nsec validated. Public key derivation and relay publishing need a production crypto adapter."
+                _message.value = if (runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                    "Developer relay mode. nsec is session-only and not persisted."
+                } else {
+                    "nsec validated. Relay sync is disabled in offline runtime."
+                }
                 true
             }
             is KeyDecodeResult.Invalid -> {
@@ -79,25 +96,31 @@ class AppState {
         _message.value = "Session cleared. Local in-memory notes were removed."
     }
 
-    suspend fun save(existing: Note?, markdown: String) {
+    suspend fun save(existing: Note?, markdown: String): Boolean {
         val result = saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
         _message.value = result.toMessage()
+        return result !is SaveResult.Failed
     }
 
-    suspend fun delete(note: Note) {
+    suspend fun delete(note: Note): Boolean {
         val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
         _message.value = result.toMessage()
+        return result !is SaveResult.Failed
     }
 
     suspend fun sync() {
-        if (_session.value == null) {
+        if (_session.value == null || runtimeMode != AppRuntimeMode.DesktopDevRelay) {
             _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
             _message.value = _syncState.value.summary
             return
         }
         _syncState.value = _syncState.value.copy(syncing = true)
         _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls())
-        _message.value = _syncState.value.summary
+        _message.value = buildString {
+            append(_syncState.value.summary)
+            val relaySummary = _syncState.value.relayStatuses.toSafeSummary()
+            if (relaySummary.isNotBlank()) append("\n").append(relaySummary)
+        }
     }
 
     suspend fun saveRelays(rawRelays: List<String>) {
@@ -120,5 +143,16 @@ class AppState {
     private fun SaveResult.toMessage(): String = when (this) {
         is SaveResult.LocalOnly -> reason
         is SaveResult.Published -> relayMessages.joinToString("\n")
+        is SaveResult.Failed -> reason
     }
+
+    private fun List<RelayStatus>.toSafeSummary(): String =
+        joinToString("\n") { "${it.url}: read=${it.readable} write=${it.writable} ${it.message.take(180)}" }
+
+    private fun startupMessage(): String =
+        if (services.mode == AppRuntimeMode.DesktopDevRelay) {
+            "Developer relay runtime enabled. Use throwaway nsecs only; keys are session-only."
+        } else {
+            "Offline runtime. Desktop key persistence is disabled; nsec is kept in memory only."
+        }
 }

@@ -22,9 +22,16 @@ class DeleteNoteUseCase(
             notes.upsertLocal(tombstone)
             return SaveResult.LocalOnly(eventResult.exceptionOrNull()?.message ?: "Crypto adapter refused tombstone publish")
         }
-        notes.upsertLocal(tombstone, event)
+        val localControl = nostr.validateSignedNoteEvent(tombstone, event, session)
+        if (localControl.isFailure) {
+            return SaveResult.Failed(localControl.exceptionOrNull()?.message ?: "Signed tombstone failed local validation")
+        }
         val publish = nostr.publish(relays, event)
+        if (!publish.anySucceeded) {
+            return SaveResult.Failed("No relay accepted tombstone. ${publish.statuses.toSafeMessages().joinToString("; ")}")
+        }
+        notes.upsertLocal(tombstone, event)
         if (publish.allSucceeded) notes.markPublished(event.id)
-        return SaveResult.Published(publish.statuses.map { "${it.url}: ${it.message}" })
+        return SaveResult.Published(publish.statuses.toSafeMessages())
     }
 }

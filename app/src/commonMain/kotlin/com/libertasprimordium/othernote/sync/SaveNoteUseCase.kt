@@ -29,14 +29,25 @@ class SaveNoteUseCase(
             notes.upsertLocal(note)
             return SaveResult.LocalOnly(eventResult.exceptionOrNull()?.message ?: "Crypto adapter refused publishing")
         }
-        notes.upsertLocal(note, event)
+        val localControl = nostr.validateSignedNoteEvent(note, event, session)
+        if (localControl.isFailure) {
+            return SaveResult.Failed(localControl.exceptionOrNull()?.message ?: "Signed event failed local validation")
+        }
         val publish = nostr.publish(relays, event)
+        if (!publish.anySucceeded) {
+            return SaveResult.Failed("No relay accepted write. ${publish.statuses.toSafeMessages().joinToString("; ")}")
+        }
+        notes.upsertLocal(note, event)
         if (publish.allSucceeded) notes.markPublished(event.id)
-        return SaveResult.Published(publish.statuses.map { "${it.url}: ${it.message}" })
+        return SaveResult.Published(publish.statuses.toSafeMessages())
     }
 }
 
 sealed class SaveResult {
     data class LocalOnly(val reason: String) : SaveResult()
     data class Published(val relayMessages: List<String>) : SaveResult()
+    data class Failed(val reason: String) : SaveResult()
 }
+
+fun List<com.libertasprimordium.othernote.domain.RelayStatus>.toSafeMessages(): List<String> =
+    map { "${it.url}: read=${it.readable} write=${it.writable} ${it.message.take(180)}" }

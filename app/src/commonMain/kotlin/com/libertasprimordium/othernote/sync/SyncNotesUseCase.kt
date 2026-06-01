@@ -28,18 +28,23 @@ class SyncNotesUseCase(
         }
         val privateKey = NostrPrivateKey(session.privateKeyHex)
         val publicKey = NostrPublicKey(session.publicKeyHex, session.npub)
-        val reduced = reduceNoteEvents(fetch.events) { event ->
+        val candidateEvents = fetch.events.filter { event ->
+            event.pubkey == session.publicKeyHex && crypto.validate(event).getOrDefault(false)
+        }
+        val rejectedBeforeDecrypt = fetch.events.size - candidateEvents.size
+        val reduced = reduceNoteEvents(candidateEvents) { event ->
             crypto.decryptFromSelf(event.content, privateKey, publicKey)
         }
-        val remoteIds = reduced.notes.map { it.id }.toSet()
-        val localOnlyNotes = notes.notes.value.filter { it.sourceEventId == null && it.id !in remoteIds }
-        notes.replaceFromSync(reduced.notes + localOnlyNotes)
+        val selectedNoteIds = reduced.selectedNoteIds
+        val preservedNotes = notes.notes.value.filter { it.id !in selectedNoteIds }
+        notes.replaceFromSync(reduced.notes + preservedNotes)
         notes.pendingEvents.value.forEach { pending ->
             val publish = nostr.publish(relays, pending)
             if (publish.allSucceeded) notes.markPublished(pending.id)
         }
         val warnings = buildList {
-            if (reduced.rejectedCount > 0) add("Rejected ${reduced.rejectedCount} malformed or undecryptable events")
+            val rejectedCount = rejectedBeforeDecrypt + reduced.rejectedCount
+            if (rejectedCount > 0) add("Rejected $rejectedCount invalid, malformed, or undecryptable events")
         }
         return SyncState(lastSyncMs = nowMs(), relayStatuses = fetch.statuses, warnings = warnings)
     }

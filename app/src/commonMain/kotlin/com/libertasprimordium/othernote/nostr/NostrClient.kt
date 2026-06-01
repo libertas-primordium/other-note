@@ -17,6 +17,7 @@ data class RelayPublishResult(
     val statuses: List<RelayStatus>,
 ) {
     val allSucceeded: Boolean get() = statuses.isNotEmpty() && statuses.all { it.writable }
+    val anySucceeded: Boolean get() = statuses.any { it.writable }
 }
 
 data class ProfileMetadata(
