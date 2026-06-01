@@ -16,7 +16,7 @@ Important security status:
 - Secure private-key persistence is intentionally disabled until platform secure storage is implemented.
 - Production Nostr crypto is wired for offline desktop/JVM tests through `ProductionNostrCryptoFactory`. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until relay and storage behavior are ready.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
-- Relay networking is represented by clean interfaces and an offline adapter. Publishing and fetching surface explicit non-success status instead of fake success.
+- Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -107,13 +107,13 @@ Desktop package validation when the active JDK includes `jpackage`:
 ./gradlew :app:packageDeb
 ```
 
-Relay integration tests are intentionally opt-in and transport is still not implemented:
+Relay integration tests are intentionally opt-in. They generate throwaway keys at runtime, publish encrypted disposable kind `30078` test blobs, fetch them back, publish an update, and publish an app-level tombstone. Public relays may retain those encrypted blobs.
 
 ```sh
 OTHER_NOTE_RELAY_TESTS=1 OTHER_NOTE_TEST_RELAYS=wss://relay.example.com ./gradlew :app:desktopTest
 ```
 
-Generated relay-test notes are disposable. If relay tests are enabled in the future, encrypted test blobs may remain on public relays.
+Public relay behavior varies; the integration test requires at least one configured relay to accept each write and reports per-relay read/write status when assertions fail.
 
 ## Crypto Adapter Status
 
@@ -130,6 +130,18 @@ The offline adapter is backed by Quartz `1.03.0` for:
 Quartz is MIT-licensed and therefore GPLv3-compatible. Integrating it required moving the project to Kotlin `2.1.21`, Compose Multiplatform `1.8.2`, Android Gradle Plugin `8.9.1`, Gradle `8.11.1`, and Android compile/target SDK `36`.
 
 The real crypto round-trip test lives under `desktopTest`. Android compiles and packages the adapter, but Android host-side unit tests do not run the JNI-backed secp256k1 round trip.
+
+## Relay Transport Status
+
+`DesktopNostrClient` implements bounded NIP-01 WebSocket publish and fetch behavior for desktop/JVM tests:
+
+- Sends `["EVENT", event]` and waits for matching `OK`.
+- Sends `REQ` filters for author, kind `30078`, `#t=["other-note"]`, and a bounded limit.
+- Reads `EVENT`, `EOSE`, `CLOSED`, `NOTICE`, and `OK` relay messages.
+- Sends `CLOSE` after bounded fetches.
+- Falls back to author/kind filtering if tag filtering does not return usable events.
+
+This client is not wired into normal app runtime yet. Public relay sync should remain behind explicit developer/test configuration until account, storage, and UI failure behavior are reviewed.
 
 ## Architecture
 
@@ -150,7 +162,7 @@ Platform code:
 ## Known Limitations And TODOs
 
 - Integrate a GPL-compatible, audited Nostr crypto path for NIP-19, secp256k1 Schnorr signing, event id validation, and NIP-44 v2 encryption/decryption.
-- Replace `OfflineNostrClient` with a real bounded WebSocket relay pool.
+- Wire the bounded WebSocket relay client into explicit developer/test runtime paths, then production sync after storage and failure handling are reviewed.
 - Add encrypted local cache storage. Do not persist private keys until platform secure storage exists.
 - Implement Android encrypted key storage and decide on a Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
