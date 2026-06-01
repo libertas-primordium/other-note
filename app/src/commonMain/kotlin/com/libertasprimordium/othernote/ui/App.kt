@@ -88,7 +88,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         when (mode) {
             AppMode.Authenticated -> {
                 onLoggedIn()
-                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay || appState.session.value?.authMethod == SessionAuthMethod.ExternalSigner) {
                     appState.startSync()
                 }
             }
@@ -167,17 +167,6 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
             Text(session?.abbreviatedNpub() ?: "Local-only session", color = OtherNoteMuted)
             if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
                 Text("Developer relay runtime", color = OtherNotePurple)
-            }
-            if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
-                TextButton(onClick = { appState.requestExternalSignerTestSignature() }) {
-                    Text("Test signer signing")
-                }
-                TextButton(onClick = { appState.requestExternalSignerNip44Test() }) {
-                    Text("Test signer encryption")
-                }
-                TextButton(onClick = { appState.requestExternalSignerNoteEventTest() }) {
-                    Text("Test signer note event")
-                }
             }
             Text(message, color = OtherNoteMuted)
             if ((appState.showRelayDiagnostics || appState.showNip55Diagnostics) && diagnostics.isNotBlank()) {

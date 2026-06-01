@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
-import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.security.AndroidExternalSignerProvider
 import com.libertasprimordium.othernote.security.AndroidNip55EventSigner
 import com.libertasprimordium.othernote.security.AndroidNip55Nip44Operator
@@ -31,13 +30,14 @@ class MainActivity : ComponentActivity() {
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
             crypto = NonProductionNostrCrypto(),
-            client = OfflineNostrClient(),
+            client = AndroidNostrClient(),
             externalSignerProvider = AndroidExternalSignerProvider(this),
             externalSignerPublicKeyRequester = publicKeyRequester,
             externalSignerEventSigner = eventSigner,
             externalSignerNip44Operator = nip44Operator,
+            showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
-            startupWarnings = listOf("Android runtime is offline; relay sync is disabled"),
+            startupWarnings = listOf("Android signer relay runtime enabled; nsec fallback remains local-only"),
         )
         setContent {
             OtherNoteApp(services)
@@ -47,4 +47,8 @@ class MainActivity : ComponentActivity() {
     private fun showNip55Diagnostics(): Boolean =
         System.getProperty("othernote.showNip55Diagnostics") == "true" ||
             System.getenv("OTHER_NOTE_SHOW_NIP55_DIAGNOSTICS") == "1"
+
+    private fun showRelayDiagnostics(): Boolean =
+        System.getProperty("othernote.showRelayDiagnostics") == "true" ||
+            System.getenv("OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS") == "1"
 }

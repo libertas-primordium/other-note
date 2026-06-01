@@ -35,7 +35,7 @@ class AndroidNip55Nip44Operator(context: Context) : NostrSignerNip44Operator {
 
     override fun decryptFromSelf(
         ciphertext: String,
-        expectedPlaintext: String,
+        expectedPlaintext: String?,
         currentUserPubkey: String,
         signerPackage: String?,
     ): SignerNip44OperationResult {

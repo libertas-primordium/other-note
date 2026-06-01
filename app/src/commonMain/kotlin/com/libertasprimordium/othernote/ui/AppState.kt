@@ -1,13 +1,18 @@
 package com.libertasprimordium.othernote.ui
 
 import com.libertasprimordium.othernote.domain.Note
+import com.libertasprimordium.othernote.domain.NoteKind
+import com.libertasprimordium.othernote.domain.OtherNoteTag
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
+import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrRepository
+import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
+import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
 import com.libertasprimordium.othernote.security.SignerNip44Operation
@@ -24,6 +29,7 @@ import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
+import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,8 +44,14 @@ enum class AppMode {
     Authenticated,
 }
 
+private enum class SignerWriteAction {
+    Save,
+    Delete,
+}
+
 class AppState(private val services: AppServices = defaultAppServices()) {
     private val crypto = services.crypto
+    private val signerVerifier = ProductionNostrCryptoFactory.createOrNull()
     private val client = services.client
     private val nostr = NostrRepository(crypto, client)
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -166,7 +178,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                     signerPackage = result.signerPackage,
                 )
                 _mode.value = AppMode.Authenticated
-                _message.value = "Signer login ready; note sync through signer is not implemented yet."
+                _message.value = "Signer login ready; relay sync can run with signer prompts."
             }
             SignerPublicKeyRequestResult.Cancelled -> {
                 _message.value = "Signer request cancelled"
@@ -399,9 +411,14 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
         return when (result) {
             is SignerNoteEventBuildResult.Success -> {
+                val publish = publishSignerEvent(session, result.signedEvent, SignerWriteAction.Save)
+                if (!publish.anySucceeded) {
+                    _message.value = "Save failed: no relay accepted write."
+                    return false
+                }
                 notes.upsertLocal(result.note, result.signedEvent)
                 services.localEventCache.upsertEvents(session.publicKeyHex, listOf(result.signedEvent))
-                _message.value = "${result.safeSummary}. Not synced to relays."
+                _message.value = publish.signerWriteMessage(SignerWriteAction.Save)
                 true
             }
             SignerNoteEventBuildResult.Cancelled -> {
@@ -464,9 +481,14 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         )
         return when (result) {
             is SignerNoteEventBuildResult.Success -> {
+                val publish = publishSignerEvent(session, result.signedEvent, SignerWriteAction.Delete)
+                if (!publish.anySucceeded) {
+                    _message.value = "Delete failed: no relay accepted tombstone."
+                    return false
+                }
                 notes.upsertLocal(result.note, result.signedEvent)
                 services.localEventCache.upsertEvents(session.publicKeyHex, listOf(result.signedEvent))
-                _message.value = "${result.safeSummary}. Not synced to relays."
+                _message.value = publish.signerWriteMessage(SignerWriteAction.Delete)
                 true
             }
             SignerNoteEventBuildResult.Cancelled -> {
@@ -501,6 +523,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun sync() {
+        val session = _session.value
+        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+            syncWithExternalSigner(session)
+            return
+        }
         if (_session.value == null || runtimeMode != AppRuntimeMode.DesktopDevRelay || _session.value?.hasSessionPrivateKey() != true) {
             _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
             _message.value = _syncState.value.summary
@@ -521,6 +548,163 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     fun startSync(): Job = appScope.launch { sync() }
+
+    private suspend fun publishSignerEvent(
+        session: UserSession,
+        event: NostrEvent,
+        action: SignerWriteAction,
+    ): RelayPublishResult {
+        val relays = relaySettings.normalizedUrls().distinct()
+        services.pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, event, relays)
+        val publish = nostr.publishBestEffort(relays, event, appScope) { statuses ->
+            appScope.launch { updateSignerPendingStatuses(session.publicKeyHex, event.id, statuses) }
+            updateSignerPublishStatus(statuses, action)
+        }
+        val firstAccepted = publish.firstAccepted.await()
+        updateSignerPendingStatuses(session.publicKeyHex, event.id, firstAccepted.statuses)
+        appScope.launch {
+            runCatching {
+                val complete = publish.complete.await()
+                updateSignerPendingStatuses(session.publicKeyHex, event.id, complete.statuses)
+                updateSignerPublishStatus(complete.statuses, action)
+            }
+        }
+        return firstAccepted
+    }
+
+    private suspend fun updateSignerPendingStatuses(accountPubkey: String, eventId: String, statuses: List<RelayStatus>) {
+        statuses.forEach { status ->
+            if (status.writable) {
+                services.pendingWriteStore.markRelayAccepted(eventId, status.url)
+            } else {
+                services.pendingWriteStore.markRelayRejectedOrFailed(eventId, status.url, status.message)
+            }
+        }
+        val pending = services.pendingWriteStore.loadPendingWrites(accountPubkey).firstOrNull { it.event.id == eventId }
+        if (pending?.isComplete == true) services.pendingWriteStore.removeCompletedWrite(eventId)
+    }
+
+    private fun updateSignerPublishStatus(statuses: List<RelayStatus>, action: SignerWriteAction) {
+        _syncState.value = _syncState.value.copy(relayStatuses = statuses)
+        _message.value = RelayPublishResult(statuses).signerWriteMessage(action)
+        _diagnosticMessage.value = statuses.toSafeSummary()
+    }
+
+    private fun RelayPublishResult.signerWriteMessage(action: SignerWriteAction): String {
+        val total = relaySettings.normalizedUrls().distinct().size
+        val accepted = statuses.count { it.writable }
+        val pending = statuses.size < total
+        return when (action) {
+            SignerWriteAction.Save -> if (pending) {
+                "Saved to $accepted/$total relays; syncing others..."
+            } else {
+                "Saved to $accepted/$total relays"
+            }
+            SignerWriteAction.Delete -> if (pending) {
+                "Deleted locally and sent to $accepted/$total relays; syncing others..."
+            } else {
+                "Deleted locally and sent to $accepted/$total relays"
+            }
+        }
+    }
+
+    private suspend fun syncWithExternalSigner(session: UserSession) {
+        val verifier = signerVerifier
+        if (verifier == null) {
+            _syncState.value = SyncState(errors = listOf(ProductionNostrCryptoFactory.unavailableReason))
+            _message.value = _syncState.value.summary
+            return
+        }
+        val relays = relaySettings.normalizedUrls()
+        _syncState.value = _syncState.value.copy(syncing = true)
+        _message.value = "Syncing..."
+        val aggregateEvents = mutableListOf<NostrEvent>()
+        val aggregateStatuses = linkedMapOf<String, RelayStatus>()
+        val cached = services.localEventCache.loadEvents(session.publicKeyHex)
+        if (cached.isNotEmpty()) {
+            aggregateEvents += cached
+            applySignerFetchedEvents(session, aggregateEvents, emptyList(), final = false)
+        }
+        val fetch = nostr.fetchIncrementally(relays, session.publicKeyHex) { partial ->
+            aggregateEvents += partial.events
+            partial.statuses.forEach { aggregateStatuses[it.url] = it }
+            services.localEventCache.upsertEvents(session.publicKeyHex, partial.events.filter { it.isSignerCacheable(session.publicKeyHex, verifier) })
+            val partialState = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = false)
+            _syncState.value = partialState.copy(syncing = true)
+            _message.value = partialState.toCompactMessage()
+            _diagnosticMessage.value = partialState.toDiagnosticMessage()
+        }
+        aggregateEvents += fetch.events.filterNot { fetched -> aggregateEvents.any { it.id == fetched.id } }
+        fetch.statuses.forEach { aggregateStatuses[it.url] = it }
+        services.localEventCache.upsertEvents(session.publicKeyHex, aggregateEvents.filter { it.isSignerCacheable(session.publicKeyHex, verifier) })
+        _syncState.value = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = true).copy(syncing = false)
+        _message.value = _syncState.value.toCompactMessage()
+        _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+    }
+
+    private suspend fun applySignerFetchedEvents(
+        session: UserSession,
+        events: List<NostrEvent>,
+        statuses: List<RelayStatus>,
+        final: Boolean,
+    ): SyncState {
+        val verifier = signerVerifier ?: return SyncState(errors = listOf(ProductionNostrCryptoFactory.unavailableReason))
+        if (statuses.isNotEmpty() && statuses.none { it.readable }) {
+            return SyncState(relayStatuses = statuses, errors = listOf("Sync failed: no relays reachable"))
+        }
+        var wrongAuthor = 0
+        var wrongKind = 0
+        var missingT = 0
+        var missingD = 0
+        var invalidSignature = 0
+        val candidateEvents = events.distinctBy { it.id }.mapNotNull { event ->
+            when {
+                event.pubkey != session.publicKeyHex -> {
+                    wrongAuthor++
+                    null
+                }
+                event.kind != NoteKind -> {
+                    wrongKind++
+                    null
+                }
+                !event.tags.any { it.size >= 2 && it[0] == "t" && it[1] == OtherNoteTag } -> {
+                    missingT++
+                    null
+                }
+                event.dTag() == null -> {
+                    missingD++
+                    null
+                }
+                !verifier.validate(event).getOrDefault(false) -> {
+                    invalidSignature++
+                    null
+                }
+                else -> event
+            }
+        }
+        val reduced = reduceNoteEvents(candidateEvents) { event ->
+            when (val decrypted = services.externalSignerNip44Operator.decryptFromSelf(event.content, null, session.publicKeyHex, session.signerPackage)) {
+                is SignerNip44OperationResult.Decrypted -> Result.success(decrypted.plaintext)
+                else -> Result.failure(IllegalStateException("Signer decrypt failed"))
+            }
+        }
+        val selectedNoteIds = reduced.selectedNoteIds
+        val preservedNotes = notes.notes.value.filter { it.id !in selectedNoteIds }
+        notes.replaceFromSync(reduced.notes + preservedNotes)
+        val warnings = buildList {
+            add("Signer sync fetched_events=${events.distinctBy { it.id }.size} candidate_events=${candidateEvents.size} selected_events=${reduced.selectedEvents.size} visible_notes=${reduced.notes.size} rejected_wrong_author=$wrongAuthor rejected_wrong_kind=$wrongKind rejected_missing_t=$missingT rejected_missing_d=$missingD rejected_validation=$invalidSignature rejected_decrypt=${reduced.decryptRejectedCount} rejected_payload=${reduced.payloadRejectedCount} rejected_dtag=${reduced.dTagRejectedCount}")
+            if (reduced.selectedEvents.isNotEmpty() && reduced.notes.isEmpty()) add("Latest selected events are tombstones; matching notes are hidden")
+            if (statuses.any { !it.readable }) add("Partial relay read failure; local notes were preserved")
+        }
+        return SyncState(lastSyncMs = if (final) com.libertasprimordium.othernote.util.nowMs() else null, relayStatuses = statuses, warnings = warnings)
+    }
+
+    private fun NostrEvent.isSignerCacheable(accountPubkey: String, verifier: com.libertasprimordium.othernote.nostr.NostrCrypto): Boolean =
+        pubkey == accountPubkey &&
+            kind == NoteKind &&
+            tags.any { it.size >= 2 && it[0] == "t" && it[1] == OtherNoteTag } &&
+            dTag() != null &&
+            verifier.validate(this).getOrDefault(false)
 
     private fun SyncState.toDiagnosticMessage(): String =
         buildString {
