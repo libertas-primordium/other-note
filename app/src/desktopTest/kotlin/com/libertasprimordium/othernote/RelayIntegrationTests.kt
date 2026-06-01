@@ -8,6 +8,8 @@ import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrPrivateKey
 import com.libertasprimordium.othernote.nostr.NostrPublicKey
+import com.libertasprimordium.othernote.nostr.NostrRelayMessage
+import com.libertasprimordium.othernote.nostr.NostrWireJson
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.RelayFetchResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
@@ -22,6 +24,11 @@ import kotlin.test.assertTrue
 import kotlin.test.fail
 
 class RelayIntegrationTests {
+    private val initialTestBody =
+        "Other Note disposable relay integration test payload\nQuote: \"hello\"\nUnicode: test\nTab:\tvalue\n```text\nrelay\n```"
+    private val updatedTestBody =
+        "Other Note disposable relay integration test payload updated\nQuote: \"hello\"\nUnicode: test\nTab:\tvalue\n```text\nrelay\n```"
+
     @Test
     fun encryptedNoteRelayRoundTripIsExplicitlyOptIn() = runBlocking {
         if (System.getenv("OTHER_NOTE_RELAY_TESTS") != "1") return@runBlocking
@@ -44,11 +51,24 @@ class RelayIntegrationTests {
             noteId = noteId,
             createdAtMs = createdAtMs,
             updatedAtMs = createdAtMs,
-            bodyMarkdown = "Other Note disposable relay integration test",
+            bodyMarkdown = initialTestBody,
             deleted = false,
         )
 
         val initialEvent = signPayload(crypto, privateKey, publicKey, basePayload, createdAt = createdAtMs / 1000)
+        assertTrue(crypto.validate(initialEvent).getOrThrow(), "Local initial event failed validation before publish")
+        val localInitialClassification = RelayFetchResult(listOf(initialEvent), emptyList())
+            .classifyTestEvents(crypto, privateKey, publicKey, noteId)
+        assertTrue(
+            localInitialClassification.single().valid,
+            "Local initial event failed decrypt/decode before publish: ${localInitialClassification.classificationSummary()}",
+        )
+        val localWireEvent = NostrWireJson.parseRelayMessage("""["EVENT","local",${NostrWireJson.eventObject(initialEvent)}]""")
+        assertTrue(
+            localWireEvent is NostrRelayMessage.Event && localWireEvent.event == initialEvent,
+            "Local initial event failed Nostr wire event round trip before publish",
+        )
+
         val initialPublish = client.publish(relays, initialEvent)
         assertTrue(
             initialPublish.statuses.any { it.writable },
@@ -56,10 +76,12 @@ class RelayIntegrationTests {
         )
 
         val initialFetch = client.fetchNotes(relays, publicKey.hex)
-        val validInitial = initialFetch.validTestEvents(crypto, privateKey, publicKey, noteId)
+        val initialClassifications = initialFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
+        val validInitial = initialClassifications.validEvents()
         assertTrue(
             validInitial.isNotEmpty(),
-            "No valid initial test event fetched. Publish: ${initialPublish.statuses.safeSummary()}; fetch: ${initialFetch.statuses.safeSummary()}",
+            "No valid initial test event fetched. Publish: ${initialPublish.statuses.safeSummary()}; " +
+                "fetch: ${initialFetch.statuses.safeSummary()}; rejected: ${initialClassifications.classificationSummary()}",
         )
         assertTrue(
             validInitial.any { event -> decryptPayloadOrNull(crypto, event, privateKey, publicKey) == basePayload },
@@ -68,7 +90,7 @@ class RelayIntegrationTests {
 
         val updatedPayload = basePayload.copy(
             updatedAtMs = createdAtMs + 2_000,
-            bodyMarkdown = "Other Note disposable relay integration test updated",
+            bodyMarkdown = updatedTestBody,
         )
         val updatedEvent = signPayload(crypto, privateKey, publicKey, updatedPayload, createdAt = initialEvent.createdAt + 2)
         val updatedPublish = client.publish(relays, updatedEvent)
@@ -78,7 +100,8 @@ class RelayIntegrationTests {
         )
 
         val updatedFetch = client.fetchNotes(relays, publicKey.hex)
-        val validUpdated = updatedFetch.validTestEvents(crypto, privateKey, publicKey, noteId)
+        val updatedClassifications = updatedFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
+        val validUpdated = updatedClassifications.validEvents()
         val reducedUpdated = reduceNoteEvents(validUpdated) { event ->
             crypto.decryptFromSelf(event.content, privateKey, publicKey)
         }
@@ -100,7 +123,8 @@ class RelayIntegrationTests {
         )
 
         val tombstoneFetch = client.fetchNotes(relays, publicKey.hex)
-        val validTombstone = tombstoneFetch.validTestEvents(crypto, privateKey, publicKey, noteId)
+        val tombstoneClassifications = tombstoneFetch.classifyTestEvents(crypto, privateKey, publicKey, noteId)
+        val validTombstone = tombstoneClassifications.validEvents()
         val reducedTombstone = reduceNoteEvents(validTombstone) { event ->
             crypto.decryptFromSelf(event.content, privateKey, publicKey)
         }
@@ -130,16 +154,40 @@ class RelayIntegrationTests {
         ).getOrThrow()
     }
 
-    private fun RelayFetchResult.validTestEvents(
+    private fun RelayFetchResult.classifyTestEvents(
         crypto: NostrCrypto,
         privateKey: NostrPrivateKey,
         publicKey: NostrPublicKey,
         noteId: String,
-    ): List<NostrEvent> = events.filter { event ->
-        event.pubkey == publicKey.hex &&
-            event.dTag() == noteDTag(noteId) &&
-            crypto.validate(event).getOrDefault(false) &&
-            decryptPayloadOrNull(crypto, event, privateKey, publicKey)?.noteId == noteId
+    ): List<EventClassification> = events.map { event ->
+        val validateResult = crypto.validate(event)
+        val decryptResult = if (validateResult.getOrDefault(false)) {
+            crypto.decryptFromSelf(event.content, privateKey, publicKey)
+        } else {
+            Result.failure(IllegalStateException("not attempted"))
+        }
+        val payloadResult = if (decryptResult.isSuccess) {
+            decryptResult.mapCatching { JsonNotePayloadCodec.decode(it).getOrThrow() }
+        } else {
+            Result.failure(IllegalStateException("not attempted"))
+        }
+        val payload = payloadResult.getOrNull()
+        EventClassification(
+            event = event,
+            idPrefix = event.id.take(12),
+            pubkeyMatches = event.pubkey == publicKey.hex,
+            kind = event.kind,
+            dTag = event.dTag()?.takeIf { it == noteDTag(noteId) } ?: event.dTag()?.take(48),
+            dTagMatches = event.dTag() == noteDTag(noteId),
+            hasOtherNoteTag = event.isOtherNoteEvent(),
+            validationSucceeded = validateResult.getOrDefault(false),
+            validationFailure = validateResult.exceptionOrNull()?.safeFailure(),
+            decryptSucceeded = decryptResult.isSuccess,
+            decryptFailure = decryptResult.exceptionOrNull()?.safeFailure(),
+            payloadDecodeSucceeded = payloadResult.isSuccess,
+            payloadDecodeFailure = payloadResult.exceptionOrNull()?.safeFailure(),
+            noteIdMatches = payload?.noteId == noteId,
+        )
     }
 
     private fun decryptPayloadOrNull(
@@ -156,4 +204,56 @@ class RelayIntegrationTests {
         joinToString("; ") { status ->
             "${status.url} read=${status.readable} write=${status.writable} message=${status.message.take(180)}"
         }
+
+    private fun List<EventClassification>.validEvents(): List<NostrEvent> =
+        filter { it.valid }.map { it.event }
+
+    private fun List<EventClassification>.classificationSummary(): String =
+        if (isEmpty()) {
+            "no events"
+        } else {
+            joinToString("; ") { it.safeSummary() }
+        }
+
+    private fun Throwable.safeFailure(): String =
+        "${this::class.simpleName}:${message?.redactDiagnosticMessage()?.take(160) ?: ""}"
+
+    private fun String.redactDiagnosticMessage(): String =
+        replace(Regex("[0-9a-fA-F]{24,}"), "<hex-redacted>")
+}
+
+private data class EventClassification(
+    val event: NostrEvent,
+    val idPrefix: String,
+    val pubkeyMatches: Boolean,
+    val kind: Int,
+    val dTag: String?,
+    val dTagMatches: Boolean,
+    val hasOtherNoteTag: Boolean,
+    val validationSucceeded: Boolean,
+    val validationFailure: String?,
+    val decryptSucceeded: Boolean,
+    val decryptFailure: String?,
+    val payloadDecodeSucceeded: Boolean,
+    val payloadDecodeFailure: String?,
+    val noteIdMatches: Boolean,
+) {
+    val valid: Boolean
+        get() = pubkeyMatches &&
+            kind == NoteKind &&
+            dTagMatches &&
+            hasOtherNoteTag &&
+            validationSucceeded &&
+            decryptSucceeded &&
+            payloadDecodeSucceeded &&
+            noteIdMatches
+
+    fun safeSummary(): String =
+        "event=$idPrefix pubkeyMatches=$pubkeyMatches kind=$kind dTag=${dTag ?: "missing"} " +
+            "dTagMatches=$dTagMatches hasOtherNoteTag=$hasOtherNoteTag " +
+            "validation=$validationSucceeded${validationFailure.detail()} " +
+            "decrypt=$decryptSucceeded${decryptFailure.detail()} " +
+            "payloadDecode=$payloadDecodeSucceeded${payloadDecodeFailure.detail()} noteIdMatches=$noteIdMatches"
+
+    private fun String?.detail(): String = if (this == null) "" else "($this)"
 }
