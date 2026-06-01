@@ -63,6 +63,12 @@ Public relays may purge old events. Add a relay you control for stronger long-te
 
 Relay changes are planned through a migration use case that identifies added and removed relays. The intended production behavior is to fetch from old/removing relays, reduce to current note state, republish current signed events to added relays, and only then finalize settings. The first pass stores the plan and surfaces limitations because relay networking is not wired yet.
 
+## Key Management And nsec Safety
+
+Current direct `nsec` use is session-only. Other Note does not persist `nsec` values or private keys, and saved-key mode is disabled until platform secure storage or signer delegation is implemented and tested.
+
+The key-management policy is documented in [docs/key-management.md](docs/key-management.md). Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side.
+
 ## Build And Run
 
 Prerequisites:
