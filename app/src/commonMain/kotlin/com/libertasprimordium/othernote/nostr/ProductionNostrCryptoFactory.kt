@@ -5,17 +5,17 @@ import com.vitorpamplona.quartz.nip01Core.core.Event as QuartzEvent
 import com.vitorpamplona.quartz.nip01Core.crypto.EventAssembler
 import com.vitorpamplona.quartz.nip01Core.crypto.EventHasher
 import com.vitorpamplona.quartz.nip01Core.crypto.KeyPair
-import com.vitorpamplona.quartz.nip01Core.crypto.Nip01
+import com.vitorpamplona.quartz.nip01Core.crypto.Nip01Crypto
 import com.vitorpamplona.quartz.nip44Encryption.Nip44
 
 object ProductionNostrCryptoFactory {
     const val unavailableReason =
-        "Quartz-backed Nostr crypto is unavailable."
+        "Quartz-backed production Nostr crypto is unavailable."
 
     fun createOrNull(): NostrCrypto? = QuartzNostrCrypto()
 }
 
-class QuartzNostrCrypto : NostrCrypto {
+private class QuartzNostrCrypto : NostrCrypto {
     override val productionReady: Boolean = true
 
     override fun generatePrivateKey(): Result<NostrPrivateKey> = runCatching {
@@ -89,7 +89,7 @@ class QuartzNostrCrypto : NostrCrypto {
             content = event.content,
         )
         val idMatches = computeEventId(unsigned).getOrThrow() == event.id
-        val signatureMatches = Nip01.verify(
+        val signatureMatches = Nip01Crypto.verify(
             event.sig.hexToBytes(),
             event.id.hexToBytes(),
             event.pubkey.hexToBytes(),
