@@ -1,6 +1,8 @@
 package com.libertasprimordium.othernote.domain
 
 import com.libertasprimordium.othernote.util.stableRandomId
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 const val NotePayloadSchema = "com.libertasprimordium.othernote.note.v1"
 const val OtherNoteTag = "other-note"
@@ -17,11 +19,16 @@ data class Note(
     val dTag: String get() = noteDTag(id)
 }
 
+@Serializable
 data class NotePayload(
     val schema: String = NotePayloadSchema,
+    @SerialName("note_id")
     val noteId: String,
+    @SerialName("created_at_ms")
     val createdAtMs: Long,
+    @SerialName("updated_at_ms")
     val updatedAtMs: Long,
+    @SerialName("body_markdown")
     val bodyMarkdown: String,
     val deleted: Boolean,
 )

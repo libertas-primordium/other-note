@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.libertasprimordium.othernote.domain.Note
@@ -63,8 +64,8 @@ fun OtherNoteApp() {
     val appState = remember { AppState() }
     OtherNoteTheme {
         var screen by remember { mutableStateOf<Screen>(Screen.Login) }
-        val session by appState.session.collectAsState()
-        if (session == null && screen !is Screen.Login) screen = Screen.Login
+        val mode by appState.mode.collectAsState()
+        if (mode == AppMode.SignedOut && screen !is Screen.Login) screen = Screen.Login
         when (val current = screen) {
             Screen.Login -> LoginScreen(appState) { screen = Screen.List }
             Screen.List -> NotesListScreen(appState, onOpen = { screen = Screen.Display(it) }, onNew = { screen = Screen.Edit(null) }, onSettings = { screen = Screen.Settings })
@@ -91,13 +92,26 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             onValueChange = { nsec = it },
             label = { Text("Paste nsec") },
             singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
-        Button(onClick = { if (appState.login(nsec)) onLoggedIn() }, modifier = Modifier.fillMaxWidth()) {
+        Button(
+            onClick = {
+                if (appState.login(nsec)) {
+                    nsec = ""
+                    onLoggedIn()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Text("Validate key")
         }
-        TextButton(onClick = { onLoggedIn() }) {
+        TextButton(onClick = {
+            nsec = ""
+            appState.continueLocalOnly()
+            onLoggedIn()
+        }) {
             Text("Continue local-only")
         }
         Spacer(Modifier.height(12.dp))
@@ -120,6 +134,7 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
                 actions = {
                     TextButton(onClick = { scope.launch { appState.sync() } }) { Text("Sync") }
+                    TextButton(onClick = { scope.launch { appState.logout() } }) { Text("Logout") }
                     TextButton(onClick = onSettings) { Text("Relays") }
                 },
             )
