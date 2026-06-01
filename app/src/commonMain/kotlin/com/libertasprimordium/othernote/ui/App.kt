@@ -219,6 +219,7 @@ fun NoteCard(note: Note, onOpen: (Note) -> Unit) {
 @Composable
 fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val message by appState.message.collectAsState()
     var confirmDelete by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
@@ -235,6 +236,9 @@ fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit
         containerColor = OtherNoteBlack,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState())) {
+            if (message.isNotBlank()) {
+                Text(message, color = OtherNoteMuted, modifier = Modifier.padding(bottom = 12.dp))
+            }
             RenderMarkdown(note.bodyMarkdown)
             detectUrls(note.bodyMarkdown).forEach { url ->
                 Text("${url.type}: ${url.value}", color = OtherNotePurple, modifier = Modifier.padding(top = 8.dp))
@@ -249,8 +253,9 @@ fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit
             confirmButton = {
                 Button(onClick = {
                         scope.launch {
-                            if (appState.delete(note)) {
-                                confirmDelete = false
+                            val deleted = appState.delete(note)
+                            confirmDelete = false
+                            if (deleted) {
                                 onBack()
                             }
                         }
