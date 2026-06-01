@@ -14,6 +14,8 @@ import com.libertasprimordium.othernote.security.SignerNip44Operation
 import com.libertasprimordium.othernote.security.SignerNip44OperationResult
 import com.libertasprimordium.othernote.security.SignerNip44RequestBuilder
 import com.libertasprimordium.othernote.security.SignerNip44TestPayload
+import com.libertasprimordium.othernote.security.SignerNoteEventBuildResult
+import com.libertasprimordium.othernote.security.SignerNoteEventBuilder
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
@@ -68,6 +70,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         appScope,
     )
     private val migrateRelays = MigrateRelaysUseCase()
+    private val signerNoteEventBuilder = SignerNoteEventBuilder(
+        nip44 = services.externalSignerNip44Operator,
+        eventSigner = services.externalSignerEventSigner,
+    )
 
     private val _session = MutableStateFlow<UserSession?>(null)
     val session: StateFlow<UserSession?> = _session
@@ -302,6 +308,51 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             }
             is SignerNip44OperationResult.Encrypted -> {
                 _message.value = "Signer decryption failed"
+            }
+        }
+    }
+
+    fun requestExternalSignerNoteEventTest() {
+        val session = _session.value
+        if (session?.authMethod != SessionAuthMethod.ExternalSigner) {
+            _message.value = "Use Android signer before building signer note event."
+            return
+        }
+        if (!externalSignerCanSignEvent || !externalSignerCanNip44RoundTrip) {
+            _message.value = "External signer note event build is unavailable."
+            return
+        }
+        _message.value = "Building signer note event..."
+        if (showNip55Diagnostics) {
+            _diagnosticMessage.value = listOf(
+                "operation_stage=payload_encode",
+                "operation_stage=nip44_encrypt",
+                "operation_stage=event_build",
+                "operation_stage=sign_event",
+                "operation_stage=validate",
+                "operation_stage=nip44_decrypt",
+                "operation_stage=payload_decode",
+                "kind=30078",
+                "plaintext_length=${SignerNoteEventBuilder.TestBodyMarkdown.length}",
+                "pubkey=${session.publicKeyHex.take(12)}",
+            ).joinToString("\n")
+        }
+        _message.value = "Waiting for signer..."
+        when (val result = signerNoteEventBuilder.buildTestNoteEvent(session, session.signerPackage)) {
+            is SignerNoteEventBuildResult.Success -> {
+                _message.value = result.safeSummary
+            }
+            SignerNoteEventBuildResult.Cancelled -> {
+                _message.value = "Signer note event build cancelled"
+            }
+            is SignerNoteEventBuildResult.Unavailable -> {
+                _message.value = result.safeReason
+            }
+            is SignerNoteEventBuildResult.Failed -> {
+                _message.value = result.safeReason
+            }
+            is SignerNoteEventBuildResult.InvalidResponse -> {
+                _message.value = result.safeReason
             }
         }
     }
