@@ -52,6 +52,7 @@ class DesktopLocalStoresTests {
         )
         firstStore.markRelayAccepted(event.id, "wss://accepted.example.com")
         firstStore.markRelayRejectedOrFailed(event.id, "wss://retry.example.com", "timeout without secrets")
+        firstStore.recordRetry(event.id, "wss://retry.example.com")
 
         val secondStore = DesktopPendingWriteStore(dir)
         val pending = secondStore.loadPendingWrites(AccountPubkey).single()
@@ -59,7 +60,8 @@ class DesktopLocalStoresTests {
 
         assertEquals(event, pending.event)
         assertEquals(PendingWriteStatus.Accepted, pending.relayStatuses["wss://accepted.example.com"])
-        assertEquals(PendingWriteStatus.Failed, pending.relayStatuses["wss://retry.example.com"])
+        assertEquals(PendingWriteStatus.Pending, pending.relayStatuses["wss://retry.example.com"])
+        assertEquals(1, pending.retryCounts["wss://retry.example.com"])
         assertEquals(listOf("wss://retry.example.com"), pending.unfinishedRelays)
         assertFalse(raw.contains(TestNsec))
         assertFalse(raw.contains(TestPrivateKey))
@@ -76,6 +78,32 @@ class DesktopLocalStoresTests {
 
         assertTrue(store.loadPendingWrites("aa".repeat(32)).isEmpty())
         assertEquals(1, store.loadPendingWrites(AccountPubkey).size)
+    }
+
+    @Test
+    fun completedPendingWritesAreRemovedFromDisk() = runBlocking {
+        val dir = Files.createTempDirectory("other-note-pending-remove-test")
+        val store = DesktopPendingWriteStore(dir)
+        val event = event("event-remove")
+
+        store.enqueuePendingWrite(AccountPubkey, event, listOf("wss://relay.example.com"))
+        store.markRelayAccepted(event.id, "wss://relay.example.com")
+        store.removeCompletedWrite(event.id)
+
+        assertTrue(store.loadPendingWrites(AccountPubkey).isEmpty())
+        val raw = Files.list(dir).use { files -> files.findFirst().orElseThrow().readText() }
+        assertFalse(raw.contains(event.id))
+    }
+
+    @Test
+    fun corruptPendingWriteFileIsIgnoredSafely() = runBlocking {
+        val dir = Files.createTempDirectory("other-note-pending-corrupt-test")
+        val accountFile = dir.resolve("$AccountPubkey.pending.json")
+        Files.createDirectories(dir)
+        Files.writeString(accountFile, "{not-json")
+        val store = DesktopPendingWriteStore(dir)
+
+        assertTrue(store.loadPendingWrites(AccountPubkey).isEmpty())
     }
 
     private fun event(

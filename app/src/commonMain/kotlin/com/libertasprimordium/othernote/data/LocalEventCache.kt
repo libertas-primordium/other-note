@@ -46,6 +46,8 @@ enum class PendingWriteStatus {
     Failed,
 }
 
+const val PendingWriteMaxRetryCount = 3
+
 data class PendingRelayWrite(
     val accountPubkey: String,
     val event: NostrEvent,

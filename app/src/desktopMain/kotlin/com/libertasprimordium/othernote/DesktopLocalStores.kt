@@ -1,16 +1,19 @@
 package com.libertasprimordium.othernote
 
+import com.libertasprimordium.othernote.data.DurableCachedEventRecord
+import com.libertasprimordium.othernote.data.DurablePendingWriteRecord
+import com.libertasprimordium.othernote.data.DurableRelayStoreCodec
 import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingRelayWrite
 import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
+import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import java.nio.file.Files
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import kotlin.io.path.createDirectories
@@ -29,14 +32,12 @@ object DesktopLocalStorePaths {
 class DesktopLocalEventCache(
     private val baseDir: Path = DesktopLocalStorePaths.dataDir().resolve("event-cache"),
 ) : LocalEventCache {
-    private val json = Json { prettyPrint = false; ignoreUnknownKeys = true }
-
     override suspend fun upsertEvents(accountPubkey: String, events: List<NostrEvent>) {
         if (events.isEmpty()) return
         val current = loadRecords(accountPubkey).associateBy { it.event.id }.toMutableMap()
         val now = nowMs()
         events.forEach { event ->
-            current[event.id] = CachedEventFileRecord(event = event.toDto(), cachedAtMs = now)
+            current[event.id] = DurableCachedEventRecord(event = event.toDurableRecord(), cachedAtMs = now)
         }
         writeRecords(accountPubkey, current.values.sortedBy { it.event.id })
     }
@@ -48,16 +49,17 @@ class DesktopLocalEventCache(
         runCatching { Files.deleteIfExists(fileFor(accountPubkey)) }
     }
 
-    private fun loadRecords(accountPubkey: String): List<CachedEventFileRecord> =
+    private fun loadRecords(accountPubkey: String): List<DurableCachedEventRecord> =
         readFile(fileFor(accountPubkey))
-            ?.let { runCatching { json.decodeFromString(CachedEventFile.serializer(), it).events }.getOrNull() }
+            ?.let { DurableRelayStoreCodec.decodeCachedEventsOrEmpty(it) }
             .orEmpty()
 
-    private fun writeRecords(accountPubkey: String, records: List<CachedEventFileRecord>) {
-        atomicWrite(fileFor(accountPubkey), json.encodeToString(CachedEventFile.serializer(), CachedEventFile(records)))
+    private fun writeRecords(accountPubkey: String, records: List<DurableCachedEventRecord>) {
+        atomicWrite(fileFor(accountPubkey), DurableRelayStoreCodec.encodeCachedEvents(records))
     }
 
-    private fun fileFor(accountPubkey: String): Path = baseDir.resolve("${accountPubkey.safeFileName()}.events.json")
+    private fun fileFor(accountPubkey: String): Path =
+        baseDir.resolve("${DurableRelayStoreCodec.safeFileName(accountPubkey)}.events.json")
 
     private fun readFile(file: Path): String? =
         runCatching { if (file.exists()) file.readText() else null }.getOrNull()
@@ -66,7 +68,6 @@ class DesktopLocalEventCache(
 class DesktopPendingWriteStore(
     private val baseDir: Path = DesktopLocalStorePaths.dataDir().resolve("pending-writes"),
 ) : PendingWriteStore {
-    private val json = Json { prettyPrint = false; ignoreUnknownKeys = true }
     private val _changes = MutableStateFlow(0L)
     override val changes: StateFlow<Long> = _changes
 
@@ -74,9 +75,9 @@ class DesktopPendingWriteStore(
         val current = loadRecords(accountPubkey).associateBy { it.event.id }.toMutableMap()
         val now = nowMs()
         val existing = current[event.id]
-        current[event.id] = PendingWriteFileRecord(
+        current[event.id] = DurablePendingWriteRecord(
             accountPubkey = accountPubkey,
-            event = event.toDto(),
+            event = event.toDurableRecord(),
             targetRelays = targetRelays.distinct(),
             relayStatuses = existing?.relayStatuses.orEmpty() + targetRelays.distinct().associateWith {
                 existing?.relayStatuses?.get(it) ?: PendingWriteStatus.Pending.name
@@ -102,7 +103,7 @@ class DesktopPendingWriteStore(
         update(eventId) { write ->
             write.copy(
                 relayStatuses = write.relayStatuses + (relayUrl to PendingWriteStatus.Failed.name),
-                lastSafeErrorByRelay = write.lastSafeErrorByRelay + (relayUrl to safeReason.take(180)),
+                lastSafeErrorByRelay = write.lastSafeErrorByRelay + (relayUrl to DurableRelayStoreCodec.safeRelayError(safeReason)),
                 updatedAtMs = nowMs(),
             )
         }
@@ -119,7 +120,9 @@ class DesktopPendingWriteStore(
     }
 
     override suspend fun loadPendingWrites(accountPubkey: String): List<PendingRelayWrite> =
-        loadRecords(accountPubkey).map { it.toPendingWrite() }
+        loadRecords(accountPubkey)
+            .filter { it.accountPubkey == accountPubkey }
+            .map { it.toPendingWrite() }
 
     override suspend fun removeCompletedWrite(eventId: String) {
         val files = runCatching { Files.list(baseDir).use { it.toList() } }.getOrDefault(emptyList())
@@ -127,38 +130,39 @@ class DesktopPendingWriteStore(
             val records = readPendingRecords(file)
             if (records.any { it.event.id == eventId }) {
                 val remaining = records.filterNot { it.event.id == eventId }
-                atomicWrite(file, json.encodeToString(PendingWriteFile.serializer(), PendingWriteFile(remaining)))
+                atomicWrite(file, DurableRelayStoreCodec.encodePendingWrites(remaining))
                 bump()
             }
         }
     }
 
-    private fun update(eventId: String, transform: (PendingWriteFileRecord) -> PendingWriteFileRecord) {
+    private fun update(eventId: String, transform: (DurablePendingWriteRecord) -> DurablePendingWriteRecord) {
         val files = runCatching { Files.list(baseDir).use { it.toList() } }.getOrDefault(emptyList())
         files.filter { it.name.endsWith(".pending.json") }.forEach { file ->
             val records = readPendingRecords(file)
             if (records.any { it.event.id == eventId }) {
                 val updated = records.map { if (it.event.id == eventId) transform(it) else it }
-                atomicWrite(file, json.encodeToString(PendingWriteFile.serializer(), PendingWriteFile(updated)))
+                atomicWrite(file, DurableRelayStoreCodec.encodePendingWrites(updated))
                 bump()
             }
         }
     }
 
-    private fun loadRecords(accountPubkey: String): List<PendingWriteFileRecord> =
+    private fun loadRecords(accountPubkey: String): List<DurablePendingWriteRecord> =
         readPendingRecords(fileFor(accountPubkey))
 
-    private fun readPendingRecords(file: Path): List<PendingWriteFileRecord> =
+    private fun readPendingRecords(file: Path): List<DurablePendingWriteRecord> =
         readFile(file)
-            ?.let { runCatching { json.decodeFromString(PendingWriteFile.serializer(), it).writes }.getOrNull() }
+            ?.let { DurableRelayStoreCodec.decodePendingWritesOrEmpty(it) }
             .orEmpty()
 
-    private fun writeRecords(accountPubkey: String, records: List<PendingWriteFileRecord>) {
-        atomicWrite(fileFor(accountPubkey), json.encodeToString(PendingWriteFile.serializer(), PendingWriteFile(records)))
+    private fun writeRecords(accountPubkey: String, records: List<DurablePendingWriteRecord>) {
+        atomicWrite(fileFor(accountPubkey), DurableRelayStoreCodec.encodePendingWrites(records))
         bump()
     }
 
-    private fun fileFor(accountPubkey: String): Path = baseDir.resolve("${accountPubkey.safeFileName()}.pending.json")
+    private fun fileFor(accountPubkey: String): Path =
+        baseDir.resolve("${DurableRelayStoreCodec.safeFileName(accountPubkey)}.pending.json")
 
     private fun readFile(file: Path): String? =
         runCatching { if (file.exists()) file.readText() else null }.getOrNull()
@@ -172,56 +176,9 @@ private fun atomicWrite(file: Path, content: String) {
     file.parent.createDirectories()
     val tmp = file.resolveSibling("${file.name}.tmp")
     tmp.writeText(content)
-    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    try {
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING)
+    }
 }
-
-private fun String.safeFileName(): String = filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(96)
-
-@Serializable
-private data class CachedEventFile(val events: List<CachedEventFileRecord>)
-
-@Serializable
-private data class CachedEventFileRecord(val event: NostrEventDto, val cachedAtMs: Long)
-
-@Serializable
-private data class PendingWriteFile(val writes: List<PendingWriteFileRecord>)
-
-@Serializable
-private data class PendingWriteFileRecord(
-    val accountPubkey: String,
-    val event: NostrEventDto,
-    val targetRelays: List<String>,
-    val relayStatuses: Map<String, String>,
-    val retryCounts: Map<String, Int>,
-    val lastSafeErrorByRelay: Map<String, String>,
-    val createdAtMs: Long,
-    val updatedAtMs: Long,
-) {
-    fun toPendingWrite(): PendingRelayWrite = PendingRelayWrite(
-        accountPubkey = accountPubkey,
-        event = event.toEvent(),
-        targetRelays = targetRelays,
-        relayStatuses = relayStatuses.mapValues { (_, value) ->
-            runCatching { PendingWriteStatus.valueOf(value) }.getOrDefault(PendingWriteStatus.Pending)
-        },
-        retryCounts = retryCounts,
-        lastSafeErrorByRelay = lastSafeErrorByRelay,
-        createdAtMs = createdAtMs,
-        updatedAtMs = updatedAtMs,
-    )
-}
-
-@Serializable
-private data class NostrEventDto(
-    val id: String,
-    val pubkey: String,
-    val createdAt: Long,
-    val kind: Int,
-    val tags: List<List<String>>,
-    val content: String,
-    val sig: String,
-) {
-    fun toEvent(): NostrEvent = NostrEvent(id, pubkey, createdAt, kind, tags, content, sig)
-}
-
-private fun NostrEvent.toDto(): NostrEventDto = NostrEventDto(id, pubkey, createdAt, kind, tags, content, sig)

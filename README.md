@@ -20,6 +20,7 @@ Important security status:
 - Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; Android relay-backed note runtime is available only after explicit Android external-signer login.
 - Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
+- Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -86,7 +87,7 @@ Android builds include NIP-55 discovery, public-key request, internal coverage f
 - Signer NIP-44 encrypt/decrypt operations are used by the real note save/edit/delete/recovery workflow. The app does not display plaintext payloads, ciphertext, signatures, full event JSON, or full public keys.
 - Normal editor save/edit in an Android signer session builds a signed encrypted kind `30078` event through signer NIP-44 plus `SIGN_EVENT`, validates/decrypts/decodes it, publishes it to the configured relays, and displays the note after at least one relay accepts the write. Delete creates a signer-backed tombstone event with the same d tag, publishes it, and hides the note after at least one relay accepts.
 - Android signer login fetches kind `30078` Other Note events for the signer pubkey from the configured relays, validates id/signature before decrypting, decrypts through signer NIP-44, decodes `NotePayload`, reduces replacements/tombstones, and updates visible notes incrementally as relays return usable events.
-- Android signer relay cache and pending writes are in-memory only in this pass. Exiting the app can stop unfinished Android relay fanout; durable Android encrypted-event cache and pending-write persistence remain future work.
+- Android signer relay cache and pending writes are durable in app-private no-backup storage. The cache stores signed encrypted kind `30078` events for the signer pubkey so notes can be recovered after relaunch before or alongside relay fetch. The pending-write queue stores already signed encrypted events, target relays, relay statuses, retry counts, safe truncated relay errors, and timestamps so unfinished fanout can retry on the next signer login or sync.
 - Safe NIP-55 diagnostics can be enabled with `OTHER_NOTE_SHOW_NIP55_DIAGNOSTICS=1` or `-Dothernote.showNip55Diagnostics=true`. Diagnostics include only path, shape, lengths, booleans, abbreviated ids/pubkeys, result status, and result column/key names.
 - No `nsec` or private key is stored, logged, or sent to a relay/server as part of signer discovery.
 
@@ -101,14 +102,17 @@ Manual Android signer test with Amber or another NIP-55 signer:
 7. Create a normal note through the editor and tap "Save."
 8. Approve required signer encrypt/sign/decrypt requests.
 9. Confirm at least one relay accepts the write and the note appears.
-10. Force stop or relaunch the app, use Android signer again, and confirm the note is fetched, decrypted, and displayed.
-11. Edit the note, approve signer requests, relaunch, and confirm the replacement appears.
-12. Open the note, tap "Delete", and confirm.
-13. Approve required signer encrypt/sign/decrypt requests and confirm the note disappears after at least one relay accepts the tombstone.
-14. Relaunch and confirm the tombstoned note stays hidden.
-15. If signer operations fail, enable NIP-55 diagnostics and capture only the safe request path, payload length, field booleans, result status, and result columns.
-16. If relay recovery fails, enable relay diagnostics and capture only safe per-relay status, counts, and rejection classes.
-17. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
+10. Force stop or relaunch the app, use Android signer again, and confirm the cached note can appear before or alongside relay fetch.
+11. Confirm the note is fetched, decrypted, and displayed after relay sync completes.
+12. If practical, simulate partial relay fanout by including one unreachable relay, relaunch, log in with Android signer, and confirm the pending write retries on the next sync/login.
+13. Inspect app-private durable store files under the debug app data directory and confirm no `nsec`, private key, decrypted note body, or decrypted payload JSON such as `body_markdown` appears.
+14. Edit the note, approve signer requests, relaunch, and confirm the replacement appears.
+15. Open the note, tap "Delete", and confirm.
+16. Approve required signer encrypt/sign/decrypt requests and confirm the note disappears after at least one relay accepts the tombstone.
+17. Relaunch and confirm the tombstoned note stays hidden.
+18. If signer operations fail, enable NIP-55 diagnostics and capture only the safe request path, payload length, field booleans, result status, and result columns.
+19. If relay recovery fails, enable relay diagnostics and capture only safe per-relay status, counts, and rejection classes.
+20. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
 
 ## Build And Run
 
@@ -146,6 +150,13 @@ Desktop developer relay runtime keeps a local durability layer at `~/.local/shar
 - Pending writes are retried on login, sync, or manual refresh for the same account pubkey. The retry path republishes the existing signed event and does not require storing or re-signing with an old private key.
 - The retry policy is intentionally bounded for now: unfinished relays are retried up to three times per stored pending write. A pending write is removed after every target relay accepts it or all unfinished target relays hit the retry cap.
 - Deleting this local directory clears the cache and pending retry queue, but it does not delete events already published to relays.
+
+Android external-signer relay runtime keeps the same durable encrypted event and pending-write record shape in app-private no-backup storage:
+
+- `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
+- `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, safe error strings, and timestamps.
+- The files are used only after Android signer login for the same public key. Loading the encrypted event cache does not require network or signer access, but decrypting cached events still requires signer-mediated NIP-44 decrypt for the active session.
+- Direct `nsec` fallback remains session-only and local/offline. Saved-device key storage remains future work and must use OS-backed secure storage when implemented.
 
 Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
 
@@ -186,7 +197,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-OS keyring persistence, durable Android encrypted-event cache and pending-write retry, NIP-46, profile rendering, and inline media rendering are intentionally future work.
+OS keyring persistence, saved-device Android key storage, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
@@ -262,14 +273,14 @@ Shared `commonMain` code is organized into:
 
 Platform code:
 
-- `androidMain`: Android activity, NIP-55 signer adapters, and bounded Android relay client for external-signer sessions.
+- `androidMain`: Android activity, NIP-55 signer adapters, bounded Android relay client, and app-private durable encrypted-event cache/pending-write stores for external-signer sessions.
 - `desktopMain`: Compose Desktop window entry point, bounded WebSocket relay client, and file-backed developer runtime cache/pending-write stores.
 
 ## Known Limitations And TODOs
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Keep desktop developer relay runtime gated until storage and failure handling are reviewed for normal runtime use.
-- Implement durable Android encrypted-event cache/pending-write retry, Android encrypted key storage, and Linux desktop secret-service integration.
+- Implement Android encrypted key storage and Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
 - Add inline image/video loading with size limits and timeouts.

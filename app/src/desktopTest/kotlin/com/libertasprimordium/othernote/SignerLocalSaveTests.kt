@@ -1,6 +1,8 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
+import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.domain.NotePayload
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.nostr.FanoutNostrClient
@@ -278,6 +280,47 @@ class SignerLocalSaveTests {
     }
 
     @Test
+    fun externalSignerSyncRetriesPendingSignedWritesWithoutSignerRoundTrip() = runBlocking {
+        val fixture = fixture()
+        val pendingStore = InMemoryPendingWriteStore()
+        val pendingEvent = crypto.sign(
+            UnsignedNostrEvent(
+                pubkey = fixture.publicKeyHex,
+                createdAt = 123,
+                kind = 30078,
+                tags = listOf(listOf("d", "other-note:note:retry-signer"), listOf("t", "other-note")),
+                content = "encrypted-signer-retry-ciphertext",
+            ),
+            fixture.privateKey,
+        ).getOrThrow()
+        pendingStore.enqueuePendingWrite(
+            accountPubkey = fixture.publicKeyHex,
+            event = pendingEvent,
+            targetRelays = listOf("wss://done.example.com", "wss://retry.example.com"),
+        )
+        pendingStore.markRelayAccepted(pendingEvent.id, "wss://done.example.com")
+        val client = AcceptingNostrClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://retry.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(RelayStatus("wss://retry.example.com", writable = true, message = "accepted")),
+        )
+        val state = state(
+            fixture = fixture,
+            signer = TestEventSigner(fixture.privateKey),
+            client = client,
+            pendingWriteStore = pendingStore,
+        )
+
+        state.requestExternalSignerPublicKey()
+        state.sync()
+        withTimeout(1_000) {
+            while (client.published.isEmpty() || pendingStore.loadPendingWrites(fixture.publicKeyHex).isNotEmpty()) delay(10)
+        }
+
+        assertEquals(pendingEvent, client.published.single())
+        assertTrue(pendingStore.loadPendingWrites(fixture.publicKeyHex).isEmpty())
+    }
+
+    @Test
     fun externalSignerDeleteCancellationKeepsNoteVisible() = runBlocking {
         val fixture = fixture()
         val nip44 = LocalSaveNip44Operator()
@@ -398,6 +441,7 @@ class SignerLocalSaveTests {
         nip44: LocalSaveNip44Operator = LocalSaveNip44Operator(),
         signer: NostrSignerEventSigner,
         client: NostrClient = AcceptingNostrClient(),
+        pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     ): AppState {
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
@@ -413,6 +457,7 @@ class SignerLocalSaveTests {
             ),
             externalSignerEventSigner = signer,
             externalSignerNip44Operator = nip44,
+            pendingWriteStore = pendingWriteStore,
         )
         return AppState(services)
     }

@@ -8,6 +8,7 @@ import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
+import com.libertasprimordium.othernote.data.PendingWriteMaxRetryCount
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrRepository
@@ -625,6 +626,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             aggregateEvents += cached
             applySignerFetchedEvents(session, aggregateEvents, emptyList(), final = false)
         }
+        if (services.pendingWriteStore.loadPendingWrites(session.publicKeyHex).isNotEmpty()) {
+            _message.value = "Retrying pending writes..."
+        }
+        retrySignerPendingWrites(session)
         val fetch = nostr.fetchIncrementally(relays, session.publicKeyHex) { partial ->
             aggregateEvents += partial.events
             partial.statuses.forEach { aggregateStatuses[it.url] = it }
@@ -640,6 +645,31 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _syncState.value = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = true).copy(syncing = false)
         _message.value = _syncState.value.toCompactMessage()
         _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+    }
+
+    private fun retrySignerPendingWrites(session: UserSession) {
+        appScope.launch {
+            val pendingWrites = services.pendingWriteStore.loadPendingWrites(session.publicKeyHex)
+            pendingWrites.forEach { pending ->
+                val retryRelays = pending.unfinishedRelays
+                    .filter { relay -> (pending.retryCounts[relay] ?: 0) < PendingWriteMaxRetryCount }
+                retryRelays.forEach { relay -> services.pendingWriteStore.recordRetry(pending.event.id, relay) }
+                if (retryRelays.isNotEmpty()) {
+                    val publish = nostr.publishBestEffort(retryRelays, pending.event, appScope) { statuses ->
+                        appScope.launch {
+                            updateSignerPendingStatuses(session.publicKeyHex, pending.event.id, statuses)
+                        }
+                    }
+                    publish.complete.await()
+                    val updated = services.pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == pending.event.id }
+                    if (updated?.isComplete == true || updated?.isTerminallyExhausted(PendingWriteMaxRetryCount) == true) {
+                        services.pendingWriteStore.removeCompletedWrite(pending.event.id)
+                    }
+                } else if (pending.isTerminallyExhausted(PendingWriteMaxRetryCount)) {
+                    services.pendingWriteStore.removeCompletedWrite(pending.event.id)
+                }
+            }
+        }
     }
 
     private suspend fun applySignerFetchedEvents(
