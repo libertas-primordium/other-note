@@ -16,6 +16,7 @@ import com.libertasprimordium.othernote.security.SignerNip44RequestBuilder
 import com.libertasprimordium.othernote.security.SignerNip44TestPayload
 import com.libertasprimordium.othernote.security.SignerNoteEventBuildResult
 import com.libertasprimordium.othernote.security.SignerNoteEventBuilder
+import com.libertasprimordium.othernote.security.SignerNoteEventBuildStage
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
@@ -372,8 +373,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun save(existing: Note?, markdown: String): Boolean {
         val session = _session.value
+        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+            return saveWithExternalSigner(existing, markdown, session)
+        }
         if (session != null && !session.hasSessionPrivateKey()) {
-            _message.value = "Signer login ready; saving through signer is not implemented yet."
+            _message.value = "Saving requires a session key or Android signer."
             return false
         }
         val result = saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
@@ -382,10 +386,59 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         return result !is SaveResult.Failed
     }
 
+    private suspend fun saveWithExternalSigner(existing: Note?, markdown: String, session: UserSession): Boolean {
+        if (!externalSignerCanSignEvent || !externalSignerCanNip44RoundTrip) {
+            _message.value = "External signer local save is unavailable."
+            return false
+        }
+        _message.value = "Waiting for signer..."
+        val result = if (existing == null) {
+            signerNoteEventBuilder.buildNewLocalNoteEvent(session, session.signerPackage, markdown, ::handleSignerNoteSaveStage)
+        } else {
+            signerNoteEventBuilder.buildReplacementLocalNoteEvent(session, session.signerPackage, existing, markdown, ::handleSignerNoteSaveStage)
+        }
+        return when (result) {
+            is SignerNoteEventBuildResult.Success -> {
+                notes.upsertLocal(result.note, result.signedEvent)
+                services.localEventCache.upsertEvents(session.publicKeyHex, listOf(result.signedEvent))
+                _message.value = "${result.safeSummary}. Not synced to relays."
+                true
+            }
+            SignerNoteEventBuildResult.Cancelled -> {
+                _message.value = "Signer note save cancelled"
+                false
+            }
+            is SignerNoteEventBuildResult.Unavailable -> {
+                _message.value = result.safeReason
+                false
+            }
+            is SignerNoteEventBuildResult.Failed -> {
+                _message.value = result.safeReason
+                false
+            }
+            is SignerNoteEventBuildResult.InvalidResponse -> {
+                _message.value = result.safeReason
+                false
+            }
+        }
+    }
+
+    private fun handleSignerNoteSaveStage(stage: SignerNoteEventBuildStage) {
+        _message.value = when (stage) {
+            SignerNoteEventBuildStage.PayloadEncoded -> "Waiting for signer..."
+            SignerNoteEventBuildStage.Encrypted -> "Signer encrypted note"
+            SignerNoteEventBuildStage.EventBuilt -> "Waiting for signer..."
+            SignerNoteEventBuildStage.Signed -> "Signer signed note"
+            SignerNoteEventBuildStage.Validated -> "Signer signed note"
+            SignerNoteEventBuildStage.Decrypted -> "Signer decrypted note"
+            SignerNoteEventBuildStage.PayloadDecoded -> "Saving locally..."
+        }
+    }
+
     suspend fun delete(note: Note): Boolean {
         val session = _session.value
         if (session != null && !session.hasSessionPrivateKey()) {
-            _message.value = "Signer login ready; deleting through signer is not implemented yet."
+            _message.value = "Signer-backed delete is not implemented yet."
             return false
         }
         val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())

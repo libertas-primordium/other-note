@@ -38,6 +38,8 @@ class SignerNoteEventBuilderTests {
         val success = assertIs<SignerNoteEventBuildResult.Success>(result)
         assertEquals("test-note-id", success.noteId)
         assertEquals(noteDTag("test-note-id"), success.dTag)
+        assertEquals("test-note-id", success.note.id)
+        assertEquals(success.signedEvent.id, success.note.sourceEventId)
         assertEquals(NoteKind, success.signedEvent.kind)
         assertEquals(fixture.session.publicKeyHex, success.signedEvent.pubkey)
         assertEquals(noteEventTags(noteDTag("test-note-id")), success.signedEvent.tags)
@@ -45,6 +47,28 @@ class SignerNoteEventBuilderTests {
         assertTrue(crypto.validate(success.signedEvent).getOrThrow())
         assertFalse(success.safeSummary.contains(SignerNoteEventBuilder.TestBodyMarkdown))
         assertFalse(success.safeSummary.contains(nip44.ciphertext))
+    }
+
+    @Test
+    fun buildsRealEditorBodyAsNonTombstoneLocalNoteEvent() {
+        val fixture = fixture()
+        val nip44 = FakeNip44Operator()
+        val signer = SigningEventSigner(fixture.privateKey)
+        val builder = builder(nip44, signer)
+        val body = "editor note with **markdown**"
+
+        val result = assertIs<SignerNoteEventBuildResult.Success>(
+            builder.buildNewLocalNoteEvent(fixture.session, "com.example.signer", body),
+        )
+        val payload = JsonNotePayloadCodec.decode(nip44.lastPlaintext ?: error("missing plaintext")).getOrThrow()
+
+        assertEquals("test-note-id", result.note.id)
+        assertEquals(body, result.note.bodyMarkdown)
+        assertEquals(result.note.id, payload.noteId)
+        assertEquals(body, payload.bodyMarkdown)
+        assertFalse(payload.deleted)
+        assertFalse(result.safeSummary.contains(body))
+        assertFalse(result.safeSummary.contains(nip44.ciphertext))
     }
 
     @Test
