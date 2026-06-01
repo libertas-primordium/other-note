@@ -10,8 +10,10 @@ import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
+import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
 import com.libertasprimordium.othernote.security.NostrSignerPublicKeyRequester
 import com.libertasprimordium.othernote.security.SignEventRequestResult
+import com.libertasprimordium.othernote.security.SignerNip44OperationResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignerMode
 import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
@@ -236,6 +238,56 @@ class AppModeTests {
         assertFalse(diagnostics.contains(pubkeyHex))
         assertFalse(diagnostics.contains("nsec1"))
     }
+
+    @Test
+    fun signerNip44RoundTripSuccessShowsVerifiedStatus() {
+        val pubkeyHex = "02".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x02 }) ?: error("npub encode failed")
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                externalSignerNip44Operator = TestNip44Operator(),
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+        state.requestExternalSignerNip44Test()
+
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals("Signer decrypted and verified test payload", state.message.value)
+    }
+
+    @Test
+    fun signerNip44RoundTripUnavailableDoesNotBreakSession() {
+        val pubkeyHex = "02".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x02 }) ?: error("npub encode failed")
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                externalSignerNip44Operator = TestNip44Operator(
+                    encryptResult = SignerNip44OperationResult.InvalidResponse("Signer returned invalid encryption result"),
+                ),
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+        state.requestExternalSignerNip44Test()
+
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals("Signer returned invalid encryption result", state.message.value)
+    }
 }
 
 private class TestSignerPublicKeyRequester(
@@ -259,6 +311,25 @@ private class TestSignerEventSigner(
     }
 }
 
+private class TestNip44Operator(
+    private val encryptResult: SignerNip44OperationResult? = null,
+) : NostrSignerNip44Operator {
+    override fun encryptToSelf(
+        plaintext: String,
+        currentUserPubkey: String,
+        signerPackage: String?,
+    ): SignerNip44OperationResult =
+        encryptResult ?: SignerNip44OperationResult.Encrypted("nip44-ciphertext", signerPackage)
+
+    override fun decryptFromSelf(
+        ciphertext: String,
+        expectedPlaintext: String,
+        currentUserPubkey: String,
+        signerPackage: String?,
+    ): SignerNip44OperationResult =
+        SignerNip44OperationResult.Decrypted(expectedPlaintext, signerPackage)
+}
+
 private object AvailableTestSignerProvider : NostrSignerProvider {
     override val mode: SignerMode = SignerMode.ExternalSigner
     override val isAvailable: Boolean = true
@@ -266,6 +337,6 @@ private object AvailableTestSignerProvider : NostrSignerProvider {
     override val displayName: String = "Test NIP-55 Signer"
     override val canGetPublicKey: Boolean = true
     override val canSignEvent: Boolean = true
-    override val canNip44EncryptDecrypt: Boolean = false
+    override val canNip44EncryptDecrypt: Boolean = true
     override val safeDiagnostics: List<String> = listOf("safe test signer available")
 }

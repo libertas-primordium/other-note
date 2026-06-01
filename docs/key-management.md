@@ -28,14 +28,15 @@ Session-only `nsec` means the key is held only in process memory for the active 
 
 Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is also planned for later.
 
-Current Android NIP-55 status is discovery, explicit public-key request, and harmless test-event signing:
+Current Android NIP-55 status is discovery, explicit public-key request, harmless test-event signing, and harmless NIP-44 test encryption:
 
 - Other Note uses generic NIP-55 `nostrsigner:` intent discovery to determine whether a signer app is installed.
 - Amber is the primary planned/tested target, but the architecture does not hard-require Amber.
 - The login UI can show signer availability and a "Use Android signer" action.
 - The action launches a user-triggered NIP-55 `get_public_key` intent and stores only public identity metadata in memory for the active app session: public key hex, `npub`, and signer package when returned.
 - After signer login, the UI can run a user-triggered NIP-55 `sign_event` test for a harmless unpublished kind `1` event with content `Other Note signer test`. Android uses the NIP-55 `ContentResolver` `SIGN_EVENT` path (`content://<signer-package>.SIGN_EVENT`) with event JSON and current user public key; it does not contain an `nsec`, note body, relay data, or persisted key material.
-- The initial `get_public_key` request asks for optional kind `1` `sign_event` permission so compatible signers can approve the ContentResolver request.
+- The UI can also run a user-triggered NIP-44 local round-trip test using NIP-55 `ContentResolver` paths `NIP44_ENCRYPT` and `NIP44_DECRYPT`. The test self-encrypts only the harmless text `Other Note NIP-44 signer test`, then decrypts it through the signer and checks equality in memory.
+- The initial `get_public_key` request asks for optional kind `1` `sign_event`, `nip44_encrypt`, and `nip44_decrypt` permissions so compatible signers can approve the ContentResolver requests.
 - The returned test event must be validated locally before success is reported: signer pubkey must match the session, the test event fields must match the request, and the NIP-01 event id/signature must verify.
 - Signer-backed note save/delete/sync is still disabled because note support also requires signer-backed NIP-44 encrypt/decrypt.
 - The scaffold must not store, log, or transmit `nsec` values or private keys.
@@ -95,7 +96,7 @@ This policy is designed to prevent accidental plaintext private-key persistence,
 This pass does not implement:
 
 - OS keyring storage.
-- Android NIP-55 note event signing or NIP-44 encryption/decryption.
+- Android NIP-55 note save/delete/sync integration.
 - NIP-46 remote signer/bunker support.
 - NIP-07 web signer support.
 - A web app.
