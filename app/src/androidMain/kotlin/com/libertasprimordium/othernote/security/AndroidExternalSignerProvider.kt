@@ -14,7 +14,7 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
     override val unavailableReason: String? = if (discovery == null) "No Android NIP-55 signer found." else null
     override val displayName: String? = discovery?.displayName
     override val canGetPublicKey: Boolean = discovery != null
-    override val canSignEvent: Boolean = false
+    override val canSignEvent: Boolean = discovery != null
     override val canNip44EncryptDecrypt: Boolean = false
     override val safeDiagnostics: List<String> = listOf(
         if (discovery == null) {
@@ -22,7 +22,7 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
         } else {
             "NIP-55 discovery found signer ${discovery.displayName}"
         },
-        "External signer login flow is not implemented yet",
+        "External signer note sync is not implemented yet",
     )
 
     companion object {

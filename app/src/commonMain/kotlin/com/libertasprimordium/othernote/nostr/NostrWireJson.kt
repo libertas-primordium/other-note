@@ -82,6 +82,11 @@ object NostrWireJson {
         }
     }
 
+    fun eventJson(event: NostrEvent): String = eventObject(event).toString()
+
+    fun parseEventJson(raw: String): NostrEvent? =
+        runCatching { json.parseToJsonElement(raw).jsonObjectOrNull()?.let(::parseEventObject) }.getOrNull()
+
     fun eventObject(event: NostrEvent): JsonObject = buildJsonObject {
         put("id", JsonPrimitive(event.id))
         put("pubkey", JsonPrimitive(event.pubkey))

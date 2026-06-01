@@ -47,6 +47,7 @@ class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
             Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
                 addCategory(Intent.CATEGORY_BROWSABLE)
                 putExtra("type", "get_public_key")
+                putExtra("permissions", """[{"type":"sign_event","kind":1}]""")
             }
 
         fun parsePublicKeyResult(data: Intent?): SignerPublicKeyRequestResult {

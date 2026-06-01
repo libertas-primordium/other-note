@@ -28,13 +28,16 @@ Session-only `nsec` means the key is held only in process memory for the active 
 
 Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is also planned for later.
 
-Current Android NIP-55 status is discovery plus explicit public-key request:
+Current Android NIP-55 status is discovery, explicit public-key request, and harmless test-event signing:
 
 - Other Note uses generic NIP-55 `nostrsigner:` intent discovery to determine whether a signer app is installed.
 - Amber is the primary planned/tested target, but the architecture does not hard-require Amber.
 - The login UI can show signer availability and a "Use Android signer" action.
 - The action launches a user-triggered NIP-55 `get_public_key` intent and stores only public identity metadata in memory for the active app session: public key hex, `npub`, and signer package when returned.
-- The scaffold does not yet sign events or call NIP-44 encrypt/decrypt through the signer.
+- After signer login, the UI can run a user-triggered NIP-55 `sign_event` test for a harmless unpublished kind `1` event with content `Other Note signer test`. Android uses the NIP-55 `ContentResolver` `SIGN_EVENT` path (`content://<signer-package>.SIGN_EVENT`) with event JSON and current user public key; it does not contain an `nsec`, note body, relay data, or persisted key material.
+- The initial `get_public_key` request asks for optional kind `1` `sign_event` permission so compatible signers can approve the ContentResolver request.
+- The returned test event must be validated locally before success is reported: signer pubkey must match the session, the test event fields must match the request, and the NIP-01 event id/signature must verify.
+- Signer-backed note save/delete/sync is still disabled because note support also requires signer-backed NIP-44 encrypt/decrypt.
 - The scaffold must not store, log, or transmit `nsec` values or private keys.
 
 Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use password/autofill/credential behavior so Android and Google Password Manager can prompt where appropriate. The app itself must not save Android `nsec` values to plaintext app storage.
@@ -92,7 +95,7 @@ This policy is designed to prevent accidental plaintext private-key persistence,
 This pass does not implement:
 
 - OS keyring storage.
-- Android NIP-55 event signing or NIP-44 encryption/decryption.
+- Android NIP-55 note event signing or NIP-44 encryption/decryption.
 - NIP-46 remote signer/bunker support.
 - NIP-07 web signer support.
 - A web app.
