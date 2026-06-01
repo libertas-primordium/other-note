@@ -10,12 +10,15 @@ import com.vitorpamplona.quartz.nip44Encryption.Nip44
 
 object ProductionNostrCryptoFactory {
     const val unavailableReason =
-        "Quartz-backed Nostr crypto is unavailable."
+        "Quartz-backed production Nostr crypto is disabled: Quartz 1.03.0 NIP-44 v2 self-encryption can fail " +
+            "local decrypt with Invalid Mac before relay transport, and Quartz 1.05.0 requires Kotlin 2.3 metadata " +
+            "while this project is on Kotlin 2.1.21. Keep using NonProductionNostrCrypto until a compatible " +
+            "NIP-44 adapter or toolchain upgrade is selected."
 
-    fun createOrNull(): NostrCrypto? = QuartzNostrCrypto()
+    fun createOrNull(): NostrCrypto? = null
 }
 
-class QuartzNostrCrypto : NostrCrypto {
+private class QuartzNostrCrypto : NostrCrypto {
     override val productionReady: Boolean = true
 
     override fun generatePrivateKey(): Result<NostrPrivateKey> = runCatching {
