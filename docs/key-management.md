@@ -37,7 +37,8 @@ Current Android NIP-55 status is discovery, explicit public-key request, interna
 - Internal tests and helper code cover NIP-55 `SIGN_EVENT`, NIP-44 encrypt/decrypt, and signer-backed note-event construction. These development test actions are no longer exposed in the normal app UI.
 - Normal editor save/edit in an Android signer session can build a signed encrypted kind `30078` event through the same signer pipeline, publish it to configured relays, and display it after at least one relay accepts the write. Delete creates a signer-backed tombstone event with the same d tag, publishes it, and hides the note after at least one relay accepts.
 - Android signer login can fetch kind `30078` Other Note events for the signer pubkey from relays, validate id/signature before decryption, decrypt through signer NIP-44, decode `NotePayload`, reduce replacements/tombstones, and update visible notes incrementally.
-- Android signer relay cache and pending writes are in-memory only in this pass. They are not key storage, but durable encrypted-event cache and pending-write retry for Android remain future work.
+- Android signer relay cache and pending writes are durable in app-private no-backup storage. They are not key storage: they store signed encrypted Nostr events and safe relay metadata only, never `nsec`, private keys, decrypted notes, decrypted payload JSON, or NIP-44 plaintext.
+- The Android encrypted event cache is used after signer login for the same public key so cached notes can recover after relaunch before or alongside relay fetch. The pending-write queue retries unfinished fanout on the next signer login or sync by republishing already signed encrypted events, without recreating raw signer requests or storing signer secrets.
 - The initial `get_public_key` request asks for optional kind `1` `sign_event`, `nip44_encrypt`, and `nip44_decrypt` permissions so compatible signers can approve the ContentResolver requests.
 - Signer-built events must be validated locally before success is reported: signer pubkey must match the session, event fields must match the request, and the NIP-01 event id/signature must verify.
 - The scaffold must not store, log, or transmit `nsec` values or private keys.
@@ -97,7 +98,7 @@ This policy is designed to prevent accidental plaintext private-key persistence,
 This policy currently does not cover completed implementations for:
 
 - OS keyring storage.
-- Durable Android encrypted-event cache and pending-write retry.
+- Saved-device Android `nsec` storage.
 - NIP-46 remote signer/bunker support.
 - NIP-07 web signer support.
 - A web app.

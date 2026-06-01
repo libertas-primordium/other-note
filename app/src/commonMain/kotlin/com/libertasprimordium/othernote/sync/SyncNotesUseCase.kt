@@ -2,6 +2,7 @@ package com.libertasprimordium.othernote.sync
 
 import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.NoteRepository
+import com.libertasprimordium.othernote.data.PendingWriteMaxRetryCount
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.OtherNoteTag
@@ -99,7 +100,7 @@ class SyncNotesUseCase(
             val pendingWrites = pendingWriteStore.loadPendingWrites(session.publicKeyHex)
             pendingWrites.forEach { pending ->
                 val retryRelays = pending.unfinishedRelays
-                    .filter { relay -> (pending.retryCounts[relay] ?: 0) < MaxPendingWriteRetryCount }
+                    .filter { relay -> (pending.retryCounts[relay] ?: 0) < PendingWriteMaxRetryCount }
                 retryRelays.forEach { relay -> pendingWriteStore.recordRetry(pending.event.id, relay) }
                 if (retryRelays.isNotEmpty()) {
                     val publish = nostr.publishBestEffort(retryRelays, pending.event, publishScope) { statuses ->
@@ -109,10 +110,10 @@ class SyncNotesUseCase(
                     }
                     publish.complete.await()
                     val updated = pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == pending.event.id }
-                    if (updated?.isComplete == true || updated?.isTerminallyExhausted(MaxPendingWriteRetryCount) == true) {
+                    if (updated?.isComplete == true || updated?.isTerminallyExhausted(PendingWriteMaxRetryCount) == true) {
                         pendingWriteStore.removeCompletedWrite(pending.event.id)
                     }
-                } else if (pending.isTerminallyExhausted(MaxPendingWriteRetryCount)) {
+                } else if (pending.isTerminallyExhausted(PendingWriteMaxRetryCount)) {
                     pendingWriteStore.removeCompletedWrite(pending.event.id)
                 }
             }
@@ -128,7 +129,7 @@ class SyncNotesUseCase(
             }
         }
         val pending = pendingWriteStore.loadPendingWrites(accountPubkey).firstOrNull { it.event.id == eventId }
-        if (pending?.isComplete == true || pending?.isTerminallyExhausted(MaxPendingWriteRetryCount) == true) {
+        if (pending?.isComplete == true || pending?.isTerminallyExhausted(PendingWriteMaxRetryCount) == true) {
             pendingWriteStore.removeCompletedWrite(eventId)
         }
     }
@@ -225,5 +226,3 @@ class SyncNotesUseCase(
         return SyncState(lastSyncMs = if (final) nowMs() else null, relayStatuses = statuses, warnings = warnings)
     }
 }
-
-private const val MaxPendingWriteRetryCount = 3

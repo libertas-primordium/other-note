@@ -35,6 +35,8 @@ class MainActivity : ComponentActivity() {
             externalSignerPublicKeyRequester = publicKeyRequester,
             externalSignerEventSigner = eventSigner,
             externalSignerNip44Operator = nip44Operator,
+            localEventCache = AndroidLocalEventCache(this),
+            pendingWriteStore = AndroidPendingWriteStore(this),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
             startupWarnings = listOf("Android signer relay runtime enabled; nsec fallback remains local-only"),
