@@ -76,6 +76,30 @@ class KeyManagementPolicyTests {
     }
 
     @Test
+    fun externalSignerAvailabilityDoesNotEnableSavedDeviceNsec() {
+        val policy = KeyManagementPolicy()
+        val modes = policy.resolveAvailableModes(
+            store = UnavailableSecureSecretStore(),
+            externalSigner = TestOnlySignerProvider(isAvailable = true),
+        )
+
+        assertTrue(SignerMode.ExternalSigner in modes)
+        assertTrue(SignerMode.SessionOnlyNsec in modes)
+        assertFalse(SignerMode.SavedDeviceNsec in modes)
+    }
+
+    @Test
+    fun externalSignerMetadataAndDiagnosticsAreSafe() {
+        val provider = TestOnlySignerProvider(isAvailable = true, displayName = "Test Signer")
+
+        assertEquals("Test Signer", provider.displayName)
+        assertTrue(provider.canGetPublicKey)
+        assertFalse(provider.canSignEvent)
+        assertFalse(provider.canNip44EncryptDecrypt)
+        assertFalse(provider.safeDiagnostics.joinToString(" ").contains(suppliedNsec))
+    }
+
+    @Test
     fun plaintextPersistenceIsNeverAllowedByDefault() {
         val policy = KeyManagementPolicy()
 
@@ -140,7 +164,12 @@ private class TestOnlySecureSecretStore : SecureSecretStore {
 
 private class TestOnlySignerProvider(
     override val isAvailable: Boolean,
+    override val displayName: String? = null,
 ) : NostrSignerProvider {
     override val mode: SignerMode = SignerMode.ExternalSigner
     override val unavailableReason: String? = if (isAvailable) null else "Unavailable in test"
+    override val canGetPublicKey: Boolean = isAvailable
+    override val canSignEvent: Boolean = false
+    override val canNip44EncryptDecrypt: Boolean = false
+    override val safeDiagnostics: List<String> = listOf("safe signer diagnostic")
 }
