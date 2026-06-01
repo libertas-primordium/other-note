@@ -80,7 +80,6 @@ fun OtherNoteApp(services: AppServices = defaultAppServices()) {
 fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val message by appState.message.collectAsState()
     var nsec by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier.fillMaxSize().background(OtherNoteBlack).padding(20.dp),
         verticalArrangement = Arrangement.Center,
@@ -103,7 +102,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                     nsec = ""
                     onLoggedIn()
                     if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
-                        scope.launch { appState.sync() }
+                        appState.startSync()
                     }
                 }
             },

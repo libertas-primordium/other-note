@@ -1,6 +1,8 @@
 package com.libertasprimordium.othernote.sync
 
 import com.libertasprimordium.othernote.data.NoteRepository
+import com.libertasprimordium.othernote.domain.NoteKind
+import com.libertasprimordium.othernote.domain.OtherNoteTag
 import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.nostr.NostrCrypto
@@ -84,6 +86,9 @@ class SyncNotesUseCase(
         val privateKey = NostrPrivateKey(session.privateKeyHex)
         val publicKey = NostrPublicKey(session.publicKeyHex, session.npub)
         var wrongAuthorCount = 0
+        var wrongKindCount = 0
+        var missingTTagCount = 0
+        var missingDTagCount = 0
         var invalidSignatureCount = 0
         val validateStart = TimeSource.Monotonic.markNow()
         val uniqueEvents = events.distinctBy { it.id }
@@ -91,6 +96,18 @@ class SyncNotesUseCase(
             when {
                 event.pubkey != session.publicKeyHex -> {
                     wrongAuthorCount++
+                    null
+                }
+                event.kind != NoteKind -> {
+                    wrongKindCount++
+                    null
+                }
+                !event.tags.any { it.size >= 2 && it[0] == "t" && it[1] == OtherNoteTag } -> {
+                    missingTTagCount++
+                    null
+                }
+                event.dTag() == null -> {
+                    missingDTagCount++
                     null
                 }
                 !crypto.validate(event).getOrDefault(false) -> {
@@ -109,15 +126,18 @@ class SyncNotesUseCase(
         val selectedNoteIds = reduced.selectedNoteIds
         val preservedNotes = notes.notes.value.filter { it.id !in selectedNoteIds }
         notes.replaceFromSync(reduced.notes + preservedNotes)
+        val appliedNoteCount = notes.notes.value.size
         val fetchedCount = uniqueEvents.size
-        val rejectedCount = wrongAuthorCount + invalidSignatureCount + reduced.rejectedCount
+        val preDecryptRejectedCount = wrongAuthorCount + wrongKindCount + missingTTagCount + missingDTagCount + invalidSignatureCount
+        val rejectedCount = preDecryptRejectedCount + reduced.rejectedCount
         val warnings = buildList {
             add(
                 "Sync complete total_ms=${totalStart.elapsedNow().inWholeMilliseconds} fetch_ms=$fetchDurationMs " +
                     "validate_ms=$validateDurationMs decrypt_reduce_ms=$reduceDurationMs fetched_events=$fetchedCount " +
-                    "valid_events=${candidateEvents.size} selected_events=${reduced.selectedEvents.size} visible_notes=${reduced.notes.size} " +
-                    "rejected_wrong_author=$wrongAuthorCount rejected_validation=$invalidSignatureCount " +
-                    "rejected_decrypt=${reduced.decryptRejectedCount} rejected_payload=${reduced.payloadRejectedCount} rejected_dtag=${reduced.dTagRejectedCount}",
+                    "candidate_events=${candidateEvents.size} selected_events=${reduced.selectedEvents.size} visible_notes=${reduced.notes.size} applied_notes=$appliedNoteCount " +
+                    "rejected_wrong_author=$wrongAuthorCount rejected_wrong_kind=$wrongKindCount rejected_missing_t=$missingTTagCount " +
+                    "rejected_missing_d=$missingDTagCount rejected_validation=$invalidSignatureCount rejected_decrypt=${reduced.decryptRejectedCount} " +
+                    "rejected_payload=${reduced.payloadRejectedCount} rejected_dtag=${reduced.dTagRejectedCount}",
             )
             when {
                 fetchedCount == 0 -> add("No relay returned Other Note events")

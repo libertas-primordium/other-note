@@ -178,10 +178,10 @@ class DesktopNostrClient(
                     status = RelayStatus(relay, readable = false, message = "stage=fetch outcome=invalid_url duration_ms=0 ${it.message ?: "Invalid relay URL"}"),
                 )
             }
-            val primary = fetchWithFilter(url, NostrFilter(authors = listOf(authorPubkey), limit = maxEvents))
+            val primary = fetchWithFilter(url, NostrFilter(authors = listOf(authorPubkey), limit = maxEvents), "primary")
             if (primary.status.readable && primary.events.isNotEmpty()) return@withContext primary
             if (!primary.status.readable) return@withContext primary
-            val fallback = fetchWithFilter(url, NostrFilter(authors = listOf(authorPubkey), tTags = emptyList(), limit = maxEvents))
+            val fallback = fetchWithFilter(url, NostrFilter(authors = listOf(authorPubkey), tTags = emptyList(), limit = maxEvents * 5), "fallback")
             if (fallback.status.readable && fallback.events.isNotEmpty()) {
                 return@withContext fallback.copy(events = fallback.events.filter { it.isOtherNoteEvent() })
             }
@@ -191,7 +191,7 @@ class DesktopNostrClient(
             primary
         }
 
-    private suspend fun fetchWithFilter(url: String, filter: NostrFilter): RelayFetchOneResult {
+    private suspend fun fetchWithFilter(url: String, filter: NostrFilter, mode: String): RelayFetchOneResult {
         val start = TimeSource.Monotonic.markNow()
         val connectStart = TimeSource.Monotonic.markNow()
         val socket = RelaySocket.connect(httpClient, url, connectTimeoutMs).getOrElse {
@@ -233,7 +233,7 @@ class DesktopNostrClient(
                         "fetch",
                         if (terminalMessage == "EOSE" || events.isNotEmpty()) "complete" else "failed",
                         start,
-                        "query=${filter.safeLabel()} ${fetchMessage(terminalMessage, events.size, notices)}",
+                        "mode=$mode query=${filter.safeLabel()} ${fetchMessage(terminalMessage, events.size, notices)}",
                     ),
                 ),
             )

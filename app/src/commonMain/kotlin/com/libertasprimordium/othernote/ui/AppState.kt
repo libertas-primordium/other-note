@@ -13,7 +13,9 @@ import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -119,13 +121,18 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             return
         }
         _syncState.value = _syncState.value.copy(syncing = true)
-        _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
-            _syncState.value = partial.copy(syncing = true)
-            _message.value = partial.toMessage()
+        try {
+            _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
+                _syncState.value = partial.copy(syncing = true)
+                _message.value = partial.toMessage()
+            }
+        } finally {
+            _syncState.value = _syncState.value.copy(syncing = false)
+            _message.value = _syncState.value.toMessage()
         }
-        _syncState.value = _syncState.value.copy(syncing = false)
-        _message.value = _syncState.value.toMessage()
     }
+
+    fun startSync(): Job = appScope.launch { sync() }
 
     private fun SyncState.toMessage(): String =
         buildString {

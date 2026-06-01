@@ -336,6 +336,35 @@ class SyncSafetyTests {
         assertEquals(session().publicKeyHex, saveClient.published.single().pubkey)
     }
 
+    @Test
+    fun rejectedReturnedEventsProduceSpecificDiagnosticCounts() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val valid = signedEvent(crypto, note("remote", "accepted", updatedAtMs = 2), createdAt = 2)
+        val wrongKind = valid.copy(id = "wrong-kind", kind = 1, sig = "valid")
+        val missingT = valid.copy(id = "missing-t", tags = valid.tags.filterNot { it.firstOrNull() == "t" }, sig = "valid")
+        val missingD = valid.copy(id = "missing-d", tags = valid.tags.filterNot { it.firstOrNull() == "d" }, sig = "valid")
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(
+                crypto,
+                FakeClient(
+                    events = listOf(wrongKind, missingT, missingD, valid),
+                    statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+                ),
+            ),
+            crypto,
+        )
+
+        val state = sync.sync(session(), listOf("wss://relay.example.com"))
+        val diagnostic = state.warnings.first()
+
+        assertTrue(diagnostic.contains("rejected_wrong_kind=1"))
+        assertTrue(diagnostic.contains("rejected_missing_t=1"))
+        assertTrue(diagnostic.contains("rejected_missing_d=1"))
+        assertTrue(diagnostic.contains("applied_notes=1"))
+    }
+
     private fun session(): UserSession = UserSession(
         nsec = "nsec-redacted",
         privateKeyHex = "01".repeat(32),

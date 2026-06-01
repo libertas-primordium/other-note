@@ -44,6 +44,18 @@ class NostrWireJsonTests {
     }
 
     @Test
+    fun fallbackRequestFilterKeepsAuthorAndKindButOmitsTagConstraint() {
+        val message = NostrWireJson.requestMessage(
+            subscriptionId = "sub1",
+            filter = NostrFilter(authors = listOf("pub123"), tTags = emptyList(), limit = 1000),
+        )
+        assertEquals(
+            """["REQ","sub1",{"authors":["pub123"],"kinds":[30078],"limit":1000}]""",
+            message,
+        )
+    }
+
+    @Test
     fun closeMessageSerializesSubscriptionId() {
         assertEquals("""["CLOSE","sub1"]""", NostrWireJson.closeMessage("sub1"))
     }

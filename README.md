@@ -119,6 +119,7 @@ Runtime troubleshooting:
 - Fetch status includes safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. It does not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
 - If no note appears after sync, distinguish the status text: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
+- Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
 OS keyring persistence, Amber/NIP-55, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
