@@ -16,6 +16,7 @@ object DesktopAppServicesFactory {
                 mode = AppRuntimeMode.Offline,
                 crypto = NonProductionNostrCrypto(),
                 client = OfflineNostrClient(),
+                showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 startupWarnings = listOf(ProductionNostrCryptoFactory.unavailableReason),
             )
         } else {
@@ -23,6 +24,7 @@ object DesktopAppServicesFactory {
                 mode = AppRuntimeMode.DesktopDevRelay,
                 crypto = crypto,
                 client = DesktopNostrClient(),
+                showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 startupWarnings = listOf("Developer relay runtime enabled"),
             )
         }
@@ -31,4 +33,8 @@ object DesktopAppServicesFactory {
     fun isDevRelayRuntimeEnabled(): Boolean =
         System.getenv("OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME") == "1" ||
             System.getProperty("othernote.devRelayRuntime") == "true"
+
+    fun isRelayDiagnosticsEnabled(): Boolean =
+        System.getenv("OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS") == "1" ||
+            System.getProperty("othernote.showRelayDiagnostics") == "true"
 }

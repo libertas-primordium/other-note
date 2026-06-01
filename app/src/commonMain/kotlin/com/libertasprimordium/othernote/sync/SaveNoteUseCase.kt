@@ -57,7 +57,18 @@ class SaveNoteUseCase(
         publishScope.launchWhenComplete(publish.complete) { complete ->
             if (complete.allSucceeded) notes.markPublished(build.event.id)
         }
-        return SaveResult.Published(listOf("Save accepted by at least one relay ${diagnostics.joinToString(" ")}") + firstAccepted.statuses.toSafeMessages())
+        val acceptedCount = firstAccepted.statuses.count { it.writable }
+        val totalCount = relays.distinct().size
+        val compactStatus = if (firstAccepted.statuses.size < totalCount) {
+            "Saved to $acceptedCount/$totalCount relays; syncing others..."
+        } else {
+            "Saved to $acceptedCount/$totalCount relays"
+        }
+        return SaveResult.Published(
+            listOf(compactStatus) +
+                listOf("Save accepted by at least one relay ${diagnostics.joinToString(" ")}") +
+                firstAccepted.statuses.toSafeMessages(),
+        )
     }
 }
 

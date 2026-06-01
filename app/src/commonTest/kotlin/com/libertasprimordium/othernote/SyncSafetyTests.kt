@@ -25,6 +25,9 @@ import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
+import com.libertasprimordium.othernote.ui.AppRuntimeMode
+import com.libertasprimordium.othernote.ui.AppServices
+import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -337,6 +340,42 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun appStateHidesVerboseDiagnosticsByDefaultButKeepsCompactStatus() = runBlocking {
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "stage=publish outcome=accepted duration_ms=1")),
+            completeStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "stage=publish outcome=accepted duration_ms=1")),
+        )
+        val state = appState(crypto, client, showRelayDiagnostics = false)
+
+        state.login("unused")
+        val saved = state.save(existing = null, markdown = "body")
+
+        assertTrue(saved)
+        assertEquals("Saved to 1/1 relays", state.message.value)
+        assertFalse(state.message.value.contains("wss://relay.example.com"))
+        assertTrue(state.diagnosticMessage.value.contains("wss://relay.example.com"))
+        assertFalse(state.showRelayDiagnostics)
+    }
+
+    @Test
+    fun appStateCanExposeVerboseDiagnosticsWhenFlagIsSet() = runBlocking {
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "stage=publish outcome=accepted duration_ms=1")),
+            completeStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "stage=publish outcome=accepted duration_ms=1")),
+        )
+        val state = appState(crypto, client, showRelayDiagnostics = true)
+
+        state.login("unused")
+        state.save(existing = null, markdown = "body")
+
+        assertTrue(state.showRelayDiagnostics)
+        assertFalse(state.message.value.contains("duration_ms"))
+        assertTrue(state.diagnosticMessage.value.contains("duration_ms"))
+    }
+
+    @Test
     fun rejectedReturnedEventsProduceSpecificDiagnosticCounts() = runBlocking {
         val notes = InMemoryNoteRepository()
         val crypto = FakeCrypto(productionReady = true)
@@ -374,6 +413,22 @@ class SyncSafetyTests {
 
     private fun note(id: String, body: String, updatedAtMs: Long): Note =
         Note(id = id, createdAtMs = 1, updatedAtMs = updatedAtMs, bodyMarkdown = body)
+
+    private fun appState(
+        crypto: FakeCrypto,
+        client: FakeClient,
+        showRelayDiagnostics: Boolean,
+    ): AppState = AppState(
+        AppServices(
+            mode = AppRuntimeMode.DesktopDevRelay,
+            crypto = crypto,
+            client = client,
+            showRelayDiagnostics = showRelayDiagnostics,
+            relaySettings = com.libertasprimordium.othernote.data.RelaySettingsStore(
+                listOf(com.libertasprimordium.othernote.domain.RelayConfig("wss://relay.example.com")),
+            ),
+        ),
+    )
 
     private fun signedEvent(crypto: FakeCrypto, note: Note, createdAt: Long): NostrEvent {
         val session = session()
@@ -467,8 +522,8 @@ private class FakeCrypto(
     override fun generatePrivateKey(): Result<NostrPrivateKey> = Result.failure(UnsupportedOperationException())
     override fun encodeNsec(privateKey: NostrPrivateKey): Result<String> = Result.failure(UnsupportedOperationException())
     override fun encodeNpub(publicKey: NostrPublicKey): Result<String> = Result.failure(UnsupportedOperationException())
-    override fun decodeNsec(nsec: String): KeyDecodeResult = KeyDecodeResult.Invalid("unused")
-    override fun derivePublicKey(privateKey: NostrPrivateKey): Result<NostrPublicKey> = Result.failure(UnsupportedOperationException())
+    override fun decodeNsec(nsec: String): KeyDecodeResult = KeyDecodeResult.Valid(NostrPrivateKey("01".repeat(32)))
+    override fun derivePublicKey(privateKey: NostrPrivateKey): Result<NostrPublicKey> = Result.success(NostrPublicKey("02".repeat(32), "npub-test"))
     override fun encryptToSelf(plaintext: String, privateKey: NostrPrivateKey, publicKey: NostrPublicKey): Result<String> = runCatching {
         val ciphertext = "cipher-${plaintext.hashCode()}-${plaintext.length}"
         plaintextByCiphertext[ciphertext] = plaintext

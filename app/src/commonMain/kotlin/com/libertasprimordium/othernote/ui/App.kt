@@ -127,8 +127,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
 fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Unit, onSettings: () -> Unit) {
     val notes by appState.notes.notes.collectAsState()
     val session by appState.session.collectAsState()
-    val sync by appState.syncState.collectAsState()
     val message by appState.message.collectAsState()
+    val diagnostics by appState.diagnosticMessage.collectAsState()
     val scope = rememberCoroutineScope()
     Scaffold(
         topBar = {
@@ -149,8 +149,10 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
             if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
                 Text("Developer relay runtime", color = OtherNotePurple)
             }
-            Text(sync.summary, color = OtherNoteMuted)
             Text(message, color = OtherNoteMuted)
+            if (appState.showRelayDiagnostics && diagnostics.isNotBlank()) {
+                Text(diagnostics, color = OtherNoteMuted, fontSize = 12.sp)
+            }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
             Spacer(Modifier.height(12.dp))

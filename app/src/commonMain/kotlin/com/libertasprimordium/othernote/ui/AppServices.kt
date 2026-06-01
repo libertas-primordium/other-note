@@ -18,6 +18,7 @@ data class AppServices(
     val mode: AppRuntimeMode,
     val crypto: NostrCrypto,
     val client: NostrClient,
+    val showRelayDiagnostics: Boolean = false,
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopDevRelay) DesktopDevRelayDefaults else DefaultRelays,

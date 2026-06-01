@@ -16,6 +16,7 @@ class DesktopRuntimeModeTests {
     @AfterTest
     fun clearFlag() {
         System.clearProperty("othernote.devRelayRuntime")
+        System.clearProperty("othernote.showRelayDiagnostics")
     }
 
     @Test
@@ -37,6 +38,7 @@ class DesktopRuntimeModeTests {
 
         assertNotNull(ProductionNostrCryptoFactory.createOrNull())
         assertEquals(AppRuntimeMode.DesktopDevRelay, services.mode)
+        assertEquals(false, services.showRelayDiagnostics)
         assertTrue(services.crypto.productionReady)
         assertIs<DesktopNostrClient>(services.client)
         assertEquals(
@@ -49,6 +51,18 @@ class DesktopRuntimeModeTests {
             ),
             services.relaySettings.normalizedUrls(),
         )
+    }
+
+    @Test
+    fun relayDiagnosticsRequireExplicitFlag() {
+        System.setProperty("othernote.devRelayRuntime", "true")
+        System.clearProperty("othernote.showRelayDiagnostics")
+
+        assertEquals(false, DesktopAppServicesFactory.create().showRelayDiagnostics)
+
+        System.setProperty("othernote.showRelayDiagnostics", "true")
+
+        assertEquals(true, DesktopAppServicesFactory.create().showRelayDiagnostics)
     }
 
     @Test

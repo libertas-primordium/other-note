@@ -49,6 +49,17 @@ class DeleteNoteUseCase(
         publishScope.launchWhenComplete(publish.complete) { complete ->
             if (complete.allSucceeded) notes.markPublished(build.event.id)
         }
-        return SaveResult.Published(listOf("Delete accepted by at least one relay ${diagnostics.joinToString(" ")}") + firstAccepted.statuses.toSafeMessages())
+        val acceptedCount = firstAccepted.statuses.count { it.writable }
+        val totalCount = relays.distinct().size
+        val compactStatus = if (firstAccepted.statuses.size < totalCount) {
+            "Delete saved to $acceptedCount/$totalCount relays; syncing others..."
+        } else {
+            "Delete saved to $acceptedCount/$totalCount relays"
+        }
+        return SaveResult.Published(
+            listOf(compactStatus) +
+                listOf("Delete accepted by at least one relay ${diagnostics.joinToString(" ")}") +
+                firstAccepted.statuses.toSafeMessages(),
+        )
     }
 }

@@ -50,6 +50,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val _message = MutableStateFlow(startupMessage())
     val message: StateFlow<String> = _message
 
+    private val _diagnosticMessage = MutableStateFlow("")
+    val diagnosticMessage: StateFlow<String> = _diagnosticMessage
+
+    val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
+
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {
             is KeyDecodeResult.Valid -> {
@@ -104,13 +109,15 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun save(existing: Note?, markdown: String): Boolean {
         val result = saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
-        _message.value = result.toMessage()
+        _message.value = result.toCompactMessage()
+        _diagnosticMessage.value = result.toDiagnosticMessage()
         return result !is SaveResult.Failed
     }
 
     suspend fun delete(note: Note): Boolean {
         val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
-        _message.value = result.toMessage()
+        _message.value = result.toCompactMessage()
+        _diagnosticMessage.value = result.toDiagnosticMessage()
         return result !is SaveResult.Failed
     }
 
@@ -124,34 +131,55 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         try {
             _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
                 _syncState.value = partial.copy(syncing = true)
-                _message.value = partial.toMessage()
+                _message.value = partial.toCompactMessage()
+                _diagnosticMessage.value = partial.toDiagnosticMessage()
             }
         } finally {
             _syncState.value = _syncState.value.copy(syncing = false)
-            _message.value = _syncState.value.toMessage()
+            _message.value = _syncState.value.toCompactMessage()
+            _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
         }
     }
 
     fun startSync(): Job = appScope.launch { sync() }
 
-    private fun SyncState.toMessage(): String =
+    private fun SyncState.toDiagnosticMessage(): String =
         buildString {
             append(summary)
             val relaySummary = relayStatuses.toSafeSummary()
             if (relaySummary.isNotBlank()) append("\n").append(relaySummary)
         }
 
+    private fun SyncState.toCompactMessage(): String {
+        if (syncing) return "Syncing..."
+        if (errors.isNotEmpty()) {
+            return if (relayStatuses.isNotEmpty() && relayStatuses.none { it.readable }) {
+                "Sync failed: no relays reachable"
+            } else {
+                errors.first()
+            }
+        }
+        val total = relayStatuses.size
+        val reachable = relayStatuses.count { it.readable }
+        return when {
+            total == 0 && warnings.isEmpty() -> "Not synced"
+            total == 0 -> warnings.first().compactStatus()
+            reachable == total -> "Synced"
+            reachable > 0 -> "Sync partial: $reachable/$total relays reachable"
+            else -> "Sync failed: no relays reachable"
+        }
+    }
+
     private fun updatePublishStatuses(statuses: List<RelayStatus>) {
         _syncState.value = _syncState.value.copy(relayStatuses = statuses)
-        _message.value = buildString {
-            append("Relay write fanout in progress: ")
-            append(statuses.count { it.writable })
-            append("/")
-            append(statuses.size)
-            append(" accepted")
-            val relaySummary = statuses.toSafeSummary()
-            if (relaySummary.isNotBlank()) append("\n").append(relaySummary)
+        val total = relaySettings.normalizedUrls().distinct().size
+        val accepted = statuses.count { it.writable }
+        _message.value = if (statuses.size < total) {
+            "Saved to $accepted/$total relays; syncing others..."
+        } else {
+            "Saved to $accepted/$total relays"
         }
+        _diagnosticMessage.value = statuses.toSafeSummary()
     }
 
     suspend fun saveRelays(rawRelays: List<String>) {
@@ -171,7 +199,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
     }
 
-    private fun SaveResult.toMessage(): String = when (this) {
+    private fun SaveResult.toCompactMessage(): String = when (this) {
+        is SaveResult.LocalOnly -> reason
+        is SaveResult.Published -> relayMessages.firstOrNull()?.compactStatus() ?: "Saved"
+        is SaveResult.Failed -> reason
+    }
+
+    private fun SaveResult.toDiagnosticMessage(): String = when (this) {
         is SaveResult.LocalOnly -> reason
         is SaveResult.Published -> relayMessages.joinToString("\n")
         is SaveResult.Failed -> reason
@@ -179,6 +213,8 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     private fun List<RelayStatus>.toSafeSummary(): String =
         joinToString("\n") { "${it.url}: read=${it.readable} write=${it.writable} ${it.message.take(180)}" }
+
+    private fun String.compactStatus(): String = lineSequence().firstOrNull().orEmpty().take(120)
 
     private fun startupMessage(): String =
         if (services.mode == AppRuntimeMode.DesktopDevRelay) {

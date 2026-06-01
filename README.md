@@ -92,6 +92,14 @@ OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run
 
 The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. Use throwaway `nsec` values only. The pasted `nsec` is used only for the active process session, is redacted after login, and is not written to local files, relay settings, cache, logs, or test output. Saved-key mode is intentionally unavailable until OS keyring or external signer support is implemented.
 
+Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
+
+```sh
+OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS=1 ./gradlew :app:run
+```
+
+The equivalent diagnostics JVM property is `-Dothernote.showRelayDiagnostics=true`.
+
 Developer relay runtime defaults:
 
 - `wss://relay.damus.io`
@@ -113,11 +121,11 @@ Manual relay checklist:
 Runtime troubleshooting:
 
 - Save/edit/delete is best-effort. A note becomes locally visible after the local encrypt/sign/validate/decrypt control passes and at least one relay accepts the write.
-- Remaining relay writes continue in the background after the first accepted write. Status should update as each configured relay accepts, rejects, fails, or times out.
-- Slow relays should appear as failed, rejected, or timed out in the relay status text. One slow relay should not block a successful write from a faster relay.
+- Remaining relay writes continue in the background after the first accepted write. Compact status reports aggregate progress; verbose per-relay status is hidden unless diagnostics are enabled.
+- Slow relays may fail, reject, or time out. One slow relay should not block a successful write from a faster relay.
 - Sync applies valid events incrementally as each relay completes. A recovered note can appear before the final aggregate sync status arrives, and later relay results can still update newer replacements or tombstones.
-- Fetch status includes safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. It does not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
-- If no note appears after sync, distinguish the status text: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
+- Verbose fetch diagnostics include safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. They do not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
+- If no note appears after sync, enable relay diagnostics to distinguish: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
