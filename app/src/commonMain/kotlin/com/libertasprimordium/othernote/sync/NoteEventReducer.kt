@@ -10,20 +10,33 @@ data class ReducedNoteState(
     val selectedEvents: List<NostrEvent>,
     val selectedNoteIds: Set<String>,
     val rejectedCount: Int,
+    val decryptRejectedCount: Int = 0,
+    val payloadRejectedCount: Int = 0,
+    val dTagRejectedCount: Int = 0,
 )
 
 fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<String>): ReducedNoteState {
     val accepted = mutableListOf<Pair<NostrEvent, Note>>()
-    var rejected = 0
+    var decryptRejected = 0
+    var payloadRejected = 0
+    var dTagRejected = 0
     events.filter { it.isOtherNoteEvent() && it.dTag() != null }.forEach { event ->
-        val note = decrypt(event)
-            .mapCatching { JsonNotePayloadCodec.decode(it).getOrThrow().toNote(event.id) }
-            .getOrNull()
-        if (note == null || event.dTag() != note.dTag) {
-            rejected++
-        } else {
-            accepted += event to note
+        val decrypted = decrypt(event).getOrNull()
+        if (decrypted == null) {
+            decryptRejected++
+            return@forEach
         }
+        val payload = JsonNotePayloadCodec.decode(decrypted).getOrNull()
+        if (payload == null) {
+            payloadRejected++
+            return@forEach
+        }
+        val note = payload.toNote(event.id)
+        if (event.dTag() != note.dTag) {
+            dTagRejected++
+            return@forEach
+        }
+        accepted += event to note
     }
 
     val selected = accepted
@@ -38,6 +51,9 @@ fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<S
         notes = selected.map { it.second }.filterNot { it.deleted }.sortedByDescending { it.updatedAtMs },
         selectedEvents = selected.map { it.first },
         selectedNoteIds = selected.map { it.second.id }.toSet(),
-        rejectedCount = rejected,
+        rejectedCount = decryptRejected + payloadRejected + dTagRejected,
+        decryptRejectedCount = decryptRejected,
+        payloadRejectedCount = payloadRejected,
+        dTagRejectedCount = dTagRejected,
     )
 }

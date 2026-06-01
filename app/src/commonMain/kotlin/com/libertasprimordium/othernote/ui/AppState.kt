@@ -11,6 +11,9 @@ import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -24,12 +27,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val crypto = services.crypto
     private val client = services.client
     private val nostr = NostrRepository(crypto, client)
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val runtimeMode: AppRuntimeMode = services.mode
     val notes = services.notes
     val relaySettings = services.relaySettings
-    private val saveNote = SaveNoteUseCase(notes, nostr)
-    private val deleteNote = DeleteNoteUseCase(notes, nostr)
-    private val syncNotes = SyncNotesUseCase(notes, nostr, crypto)
+    private val saveNote = SaveNoteUseCase(notes, nostr, appScope, ::updatePublishStatuses)
+    private val deleteNote = DeleteNoteUseCase(notes, nostr, appScope, ::updatePublishStatuses)
+    private val syncNotes = SyncNotesUseCase(notes, nostr, crypto, appScope)
     private val migrateRelays = MigrateRelaysUseCase()
 
     private val _session = MutableStateFlow<UserSession?>(null)
@@ -115,10 +119,30 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             return
         }
         _syncState.value = _syncState.value.copy(syncing = true)
-        _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls())
+        _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
+            _syncState.value = partial.copy(syncing = true)
+            _message.value = partial.toMessage()
+        }
+        _syncState.value = _syncState.value.copy(syncing = false)
+        _message.value = _syncState.value.toMessage()
+    }
+
+    private fun SyncState.toMessage(): String =
+        buildString {
+            append(summary)
+            val relaySummary = relayStatuses.toSafeSummary()
+            if (relaySummary.isNotBlank()) append("\n").append(relaySummary)
+        }
+
+    private fun updatePublishStatuses(statuses: List<RelayStatus>) {
+        _syncState.value = _syncState.value.copy(relayStatuses = statuses)
         _message.value = buildString {
-            append(_syncState.value.summary)
-            val relaySummary = _syncState.value.relayStatuses.toSafeSummary()
+            append("Relay write fanout in progress: ")
+            append(statuses.count { it.writable })
+            append("/")
+            append(statuses.size)
+            append(" accepted")
+            val relaySummary = statuses.toSafeSummary()
             if (relaySummary.isNotBlank()) append("\n").append(relaySummary)
         }
     }

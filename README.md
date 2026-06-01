@@ -110,6 +110,16 @@ Manual relay checklist:
 6. Edit the note and verify refresh keeps only the newest version.
 7. Delete the note and verify refresh/restart hides the tombstoned note.
 
+Runtime troubleshooting:
+
+- Save/edit/delete is best-effort. A note becomes locally visible after the local encrypt/sign/validate/decrypt control passes and at least one relay accepts the write.
+- Remaining relay writes continue in the background after the first accepted write. Status should update as each configured relay accepts, rejects, fails, or times out.
+- Slow relays should appear as failed, rejected, or timed out in the relay status text. One slow relay should not block a successful write from a faster relay.
+- Sync applies valid events incrementally as each relay completes. A recovered note can appear before the final aggregate sync status arrives, and later relay results can still update newer replacements or tombstones.
+- Fetch status includes safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. It does not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
+- If no note appears after sync, distinguish the status text: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
+- Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
+
 OS keyring persistence, Amber/NIP-55, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.

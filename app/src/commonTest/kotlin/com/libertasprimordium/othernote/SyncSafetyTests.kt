@@ -7,12 +7,14 @@ import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.domain.noteDTag
 import com.libertasprimordium.othernote.domain.toPayload
+import com.libertasprimordium.othernote.nostr.FanoutNostrClient
+import com.libertasprimordium.othernote.nostr.IncrementalNostrClient
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
-import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrPrivateKey
 import com.libertasprimordium.othernote.nostr.NostrPublicKey
+import com.libertasprimordium.othernote.nostr.PublishBestEffortHandle
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.nostr.ProfileMetadata
 import com.libertasprimordium.othernote.nostr.RelayFetchResult
@@ -24,7 +26,11 @@ import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -126,7 +132,7 @@ class SyncSafetyTests {
         val state = sync.sync(session(), listOf("wss://relay.example.com"))
 
         assertEquals(setOf("local", "remote"), notes.notes.value.map { it.id }.toSet())
-        assertTrue(state.warnings.single().contains("Rejected 3"))
+        assertTrue(state.warnings.any { it.contains("Rejected 3") })
     }
 
     @Test
@@ -194,6 +200,142 @@ class SyncSafetyTests {
         assertTrue(notes.notes.value.isEmpty())
     }
 
+    @Test
+    fun saveUpdatesAfterFirstAcceptedRelayWithoutWaitingForSlowFailures() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val statusUpdates = mutableListOf<List<RelayStatus>>()
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+            ),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = false, message = "timeout"),
+            ),
+            autoCompletePublish = false,
+        )
+        val save = SaveNoteUseCase(notes, NostrRepository(crypto, client), this) { statusUpdates += it }
+
+        val result = withTimeout(500) {
+            save.save(existing = null, bodyMarkdown = "body", session = session(), relays = listOf("wss://fast.example.com", "wss://slow.example.com"))
+        }
+
+        assertIs<SaveResult.Published>(result)
+        assertEquals("body", notes.notes.value.single().bodyMarkdown)
+        assertEquals(1, client.publishBestEffortCalls)
+        client.completePendingPublish()
+        assertTrue(statusUpdates.flatten().none { it.message.contains("skipped") })
+        assertTrue(statusUpdates.last().any { it.url == "wss://slow.example.com" && !it.writable })
+    }
+
+    @Test
+    fun deleteHidesAfterFirstAcceptedTombstoneWhileOtherWritesContinue() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val target = note("delete-fanout", "body", updatedAtMs = 1)
+        notes.upsertLocal(target)
+        val crypto = FakeCrypto(productionReady = true)
+        val statusUpdates = mutableListOf<List<RelayStatus>>()
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = true, message = "accepted late"),
+            ),
+            autoCompletePublish = false,
+        )
+        val delete = DeleteNoteUseCase(notes, NostrRepository(crypto, client), this) { statusUpdates += it }
+
+        val result = withTimeout(500) {
+            delete.delete(target, session(), listOf("wss://fast.example.com", "wss://slow.example.com"))
+        }
+
+        assertIs<SaveResult.Published>(result)
+        assertTrue(notes.notes.value.isEmpty())
+        client.completePendingPublish()
+        assertTrue(statusUpdates.last().all { it.writable })
+        assertTrue(statusUpdates.flatten().none { it.message.contains("skipped") })
+    }
+
+    @Test
+    fun incrementalSyncAppliesValidFastRelayBeforeSlowRelayCompletes() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val valid = signedEvent(crypto, note("remote", "fast", updatedAtMs = 2), createdAt = 2)
+        val client = FakeClient(
+            incrementalResults = listOf(
+                RelayFetchResult(
+                    events = listOf(valid),
+                    statuses = listOf(RelayStatus("wss://fast.example.com", readable = true, message = "stage=fetch outcome=complete duration_ms=1 EOSE with 1 event(s)")),
+                ),
+                RelayFetchResult(
+                    events = emptyList(),
+                    statuses = listOf(RelayStatus("wss://slow.example.com", readable = false, message = "stage=fetch outcome=timeout duration_ms=5000")),
+                ),
+            ),
+            incrementalDelayAfterFirstMs = 1_000,
+        )
+        val sync = SyncNotesUseCase(notes, NostrRepository(crypto, client), crypto)
+        var noteVisibleAfterFirstPartial = false
+
+        val state = sync.sync(session(), listOf("wss://fast.example.com", "wss://slow.example.com")) {
+            if (notes.notes.value.any { it.id == "remote" }) noteVisibleAfterFirstPartial = true
+        }
+
+        assertTrue(noteVisibleAfterFirstPartial)
+        assertEquals("fast", notes.notes.value.single().bodyMarkdown)
+        assertTrue(state.warnings.any { it.contains("Partial relay read failure") })
+    }
+
+    @Test
+    fun laterIncrementalReplacementUpdatesVisibleNoteAndTombstoneHidesIt() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val older = signedEvent(crypto, note("remote", "older", updatedAtMs = 2), createdAt = 2)
+        val newer = signedEvent(crypto, note("remote", "newer", updatedAtMs = 3), createdAt = 3)
+        val tombstone = signedEvent(crypto, note("remote", "", updatedAtMs = 4).copy(deleted = true), createdAt = 4)
+        val client = FakeClient(
+            incrementalResults = listOf(
+                RelayFetchResult(listOf(older), listOf(RelayStatus("wss://one.example.com", readable = true, message = "ok"))),
+                RelayFetchResult(listOf(newer), listOf(RelayStatus("wss://two.example.com", readable = true, message = "ok"))),
+                RelayFetchResult(listOf(tombstone), listOf(RelayStatus("wss://three.example.com", readable = true, message = "ok"))),
+            ),
+        )
+        val sync = SyncNotesUseCase(notes, NostrRepository(crypto, client), crypto)
+        val observedBodies = mutableListOf<String>()
+
+        sync.sync(session(), listOf("wss://one.example.com", "wss://two.example.com", "wss://three.example.com")) {
+            observedBodies += notes.notes.value.singleOrNull()?.bodyMarkdown.orEmpty()
+        }
+
+        assertTrue("older" in observedBodies)
+        assertTrue("newer" in observedBodies)
+        assertTrue(notes.notes.value.isEmpty())
+    }
+
+    @Test
+    fun savedEventCanBeFetchedOnNextSyncAndDisplayed() = runBlocking {
+        val firstNotes = InMemoryNoteRepository()
+        val secondNotes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val saveClient = FakeClient(publishStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "accepted")))
+        val save = SaveNoteUseCase(firstNotes, NostrRepository(crypto, saveClient))
+
+        val saveResult = save.save(existing = null, bodyMarkdown = "recover me", session = session(), relays = listOf("wss://relay.example.com"))
+
+        assertIs<SaveResult.Published>(saveResult)
+        val fetchClient = FakeClient(
+            events = saveClient.published.toList(),
+            statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+        )
+        val sync = SyncNotesUseCase(secondNotes, NostrRepository(crypto, fetchClient), crypto)
+        sync.sync(session(), listOf("wss://relay.example.com"))
+
+        assertEquals("recover me", secondNotes.notes.value.single().bodyMarkdown)
+        assertTrue(saveClient.published.single().isOtherNoteEvent())
+        assertEquals(session().publicKeyHex, saveClient.published.single().pubkey)
+    }
+
     private fun session(): UserSession = UserSession(
         nsec = "nsec-redacted",
         privateKeyHex = "01".repeat(32),
@@ -225,8 +367,16 @@ private class FakeClient(
     private val events: List<NostrEvent> = emptyList(),
     private val statuses: List<RelayStatus> = emptyList(),
     private val publishStatuses: List<RelayStatus> = emptyList(),
-) : NostrClient {
+    private val firstAcceptedStatuses: List<RelayStatus> = publishStatuses,
+    private val completeStatuses: List<RelayStatus> = publishStatuses,
+    private val autoCompletePublish: Boolean = true,
+    private val incrementalResults: List<RelayFetchResult> = emptyList(),
+    private val incrementalDelayAfterFirstMs: Long = 0,
+) : IncrementalNostrClient, FanoutNostrClient {
     val published = mutableListOf<NostrEvent>()
+    var publishBestEffortCalls = 0
+    private var pendingComplete: CompletableDeferred<RelayPublishResult>? = null
+    private var pendingOnStatus: ((List<RelayStatus>) -> Unit)? = null
 
     override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
         RelayFetchResult(events, statuses)
@@ -234,6 +384,47 @@ private class FakeClient(
     override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
         published += event
         return RelayPublishResult(publishStatuses)
+    }
+
+    override fun publishBestEffort(
+        relays: List<String>,
+        event: NostrEvent,
+        scope: CoroutineScope,
+        onStatus: (List<RelayStatus>) -> Unit,
+    ): PublishBestEffortHandle {
+        publishBestEffortCalls++
+        published += event
+        pendingOnStatus = onStatus
+        onStatus(firstAcceptedStatuses)
+        val firstAccepted = CompletableDeferred(RelayPublishResult(firstAcceptedStatuses))
+        val complete = CompletableDeferred<RelayPublishResult>()
+        pendingComplete = complete
+        if (autoCompletePublish) completePendingPublish()
+        return PublishBestEffortHandle(firstAccepted, complete)
+    }
+
+    fun completePendingPublish() {
+        pendingOnStatus?.invoke(completeStatuses)
+        pendingComplete?.complete(RelayPublishResult(completeStatuses))
+    }
+
+    override suspend fun fetchNotesIncrementally(
+        relays: List<String>,
+        authorPubkey: String,
+        onRelayResult: suspend (RelayFetchResult) -> Unit,
+    ): RelayFetchResult {
+        if (incrementalResults.isEmpty()) {
+            return fetchNotes(relays, authorPubkey).also { onRelayResult(it) }
+        }
+        val allEvents = mutableListOf<NostrEvent>()
+        val allStatuses = mutableListOf<RelayStatus>()
+        incrementalResults.forEachIndexed { index, result ->
+            if (index > 0 && incrementalDelayAfterFirstMs > 0) delay(incrementalDelayAfterFirstMs)
+            allEvents += result.events
+            allStatuses += result.statuses
+            onRelayResult(result)
+        }
+        return RelayFetchResult(allEvents, allStatuses)
     }
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null

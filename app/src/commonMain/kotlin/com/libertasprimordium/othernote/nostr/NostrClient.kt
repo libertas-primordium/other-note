@@ -1,12 +1,36 @@
 package com.libertasprimordium.othernote.nostr
 
 import com.libertasprimordium.othernote.domain.RelayStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 
 interface NostrClient {
     suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult
     suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult
     suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata?
 }
+
+interface IncrementalNostrClient : NostrClient {
+    suspend fun fetchNotesIncrementally(
+        relays: List<String>,
+        authorPubkey: String,
+        onRelayResult: suspend (RelayFetchResult) -> Unit,
+    ): RelayFetchResult
+}
+
+interface FanoutNostrClient : NostrClient {
+    fun publishBestEffort(
+        relays: List<String>,
+        event: NostrEvent,
+        scope: CoroutineScope,
+        onStatus: (List<RelayStatus>) -> Unit,
+    ): PublishBestEffortHandle
+}
+
+data class PublishBestEffortHandle(
+    val firstAccepted: Deferred<RelayPublishResult>,
+    val complete: Deferred<RelayPublishResult>,
+)
 
 data class RelayFetchResult(
     val events: List<NostrEvent>,
