@@ -22,5 +22,5 @@
 > Task :app:prepareAppResources NO-SOURCE
 > Task :app:run
 
-BUILD SUCCESSFUL in 1m 12s
+BUILD SUCCESSFUL in 11s
 10 actionable tasks: 3 executed, 7 up-to-date

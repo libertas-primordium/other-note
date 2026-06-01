@@ -47,6 +47,7 @@ import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.detectUrls
+import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.launch
@@ -180,7 +181,7 @@ fun NoteCard(note: Note, onOpen: (Note) -> Unit) {
     ) {
         Column(Modifier.padding(14.dp)) {
             Text(truncateMarkdown(note.bodyMarkdown).ifBlank { "Untitled note" }, color = OtherNoteText)
-            Text("Updated ${note.updatedAtMs}", color = OtherNoteMuted, fontSize = 12.sp)
+            Text(formatNoteCardUpdatedAt(note.updatedAtMs), color = OtherNoteMuted, fontSize = 12.sp)
         }
     }
 }
