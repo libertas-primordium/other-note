@@ -18,6 +18,7 @@ Important security status:
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
 - Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; default desktop and all Android runtime paths remain offline/non-production.
+- Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -98,6 +99,14 @@ OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run
 
 The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. Use throwaway `nsec` values only. The pasted `nsec` is used only for the active process session, is redacted after login, and is not written to local files, relay settings, cache, logs, or test output. Saved-key mode is intentionally unavailable until OS keyring or external signer support is implemented.
 
+Desktop developer relay runtime keeps a local durability layer at `~/.local/share/other-note/`:
+
+- `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
+- `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, and safe error strings.
+- Pending writes are retried on login, sync, or manual refresh for the same account pubkey. The retry path republishes the existing signed event and does not require storing or re-signing with an old private key.
+- The retry policy is intentionally bounded for now: unfinished relays are retried up to three times per stored pending write. A pending write is removed after every target relay accepts it or all unfinished target relays hit the retry cap.
+- Deleting this local directory clears the cache and pending retry queue, but it does not delete events already published to relays.
+
 Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
 
 ```sh
@@ -128,6 +137,8 @@ Runtime troubleshooting:
 
 - Save/edit/delete is best-effort. A note becomes locally visible after the local encrypt/sign/validate/decrypt control passes and at least one relay accepts the write.
 - Remaining relay writes continue in the background after the first accepted write. Compact status reports aggregate progress; verbose per-relay status is hidden unless diagnostics are enabled.
+- If the app exits after the first accepted relay but before fanout completes, unfinished relay writes remain queued locally and are retried on the next login/sync for the same pubkey.
+- Cached encrypted events are loaded after login and decrypted only with the session key supplied for the current process, so notes can appear before network fetches complete.
 - Slow relays may fail, reject, or time out. One slow relay should not block a successful write from a faster relay.
 - Sync applies valid events incrementally as each relay completes. A recovered note can appear before the final aggregate sync status arrives, and later relay results can still update newer replacements or tombstones.
 - Verbose fetch diagnostics include safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. They do not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
@@ -204,7 +215,7 @@ Shared `commonMain` code is organized into:
 
 - `domain`: notes, relay config, session, sync state.
 - `nostr`: NIP-19 decoding, NIP-44 status, event model, crypto/client/repository interfaces.
-- `data`: in-memory note store, relay settings, profile cache, secure key-store abstraction.
+- `data`: note store, relay settings, profile cache, secure key-store abstraction, encrypted event cache, and pending write queue interfaces.
 - `sync`: save, delete/tombstone, sync reduction, and relay migration planning.
 - `ui`: shared Compose screens for login, list, display, edit, and relay settings.
 - `util`: URL detection, npub detection, markdown helpers, relay URL validation, payload JSON codec.
@@ -212,13 +223,12 @@ Shared `commonMain` code is organized into:
 Platform code:
 
 - `androidMain`: Android activity and manifest.
-- `desktopMain`: Compose Desktop window entry point.
+- `desktopMain`: Compose Desktop window entry point, bounded WebSocket relay client, and file-backed developer runtime cache/pending-write stores.
 
 ## Known Limitations And TODOs
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
-- Wire the bounded WebSocket relay client into explicit developer/test runtime paths, then production sync after storage and failure handling are reviewed.
-- Add encrypted local cache storage. Do not persist private keys until platform secure storage exists.
+- Keep desktop developer relay runtime gated until storage and failure handling are reviewed for normal runtime use.
 - Implement Android encrypted key storage and decide on a Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.

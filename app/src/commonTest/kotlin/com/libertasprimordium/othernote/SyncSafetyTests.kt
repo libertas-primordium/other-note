@@ -1,6 +1,9 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.data.InMemoryNoteRepository
+import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
+import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
+import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.RelayStatus
@@ -157,6 +160,44 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun saveEnqueuesPendingWriteAndKeepsUnfinishedRelaysAfterFirstAcceptance() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val pendingStore = InMemoryPendingWriteStore()
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = false, message = "timeout"),
+            ),
+            autoCompletePublish = false,
+        )
+        val save = SaveNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            localEventCache = cache,
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        val result = save.save(
+            existing = null,
+            bodyMarkdown = "pending secret body",
+            session = session(),
+            relays = listOf("wss://fast.example.com", "wss://slow.example.com"),
+        )
+
+        assertIs<SaveResult.Published>(result)
+        assertEquals(1, cache.loadEvents(session().publicKeyHex).size)
+        val pending = pendingStore.loadPendingWrites(session().publicKeyHex).single()
+        assertEquals(PendingWriteStatus.Accepted, pending.relayStatuses["wss://fast.example.com"])
+        assertEquals(PendingWriteStatus.Pending, pending.relayStatuses["wss://slow.example.com"])
+        assertTrue(pending.unfinishedRelays.contains("wss://slow.example.com"))
+        client.completePendingPublish()
+    }
+
+    @Test
     fun editPreservesNoteIdAndDTag() = runBlocking {
         val notes = InMemoryNoteRepository()
         val crypto = FakeCrypto(productionReady = true)
@@ -218,7 +259,12 @@ class SyncSafetyTests {
             ),
             autoCompletePublish = false,
         )
-        val save = SaveNoteUseCase(notes, NostrRepository(crypto, client), this) { statusUpdates += it }
+        val save = SaveNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            publishScope = this,
+            onPublishStatus = { statusUpdates += it },
+        )
 
         val result = withTimeout(500) {
             save.save(existing = null, bodyMarkdown = "body", session = session(), relays = listOf("wss://fast.example.com", "wss://slow.example.com"))
@@ -247,7 +293,12 @@ class SyncSafetyTests {
             ),
             autoCompletePublish = false,
         )
-        val delete = DeleteNoteUseCase(notes, NostrRepository(crypto, client), this) { statusUpdates += it }
+        val delete = DeleteNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            publishScope = this,
+            onPublishStatus = { statusUpdates += it },
+        )
 
         val result = withTimeout(500) {
             delete.delete(target, session(), listOf("wss://fast.example.com", "wss://slow.example.com"))
@@ -288,6 +339,50 @@ class SyncSafetyTests {
         assertTrue(noteVisibleAfterFirstPartial)
         assertEquals("fast", notes.notes.value.single().bodyMarkdown)
         assertTrue(state.warnings.any { it.contains("Partial relay read failure") })
+    }
+
+    @Test
+    fun syncLoadsCachedEncryptedEventsBeforeFailedRelaysReturn() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val crypto = FakeCrypto(productionReady = true)
+        val cached = signedEvent(crypto, note("cached", "cached visible", updatedAtMs = 3), createdAt = 3)
+        cache.upsertEvents(session().publicKeyHex, listOf(cached))
+        val client = FakeClient(statuses = listOf(RelayStatus("wss://relay.example.com", readable = false, message = "timeout")))
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, client),
+            crypto,
+            localEventCache = cache,
+        )
+        var visibleFromCache = false
+
+        sync.sync(session(), listOf("wss://relay.example.com")) {
+            if (notes.notes.value.any { it.id == "cached" }) visibleFromCache = true
+        }
+
+        assertTrue(visibleFromCache)
+        assertEquals("cached visible", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
+    fun cachedTombstoneHidesOlderCachedNote() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val crypto = FakeCrypto(productionReady = true)
+        val older = signedEvent(crypto, note("cached-delete", "old", updatedAtMs = 2), createdAt = 2)
+        val tombstone = signedEvent(crypto, note("cached-delete", "", updatedAtMs = 3).copy(deleted = true), createdAt = 3)
+        cache.upsertEvents(session().publicKeyHex, listOf(older, tombstone))
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, FakeClient()),
+            crypto,
+            localEventCache = cache,
+        )
+
+        sync.sync(session(), emptyList())
+
+        assertTrue(notes.notes.value.isEmpty())
     }
 
     @Test
@@ -337,6 +432,65 @@ class SyncSafetyTests {
         assertEquals("recover me", secondNotes.notes.value.single().bodyMarkdown)
         assertTrue(saveClient.published.single().isOtherNoteEvent())
         assertEquals(session().publicKeyHex, saveClient.published.single().pubkey)
+    }
+
+    @Test
+    fun nextLoginRetriesUnfinishedPendingWritesWithoutResigning() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val pendingStore = InMemoryPendingWriteStore()
+        val pendingEvent = signedEvent(crypto, note("retry-me", "retry encrypted", updatedAtMs = 2), createdAt = 2)
+        pendingStore.enqueuePendingWrite(
+            accountPubkey = session().publicKeyHex,
+            event = pendingEvent,
+            targetRelays = listOf("wss://done.example.com", "wss://retry.example.com"),
+        )
+        pendingStore.markRelayAccepted(pendingEvent.id, "wss://done.example.com")
+        val client = FakeClient(
+            publishStatuses = listOf(RelayStatus("wss://retry.example.com", writable = true, message = "accepted")),
+            statuses = listOf(RelayStatus("wss://read.example.com", readable = false, message = "timeout")),
+        )
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, client),
+            crypto,
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        sync.sync(session(), listOf("wss://done.example.com", "wss://retry.example.com"))
+        withTimeout(1_000) {
+            while (client.published.isEmpty()) delay(10)
+        }
+
+        assertEquals(listOf("wss://retry.example.com"), client.publishRelayBatches.single())
+        assertEquals(pendingEvent, client.published.single())
+    }
+
+    @Test
+    fun pendingWritesAreScopedToLoggedInPubkey() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val pendingStore = InMemoryPendingWriteStore()
+        val pendingEvent = signedEvent(crypto, note("other-account", "body", updatedAtMs = 2), createdAt = 2)
+        pendingStore.enqueuePendingWrite(
+            accountPubkey = "aa".repeat(32),
+            event = pendingEvent,
+            targetRelays = listOf("wss://relay.example.com"),
+        )
+        val client = FakeClient(statuses = listOf(RelayStatus("wss://read.example.com", readable = false, message = "timeout")))
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, client),
+            crypto,
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        sync.sync(session(), listOf("wss://relay.example.com"))
+        delay(50)
+
+        assertTrue(client.published.isEmpty())
     }
 
     @Test
@@ -458,6 +612,7 @@ private class FakeClient(
     private val incrementalDelayAfterFirstMs: Long = 0,
 ) : IncrementalNostrClient, FanoutNostrClient {
     val published = mutableListOf<NostrEvent>()
+    val publishRelayBatches = mutableListOf<List<String>>()
     var publishBestEffortCalls = 0
     private var pendingComplete: CompletableDeferred<RelayPublishResult>? = null
     private var pendingOnStatus: ((List<RelayStatus>) -> Unit)? = null
@@ -467,6 +622,7 @@ private class FakeClient(
 
     override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
         published += event
+        publishRelayBatches += relays
         return RelayPublishResult(publishStatuses)
     }
 
@@ -478,6 +634,7 @@ private class FakeClient(
     ): PublishBestEffortHandle {
         publishBestEffortCalls++
         published += event
+        publishRelayBatches += relays
         pendingOnStatus = onStatus
         onStatus(firstAcceptedStatuses)
         val firstAccepted = CompletableDeferred(RelayPublishResult(firstAcceptedStatuses))

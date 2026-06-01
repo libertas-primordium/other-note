@@ -33,9 +33,30 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val runtimeMode: AppRuntimeMode = services.mode
     val notes = services.notes
     val relaySettings = services.relaySettings
-    private val saveNote = SaveNoteUseCase(notes, nostr, appScope, ::updatePublishStatuses)
-    private val deleteNote = DeleteNoteUseCase(notes, nostr, appScope, ::updatePublishStatuses)
-    private val syncNotes = SyncNotesUseCase(notes, nostr, crypto, appScope)
+    private val saveNote = SaveNoteUseCase(
+        notes,
+        nostr,
+        services.localEventCache,
+        services.pendingWriteStore,
+        appScope,
+        ::updatePublishStatuses,
+    )
+    private val deleteNote = DeleteNoteUseCase(
+        notes,
+        nostr,
+        services.localEventCache,
+        services.pendingWriteStore,
+        appScope,
+        ::updatePublishStatuses,
+    )
+    private val syncNotes = SyncNotesUseCase(
+        notes,
+        nostr,
+        crypto,
+        services.localEventCache,
+        services.pendingWriteStore,
+        appScope,
+    )
     private val migrateRelays = MigrateRelaysUseCase()
 
     private val _session = MutableStateFlow<UserSession?>(null)

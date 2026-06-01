@@ -1,6 +1,10 @@
 package com.libertasprimordium.othernote.ui
 
 import com.libertasprimordium.othernote.data.InMemoryNoteRepository
+import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
+import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
+import com.libertasprimordium.othernote.data.LocalEventCache
+import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.RelayConfig
@@ -28,6 +32,8 @@ data class AppServices(
     val keyManagementPolicy: KeyManagementPolicy = DefaultKeyManagementPolicy,
     val secureSecretStore: SecureSecretStore = UnavailableSecureSecretStore(),
     val externalSignerProvider: NostrSignerProvider = UnavailableExternalSignerProvider(),
+    val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
+    val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopDevRelay) DesktopDevRelayDefaults else DefaultRelays,

@@ -19,6 +19,8 @@ object DesktopAppServicesFactory {
                 client = OfflineNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 secureSecretStore = DesktopSecureSecretStore(),
+                localEventCache = DesktopLocalEventCache(),
+                pendingWriteStore = DesktopPendingWriteStore(),
                 startupWarnings = listOf(ProductionNostrCryptoFactory.unavailableReason),
             )
         } else {
@@ -28,6 +30,8 @@ object DesktopAppServicesFactory {
                 client = DesktopNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 secureSecretStore = DesktopSecureSecretStore(),
+                localEventCache = DesktopLocalEventCache(),
+                pendingWriteStore = DesktopPendingWriteStore(),
                 startupWarnings = listOf("Developer relay runtime enabled"),
             )
         }

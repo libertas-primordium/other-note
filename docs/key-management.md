@@ -42,6 +42,8 @@ Saved-device key storage may be enabled only through OS credential stores:
 
 If an OS keyring is unavailable, locked, unsupported, or not implemented, saved-key mode must be disabled and session-only mode used. There must be no plaintext file fallback.
 
+The desktop developer relay runtime may cache signed encrypted Nostr events and pending relay-write metadata under the user's local app data directory. That cache is not key storage: it must not contain `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. It may contain encrypted event content because that is the same signed ciphertext intended for public relays.
+
 ## iOS Plan
 
 iOS saved-device key storage must use iOS Keychain when implemented. There must be no plaintext fallback.
@@ -85,8 +87,7 @@ This pass does not implement:
 - NIP-46 remote signer/bunker support.
 - NIP-07 web signer support.
 - A web app.
-- Local encrypted event cache.
-- Pending-write queue.
+- Production OS keyring-backed saved-key mode.
 
 Secure storage implementations must be added platform by platform and tested before saved-key mode is enabled. A test fake may exist only in tests and must be clearly marked as a test fake.
 
