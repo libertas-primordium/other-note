@@ -45,6 +45,18 @@ class AndroidNostrClient(
         RelayFetchResult(results.flatMap { it.events }, results.map { it.status })
     }
 
+    override suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult = coroutineScope {
+        val results = relays.distinct().map { relay ->
+            async(Dispatchers.IO) {
+                val url = normalizeRelayUrl(relay).getOrElse {
+                    return@async RelayFetchOneResult(status = RelayStatus(relay, readable = false, message = "stage=fetch outcome=invalid_url duration_ms=0 ${it.message ?: "Invalid relay URL"}"))
+                }
+                fetchWithFilter(url, filter.copy(limit = minOf(filter.limit, maxEvents)), "generic")
+            }
+        }.map { it.await() }
+        RelayFetchResult(results.flatMap { it.events }, results.map { it.status })
+    }
+
     override suspend fun fetchNotesIncrementally(
         relays: List<String>,
         authorPubkey: String,
@@ -289,6 +301,6 @@ private fun timeoutMessage(base: String, notices: List<String>): String =
     if (notices.isEmpty()) base else "$base; relay messages: ${notices.joinToString(" | ") { it.take(160) }}"
 
 private fun NostrFilter.safeLabel(): String =
-    "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},limit=$limit"
+    "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},p=${pTags.size},limit=$limit"
 
 private fun Throwable.safeMessage(): String = "${this::class.simpleName}: ${message?.take(160).orEmpty()}"

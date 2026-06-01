@@ -26,7 +26,7 @@ Session-only `nsec` means the key is held only in process memory for the active 
 
 ## Android Plan
 
-Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is also planned for later.
+Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is available as a signer-mediated foundation path and remains session-only for its local communication key material in this pass.
 
 Current Android NIP-55 status is discovery, explicit public-key request, internal signer primitive coverage, and relay-backed signer note creation/edit/delete/recovery:
 
@@ -46,6 +46,26 @@ Current Android NIP-55 status is discovery, explicit public-key request, interna
 Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use password/autofill/credential behavior so Android and Google Password Manager can prompt where appropriate. The app itself must not save Android `nsec` values to plaintext app storage.
 
 Saved-device `nsec` support must require Android secure credential or keystore-backed storage when implemented. Until that exists, saved-key mode stays disabled and session-only mode is used.
+
+## NIP-46 Remote Signer Plan
+
+NIP-46 remote signer / bunker support is a signer-mediated account mode distinct from Android NIP-55:
+
+- NIP-55 talks to an Android signer app on the same device.
+- NIP-46 talks to a remote signer pubkey through relays using encrypted kind `24133` request and response events.
+- Other Note creates a fresh session-only local communication keypair for the NIP-46 transport session. This keypair is not the user account key and is not persisted in this pass.
+- For direct `bunker://` login, the `connect` request's first param is the remote signer pubkey from the token, not the temporary communication pubkey. The temporary communication pubkey is only the kind `24133` event author and NIP-44 transport key.
+- Other Note requests the minimum capabilities needed for encrypted notes: `get_public_key`, kind-scoped `sign_event:30078`, `nip44_encrypt`, `nip44_decrypt`, `ping`, and `switch_relays`.
+- The remote signer returns the user account pubkey through `get_public_key`; that returned user pubkey is the Other Note account identity.
+- The remote signer performs `sign_event`, `nip44_encrypt`, and `nip44_decrypt`. The user private key stays with the remote signer, but the remote signer may see plaintext note payloads during encryption and decryption operations by design.
+- Other Note validates remote-signed note events before publishing: expected kind, content, tags, timestamp, user pubkey, id, and signature must match.
+- Durable relay stores may continue to persist signed encrypted Nostr events and safe relay metadata only. They must not persist bunker token secrets, NIP-46 request/response plaintext, NIP-46 communication private keys, `nsec`, user private keys, decrypted notes, decrypted payload JSON, or NIP-44 plaintext.
+- Pending relay writes retry by republishing already signed encrypted events for the same account pubkey. They do not require storing account private keys or old raw signer requests.
+- Android NIP-46 connect, request, response-wait, timeout, encrypt/decrypt, and sign-event work must run on background coroutine dispatchers. UI event handlers should start work and return immediately so signer approval or response timeouts cannot trigger an Android ANR.
+
+Troubleshooting a real bunker should use only safe diagnostics. If a connection fails before approval, verify whether the relay accepted a kind `24133` write from the temporary communication pubkey. Some write-restricted relays reject new temporary pubkeys even when the final user pubkey is allowed; initial compatibility tests should use a public relay accepted by both the app and bunker. Treat `bunker://` secrets as one-time sensitive tokens and regenerate them after sharing screenshots or logs. Current response handling polls/fetches after publish; a live response subscription opened before publish remains future work for bunkers or relays that do not retain fast responses. If Amber approval appears and Other Note later times out, preserve that as a response-path diagnosis while confirming the app remains responsive and no Android ANR is produced.
+
+Allowed safe NIP-46 metadata for future persistence is limited to remote signer pubkey, returned user pubkey, relay URLs, non-secret connection mode/status metadata, and timestamps. The conservative default remains session-only connection material, so reconnecting after app restart is acceptable until a reviewed persistence design exists.
 
 ## Desktop Plan
 
@@ -99,7 +119,7 @@ This policy currently does not cover completed implementations for:
 
 - OS keyring storage.
 - Saved-device Android `nsec` storage.
-- NIP-46 remote signer/bunker support.
+- Durable NIP-46 session metadata persistence.
 - NIP-07 web signer support.
 - A web app.
 - Production OS keyring-backed saved-key mode.

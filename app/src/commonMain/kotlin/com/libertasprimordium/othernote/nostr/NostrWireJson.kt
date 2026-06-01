@@ -17,9 +17,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 data class NostrFilter(
-    val authors: List<String>,
+    val authors: List<String> = emptyList(),
     val kinds: List<Int> = listOf(NoteKind),
     val tTags: List<String> = listOf(OtherNoteTag),
+    val pTags: List<String> = emptyList(),
     val limit: Int = 200,
 )
 
@@ -109,7 +110,9 @@ object NostrWireJson {
     }
 
     fun filterObject(filter: NostrFilter): JsonObject = buildJsonObject {
-        put("authors", stringArray(filter.authors))
+        if (filter.authors.isNotEmpty()) {
+            put("authors", stringArray(filter.authors))
+        }
         put(
             "kinds",
             buildJsonArray {
@@ -118,6 +121,9 @@ object NostrWireJson {
         )
         if (filter.tTags.isNotEmpty()) {
             put("#t", stringArray(filter.tTags))
+        }
+        if (filter.pTags.isNotEmpty()) {
+            put("#p", stringArray(filter.pTags))
         }
         put("limit", JsonPrimitive(filter.limit))
     }

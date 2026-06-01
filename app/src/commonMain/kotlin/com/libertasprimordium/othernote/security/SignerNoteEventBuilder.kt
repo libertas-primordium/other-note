@@ -13,6 +13,8 @@ import com.libertasprimordium.othernote.nostr.noteEventTags
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.nowMs
 import com.libertasprimordium.othernote.util.stableRandomId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 sealed class SignerNoteEventBuildResult {
     data class Success(
@@ -90,6 +92,28 @@ class SignerNoteEventBuilder(
         )
     }
 
+    suspend fun buildNewLocalNoteEventAsync(
+        session: UserSession,
+        signerPackage: String?,
+        bodyMarkdown: String,
+        onStage: (SignerNoteEventBuildStage) -> Unit = {},
+    ): SignerNoteEventBuildResult {
+        val nowMs = nowMsProvider()
+        return buildNoteEventAsync(
+            session = session,
+            signerPackage = signerPackage,
+            note = Note(
+                id = idProvider(),
+                createdAtMs = nowMs,
+                updatedAtMs = nowMs,
+                bodyMarkdown = bodyMarkdown,
+                deleted = false,
+            ),
+            successMessage = "Saved locally",
+            onStage = onStage,
+        )
+    }
+
     fun buildReplacementLocalNoteEvent(
         session: UserSession,
         signerPackage: String?,
@@ -111,6 +135,27 @@ class SignerNoteEventBuilder(
         )
     }
 
+    suspend fun buildReplacementLocalNoteEventAsync(
+        session: UserSession,
+        signerPackage: String?,
+        existing: Note,
+        bodyMarkdown: String,
+        onStage: (SignerNoteEventBuildStage) -> Unit = {},
+    ): SignerNoteEventBuildResult {
+        val nowMs = nowMsProvider()
+        return buildNoteEventAsync(
+            session = session,
+            signerPackage = signerPackage,
+            note = existing.copy(
+                bodyMarkdown = bodyMarkdown,
+                updatedAtMs = nowMs,
+                deleted = false,
+            ),
+            successMessage = "Saved locally",
+            onStage = onStage,
+        )
+    }
+
     fun buildLocalTombstoneEvent(
         session: UserSession,
         signerPackage: String?,
@@ -119,6 +164,27 @@ class SignerNoteEventBuilder(
     ): SignerNoteEventBuildResult {
         val nowMs = nowMsProvider()
         return buildNoteEvent(
+            session = session,
+            signerPackage = signerPackage,
+            note = existing.copy(
+                bodyMarkdown = "",
+                updatedAtMs = nowMs,
+                deleted = true,
+            ),
+            successMessage = "Deleted locally",
+            expectedDeleted = true,
+            onStage = onStage,
+        )
+    }
+
+    suspend fun buildLocalTombstoneEventAsync(
+        session: UserSession,
+        signerPackage: String?,
+        existing: Note,
+        onStage: (SignerNoteEventBuildStage) -> Unit = {},
+    ): SignerNoteEventBuildResult {
+        val nowMs = nowMsProvider()
+        return buildNoteEventAsync(
             session = session,
             signerPackage = signerPackage,
             note = existing.copy(
@@ -228,6 +294,126 @@ class SignerNoteEventBuilder(
             safeSummary = "$successMessage (${signed.id.take(12)}, ${dTag.takeLast(12)})",
         )
     }
+
+    private suspend fun buildNoteEventAsync(
+        session: UserSession,
+        signerPackage: String?,
+        note: Note,
+        successMessage: String,
+        expectedDeleted: Boolean = false,
+        onStage: (SignerNoteEventBuildStage) -> Unit,
+    ): SignerNoteEventBuildResult = withContext(Dispatchers.Default) {
+        val verifier = crypto ?: return@withContext SignerNoteEventBuildResult.Unavailable(ProductionNostrCryptoFactory.unavailableReason)
+        val dTag = noteDTag(note.id)
+        val payload = note.toPayload()
+        val payloadJson = JsonNotePayloadCodec.encode(payload)
+        onStage(SignerNoteEventBuildStage.PayloadEncoded)
+        val encrypted = encryptToSelfAsync(payloadJson, session.publicKeyHex, signerPackage)
+        val ciphertext = when (encrypted) {
+            is SignerNip44OperationResult.Encrypted -> encrypted.payload
+            SignerNip44OperationResult.Cancelled -> return@withContext SignerNoteEventBuildResult.Cancelled
+            is SignerNip44OperationResult.Unavailable -> return@withContext SignerNoteEventBuildResult.Unavailable(encrypted.safeReason)
+            is SignerNip44OperationResult.Failed -> return@withContext SignerNoteEventBuildResult.Failed(encrypted.safeReason)
+            is SignerNip44OperationResult.InvalidResponse -> return@withContext SignerNoteEventBuildResult.InvalidResponse(encrypted.safeReason)
+            is SignerNip44OperationResult.Decrypted -> return@withContext SignerNoteEventBuildResult.InvalidResponse("Signer returned invalid encryption result")
+        }
+        if ((note.bodyMarkdown.isNotBlank() && ciphertext.contains(note.bodyMarkdown)) || ciphertext.contains(payloadJson)) {
+            return@withContext SignerNoteEventBuildResult.InvalidResponse("Signer returned invalid encryption result")
+        }
+        onStage(SignerNoteEventBuildStage.Encrypted)
+        val unsigned = UnsignedNostrEvent(
+            pubkey = session.publicKeyHex,
+            createdAt = note.updatedAtMs / 1000,
+            kind = NoteKind,
+            tags = noteEventTags(dTag),
+            content = ciphertext,
+        )
+        val requested = NostrEvent(
+            id = verifier.computeEventId(unsigned).getOrElse {
+                return@withContext SignerNoteEventBuildResult.Failed("Could not build signer note event.")
+            },
+            pubkey = unsigned.pubkey,
+            createdAt = unsigned.createdAt,
+            kind = unsigned.kind,
+            tags = unsigned.tags,
+            content = unsigned.content,
+            sig = "",
+        )
+        onStage(SignerNoteEventBuildStage.EventBuilt)
+        val signResult = signEventAsync(requested, session.publicKeyHex, signerPackage)
+        val signed = when (signResult) {
+            is SignEventRequestResult.Success -> signResult.signedEvent
+            SignEventRequestResult.Cancelled -> return@withContext SignerNoteEventBuildResult.Cancelled
+            is SignEventRequestResult.Unavailable -> return@withContext SignerNoteEventBuildResult.Unavailable(signResult.safeReason)
+            is SignEventRequestResult.Failed -> return@withContext SignerNoteEventBuildResult.Failed(signResult.safeReason)
+            is SignEventRequestResult.InvalidResponse -> return@withContext SignerNoteEventBuildResult.InvalidResponse(signResult.safeReason)
+        }
+        onStage(SignerNoteEventBuildStage.Signed)
+        validateSignedEvent(requested, signed, verifier)?.let { return@withContext it }
+        onStage(SignerNoteEventBuildStage.Validated)
+        val decrypted = decryptFromSelfAsync(signed.content, payloadJson, session.publicKeyHex, signerPackage)
+        val plaintext = when (decrypted) {
+            is SignerNip44OperationResult.Decrypted -> decrypted.plaintext
+            SignerNip44OperationResult.Cancelled -> return@withContext SignerNoteEventBuildResult.Cancelled
+            is SignerNip44OperationResult.Unavailable -> return@withContext SignerNoteEventBuildResult.Unavailable(decrypted.safeReason)
+            is SignerNip44OperationResult.Failed -> return@withContext SignerNoteEventBuildResult.Failed(decrypted.safeReason)
+            is SignerNip44OperationResult.InvalidResponse -> return@withContext SignerNoteEventBuildResult.InvalidResponse(decrypted.safeReason)
+            is SignerNip44OperationResult.Encrypted -> return@withContext SignerNoteEventBuildResult.InvalidResponse("Signer decryption failed")
+        }
+        onStage(SignerNoteEventBuildStage.Decrypted)
+        val decoded = JsonNotePayloadCodec.decode(plaintext).getOrElse {
+            return@withContext SignerNoteEventBuildResult.InvalidResponse("Signer note payload failed decode")
+        }
+        if (decoded != payload || decoded.deleted != expectedDeleted) {
+            return@withContext SignerNoteEventBuildResult.InvalidResponse("Signer note payload mismatch")
+        }
+        onStage(SignerNoteEventBuildStage.PayloadDecoded)
+        SignerNoteEventBuildResult.Success(
+            signedEvent = signed,
+            note = note.copy(sourceEventId = signed.id),
+            noteId = note.id,
+            dTag = dTag,
+            safeSummary = "$successMessage (${signed.id.take(12)}, ${dTag.takeLast(12)})",
+        )
+    }
+
+    private suspend fun encryptToSelfAsync(
+        plaintext: String,
+        currentUserPubkey: String,
+        signerPackage: String?,
+    ): SignerNip44OperationResult =
+        if (nip44 is Nip46RemoteSigner) {
+            nip44.encryptToSelfAsync(plaintext, currentUserPubkey, signerPackage)
+        } else {
+            withContext(Dispatchers.IO) { nip44.encryptToSelf(plaintext, currentUserPubkey, signerPackage) }
+        }
+
+    private suspend fun decryptFromSelfAsync(
+        ciphertext: String,
+        expectedPlaintext: String?,
+        currentUserPubkey: String,
+        signerPackage: String?,
+    ): SignerNip44OperationResult =
+        if (nip44 is Nip46RemoteSigner) {
+            nip44.decryptFromSelfAsync(ciphertext, expectedPlaintext, currentUserPubkey, signerPackage)
+        } else {
+            withContext(Dispatchers.IO) { nip44.decryptFromSelf(ciphertext, expectedPlaintext, currentUserPubkey, signerPackage) }
+        }
+
+    private suspend fun signEventAsync(
+        requested: NostrEvent,
+        currentUserPubkey: String,
+        signerPackage: String?,
+    ): SignEventRequestResult =
+        if (eventSigner is Nip46RemoteSigner) {
+            eventSigner.signEventAsync(requested, currentUserPubkey, signerPackage)
+        } else {
+            withContext(Dispatchers.IO) {
+                var signResult: SignEventRequestResult? = null
+                eventSigner.signEvent(requested, currentUserPubkey, signerPackage) { signResult = it }
+                signResult ?: SignEventRequestResult.Failed("Signer did not return a note event.")
+            }
+        }
 
     private fun validateSignedEvent(
         requested: NostrEvent,

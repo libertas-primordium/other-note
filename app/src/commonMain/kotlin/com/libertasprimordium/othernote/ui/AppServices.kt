@@ -14,6 +14,7 @@ import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.security.DefaultKeyManagementPolicy
 import com.libertasprimordium.othernote.security.KeyManagementPolicy
+import com.libertasprimordium.othernote.security.Nip46RemoteSigner
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
@@ -42,6 +43,7 @@ data class AppServices(
     val externalSignerPublicKeyRequester: NostrSignerPublicKeyRequester = UnavailableSignerPublicKeyRequester(),
     val externalSignerEventSigner: NostrSignerEventSigner = UnavailableSignerEventSigner(),
     val externalSignerNip44Operator: NostrSignerNip44Operator = UnavailableSignerNip44Operator(),
+    val remoteSigner: Nip46RemoteSigner? = null,
     val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),

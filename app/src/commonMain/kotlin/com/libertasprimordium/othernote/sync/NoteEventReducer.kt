@@ -16,6 +16,10 @@ data class ReducedNoteState(
 )
 
 fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<String>): ReducedNoteState {
+    return reduceDecryptedNoteEvents(events) { decrypt(it) }
+}
+
+suspend fun reduceNoteEventsAsync(events: List<NostrEvent>, decrypt: suspend (NostrEvent) -> Result<String>): ReducedNoteState {
     val accepted = mutableListOf<Pair<NostrEvent, Note>>()
     var decryptRejected = 0
     var payloadRejected = 0
@@ -38,8 +42,41 @@ fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<S
         }
         accepted += event to note
     }
+    return accepted.toReducedState(decryptRejected, payloadRejected, dTagRejected)
+}
 
-    val selected = accepted
+private fun reduceDecryptedNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<String>): ReducedNoteState {
+    val accepted = mutableListOf<Pair<NostrEvent, Note>>()
+    var decryptRejected = 0
+    var payloadRejected = 0
+    var dTagRejected = 0
+    events.filter { it.isOtherNoteEvent() && it.dTag() != null }.forEach { event ->
+        val decrypted = decrypt(event).getOrNull()
+        if (decrypted == null) {
+            decryptRejected++
+            return@forEach
+        }
+        val payload = JsonNotePayloadCodec.decode(decrypted).getOrNull()
+        if (payload == null) {
+            payloadRejected++
+            return@forEach
+        }
+        val note = payload.toNote(event.id)
+        if (event.dTag() != note.dTag) {
+            dTagRejected++
+            return@forEach
+        }
+        accepted += event to note
+    }
+    return accepted.toReducedState(decryptRejected, payloadRejected, dTagRejected)
+}
+
+private fun List<Pair<NostrEvent, Note>>.toReducedState(
+    decryptRejected: Int,
+    payloadRejected: Int,
+    dTagRejected: Int,
+): ReducedNoteState {
+    val selected = this
         .groupBy { it.second.dTag }
         .values
         .map { versions ->

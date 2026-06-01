@@ -23,6 +23,8 @@ import com.libertasprimordium.othernote.security.SignerNip44TestPayload
 import com.libertasprimordium.othernote.security.SignerNoteEventBuildResult
 import com.libertasprimordium.othernote.security.SignerNoteEventBuilder
 import com.libertasprimordium.othernote.security.SignerNoteEventBuildStage
+import com.libertasprimordium.othernote.security.Nip46ConnectResult
+import com.libertasprimordium.othernote.security.Nip46ConnectionTokenParser
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
@@ -31,13 +33,15 @@ import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
+import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class AppMode {
     SignedOut,
@@ -89,6 +93,30 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         eventSigner = services.externalSignerEventSigner,
     )
 
+    private fun signerNoteEventBuilderFor(session: UserSession): SignerNoteEventBuilder? = when (session.authMethod) {
+        SessionAuthMethod.ExternalSigner -> signerNoteEventBuilder
+        SessionAuthMethod.RemoteSigner -> services.remoteSigner?.let { SignerNoteEventBuilder(nip44 = it, eventSigner = it) }
+        SessionAuthMethod.SessionOnlyNsec -> null
+    }
+
+    private fun signerNip44For(session: UserSession) = when (session.authMethod) {
+        SessionAuthMethod.ExternalSigner -> services.externalSignerNip44Operator
+        SessionAuthMethod.RemoteSigner -> services.remoteSigner
+        SessionAuthMethod.SessionOnlyNsec -> null
+    }
+
+    private fun signerCanSignEvent(session: UserSession): Boolean = when (session.authMethod) {
+        SessionAuthMethod.ExternalSigner -> externalSignerCanSignEvent
+        SessionAuthMethod.RemoteSigner -> services.remoteSigner?.canSignEvent == true
+        SessionAuthMethod.SessionOnlyNsec -> false
+    }
+
+    private fun signerCanNip44RoundTrip(session: UserSession): Boolean = when (session.authMethod) {
+        SessionAuthMethod.ExternalSigner -> externalSignerCanNip44RoundTrip
+        SessionAuthMethod.RemoteSigner -> services.remoteSigner?.canNip44RoundTrip == true
+        SessionAuthMethod.SessionOnlyNsec -> false
+    }
+
     private val _session = MutableStateFlow<UserSession?>(null)
     val session: StateFlow<UserSession?> = _session
 
@@ -110,6 +138,12 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val externalSignerDisplayName: String? = services.externalSignerProvider.displayName
     val externalSignerCanSignEvent: Boolean = services.externalSignerProvider.canSignEvent
     val externalSignerCanNip44RoundTrip: Boolean = services.externalSignerProvider.canNip44RoundTrip
+    val remoteSignerAvailable: Boolean = services.remoteSigner?.isAvailable == true
+    val remoteSignerStatus: String = when {
+        services.remoteSigner == null -> "NIP-46 remote signer unavailable in this runtime"
+        services.remoteSigner.isAvailable -> "NIP-46 remote signer available"
+        else -> services.remoteSigner.unavailableReason ?: "NIP-46 remote signer unavailable"
+    }
     val externalSignerStatus: String = if (services.externalSignerProvider.isAvailable) {
         "External signer detected: ${services.externalSignerProvider.displayName ?: "NIP-55 signer"}"
     } else {
@@ -166,6 +200,72 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _message.value = "Waiting for signer..."
         services.externalSignerPublicKeyRequester.requestPublicKey(::handleSignerPublicKeyResult)
     }
+
+    fun startRemoteSignerConnection(rawToken: String): Boolean {
+        if (!validateRemoteSignerConnectionInput(rawToken)) return false
+        _message.value = "Connecting to remote signer..."
+        appScope.launch {
+            connectRemoteSigner(rawToken)
+        }
+        return true
+    }
+
+    suspend fun connectRemoteSigner(rawToken: String): Boolean {
+        if (!validateRemoteSignerConnectionInput(rawToken)) return false
+        _message.value = "Connecting to remote signer..."
+        val result = withContext(Dispatchers.IO) {
+            services.remoteSigner?.connectAsync(rawToken) ?: Nip46ConnectResult.Unavailable
+        }
+        return handleRemoteSignerConnectResult(result)
+    }
+
+    private fun validateRemoteSignerConnectionInput(rawToken: String): Boolean {
+        val remoteSigner = services.remoteSigner
+        if (remoteSigner == null || !remoteSigner.isAvailable) {
+            _message.value = "NIP-46 remote signer is unavailable in this runtime."
+            return false
+        }
+        val parsed = Nip46ConnectionTokenParser.parse(rawToken)
+        if (parsed.isFailure) {
+            _message.value = parsed.exceptionOrNull()?.message ?: "Remote signer token is invalid"
+            return false
+        }
+        return true
+    }
+
+    private fun handleRemoteSignerConnectResult(result: Nip46ConnectResult): Boolean =
+        when (result) {
+            is Nip46ConnectResult.Connected -> {
+                _session.value = UserSession(
+                    nsec = "remote-signer",
+                    privateKeyHex = "",
+                    npub = result.userNpub,
+                    publicKeyHex = result.userPubkey,
+                    authMethod = SessionAuthMethod.RemoteSigner,
+                    signerPackage = "nip46:${result.remoteSignerPubkey.take(12)}",
+                )
+                _mode.value = AppMode.Authenticated
+                _message.value = "Remote signer connected; relay sync can run with signer approval."
+                true
+            }
+            is Nip46ConnectResult.AwaitingApproval -> {
+                _message.value = "Remote signer approval required."
+                _diagnosticMessage.value = "auth_url_present=${result.safeUrl.isNotBlank()}"
+                false
+            }
+            is Nip46ConnectResult.Failed -> {
+                _message.value = result.safeReason
+                false
+            }
+            Nip46ConnectResult.TimedOut -> {
+                _message.value = "Remote signer connection timed out"
+                false
+            }
+            Nip46ConnectResult.Unavailable -> {
+                _message.value = "NIP-46 remote signer is unavailable in this runtime."
+                false
+            }
+        }
 
     private fun handleSignerPublicKeyResult(result: SignerPublicKeyRequestResult) {
         when (result) {
@@ -386,7 +486,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun save(existing: Note?, markdown: String): Boolean {
         val session = _session.value
-        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+        if (session?.isSignerBacked() == true) {
             return saveWithExternalSigner(existing, markdown, session)
         }
         if (session != null && !session.hasSessionPrivateKey()) {
@@ -400,15 +500,28 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     private suspend fun saveWithExternalSigner(existing: Note?, markdown: String, session: UserSession): Boolean {
-        if (!externalSignerCanSignEvent || !externalSignerCanNip44RoundTrip) {
+        val builder = signerNoteEventBuilderFor(session)
+        if (builder == null || !signerCanSignEvent(session) || !signerCanNip44RoundTrip(session)) {
             _message.value = "External signer local save is unavailable."
             return false
         }
         _message.value = "Waiting for signer..."
-        val result = if (existing == null) {
-            signerNoteEventBuilder.buildNewLocalNoteEvent(session, session.signerPackage, markdown, ::handleSignerNoteSaveStage)
+        val result = if (session.authMethod == SessionAuthMethod.RemoteSigner) {
+            withContext(Dispatchers.IO) {
+                if (existing == null) {
+                    builder.buildNewLocalNoteEventAsync(session, session.signerPackage, markdown, ::handleSignerNoteSaveStage)
+                } else {
+                    builder.buildReplacementLocalNoteEventAsync(session, session.signerPackage, existing, markdown, ::handleSignerNoteSaveStage)
+                }
+            }
+        } else if (existing == null) {
+            withContext(Dispatchers.IO) {
+                builder.buildNewLocalNoteEvent(session, session.signerPackage, markdown, ::handleSignerNoteSaveStage)
+            }
         } else {
-            signerNoteEventBuilder.buildReplacementLocalNoteEvent(session, session.signerPackage, existing, markdown, ::handleSignerNoteSaveStage)
+            withContext(Dispatchers.IO) {
+                builder.buildReplacementLocalNoteEvent(session, session.signerPackage, existing, markdown, ::handleSignerNoteSaveStage)
+            }
         }
         return when (result) {
             is SignerNoteEventBuildResult.Success -> {
@@ -455,7 +568,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun delete(note: Note): Boolean {
         val session = _session.value
-        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+        if (session?.isSignerBacked() == true) {
             return deleteWithExternalSigner(note, session)
         }
         if (session != null && !session.hasSessionPrivateKey()) {
@@ -469,17 +582,31 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     private suspend fun deleteWithExternalSigner(note: Note, session: UserSession): Boolean {
-        if (!externalSignerCanSignEvent || !externalSignerCanNip44RoundTrip) {
+        val builder = signerNoteEventBuilderFor(session)
+        if (builder == null || !signerCanSignEvent(session) || !signerCanNip44RoundTrip(session)) {
             _message.value = "External signer local delete is unavailable."
             return false
         }
         _message.value = "Waiting for signer..."
-        val result = signerNoteEventBuilder.buildLocalTombstoneEvent(
-            session = session,
-            signerPackage = session.signerPackage,
-            existing = note,
-            onStage = ::handleSignerTombstoneStage,
-        )
+        val result = if (session.authMethod == SessionAuthMethod.RemoteSigner) {
+            withContext(Dispatchers.IO) {
+                builder.buildLocalTombstoneEventAsync(
+                    session = session,
+                    signerPackage = session.signerPackage,
+                    existing = note,
+                    onStage = ::handleSignerTombstoneStage,
+                )
+            }
+        } else {
+            withContext(Dispatchers.IO) {
+                builder.buildLocalTombstoneEvent(
+                    session = session,
+                    signerPackage = session.signerPackage,
+                    existing = note,
+                    onStage = ::handleSignerTombstoneStage,
+                )
+            }
+        }
         return when (result) {
             is SignerNoteEventBuildResult.Success -> {
                 val publish = publishSignerEvent(session, result.signedEvent, SignerWriteAction.Delete)
@@ -525,7 +652,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun sync() {
         val session = _session.value
-        if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+        if (session?.isSignerBacked() == true) {
             syncWithExternalSigner(session)
             return
         }
@@ -557,17 +684,18 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     ): RelayPublishResult {
         val relays = relaySettings.normalizedUrls().distinct()
         services.pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, event, relays)
+        var firstAcceptedReached = false
         val publish = nostr.publishBestEffort(relays, event, appScope) { statuses ->
             appScope.launch { updateSignerPendingStatuses(session.publicKeyHex, event.id, statuses) }
-            updateSignerPublishStatus(statuses, action)
+            if (!firstAcceptedReached) updateSignerPublishStatus(statuses, action)
         }
         val firstAccepted = publish.firstAccepted.await()
+        firstAcceptedReached = true
         updateSignerPendingStatuses(session.publicKeyHex, event.id, firstAccepted.statuses)
         appScope.launch {
             runCatching {
                 val complete = publish.complete.await()
                 updateSignerPendingStatuses(session.publicKeyHex, event.id, complete.statuses)
-                updateSignerPublishStatus(complete.statuses, action)
             }
         }
         return firstAccepted
@@ -712,10 +840,22 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 else -> event
             }
         }
-        val reduced = reduceNoteEvents(candidateEvents) { event ->
-            when (val decrypted = services.externalSignerNip44Operator.decryptFromSelf(event.content, null, session.publicKeyHex, session.signerPackage)) {
-                is SignerNip44OperationResult.Decrypted -> Result.success(decrypted.plaintext)
-                else -> Result.failure(IllegalStateException("Signer decrypt failed"))
+        val reduced = if (session.authMethod == SessionAuthMethod.RemoteSigner) {
+            val remoteSigner = services.remoteSigner
+            reduceNoteEventsAsync(candidateEvents) { event ->
+                if (remoteSigner == null) return@reduceNoteEventsAsync Result.failure(IllegalStateException("Remote signer decrypt unavailable"))
+                when (val decrypted = remoteSigner.decryptFromSelfAsync(event.content, null, session.publicKeyHex, session.signerPackage)) {
+                    is SignerNip44OperationResult.Decrypted -> Result.success(decrypted.plaintext)
+                    else -> Result.failure(IllegalStateException("Remote signer decrypt failed"))
+                }
+            }
+        } else {
+            reduceNoteEvents(candidateEvents) { event ->
+                val nip44 = signerNip44For(session) ?: return@reduceNoteEvents Result.failure(IllegalStateException("Signer decrypt unavailable"))
+                when (val decrypted = nip44.decryptFromSelf(event.content, null, session.publicKeyHex, session.signerPackage)) {
+                    is SignerNip44OperationResult.Decrypted -> Result.success(decrypted.plaintext)
+                    else -> Result.failure(IllegalStateException("Signer decrypt failed"))
+                }
             }
         }
         val selectedNoteIds = reduced.selectedNoteIds
@@ -818,3 +958,6 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             "Offline runtime. Desktop key persistence is disabled; nsec is kept in memory only."
         }
 }
+
+private fun UserSession.isSignerBacked(): Boolean =
+    authMethod == SessionAuthMethod.ExternalSigner || authMethod == SessionAuthMethod.RemoteSigner
