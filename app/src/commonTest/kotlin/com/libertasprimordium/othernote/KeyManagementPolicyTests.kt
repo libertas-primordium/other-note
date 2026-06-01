@@ -4,9 +4,12 @@ import com.libertasprimordium.othernote.security.KeyManagementPolicy
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
+import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
+import com.libertasprimordium.othernote.security.SignerPublicKeyResponseParser
 import com.libertasprimordium.othernote.security.SignerMode
 import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
 import com.libertasprimordium.othernote.security.UnavailableSecureSecretStore
+import com.libertasprimordium.othernote.nostr.Nip19
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -97,6 +100,49 @@ class KeyManagementPolicyTests {
         assertFalse(provider.canSignEvent)
         assertFalse(provider.canNip44EncryptDecrypt)
         assertFalse(provider.safeDiagnostics.joinToString(" ").contains(suppliedNsec))
+    }
+
+    @Test
+    fun signerPublicKeyParserDerivesNpubFromHexPubkey() {
+        val pubkeyHex = "03".repeat(32)
+        val expectedNpub = Nip19.encode("npub", ByteArray(32) { 0x03 }) ?: error("npub encode failed")
+
+        val result = SignerPublicKeyResponseParser.parse(result = pubkeyHex, signerPackage = "com.example.signer")
+
+        val success = assertIs<SignerPublicKeyRequestResult.Success>(result)
+        assertEquals(pubkeyHex, success.pubkeyHex)
+        assertEquals(expectedNpub, success.npub)
+        assertEquals("com.example.signer", success.signerPackage)
+    }
+
+    @Test
+    fun signerPublicKeyParserDecodesNpubResult() {
+        val pubkeyHex = "04".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x04 }) ?: error("npub encode failed")
+
+        val result = SignerPublicKeyResponseParser.parse(result = npub)
+
+        val success = assertIs<SignerPublicKeyRequestResult.Success>(result)
+        assertEquals(pubkeyHex, success.pubkeyHex)
+        assertEquals(npub, success.npub)
+    }
+
+    @Test
+    fun signerPublicKeyParserRejectsMismatchedHexAndNpub() {
+        val hex = "05".repeat(32)
+        val mismatchedNpub = Nip19.encode("npub", ByteArray(32) { 0x06 }) ?: error("npub encode failed")
+
+        val result = SignerPublicKeyResponseParser.parse(result = hex, npub = mismatchedNpub)
+
+        assertIs<SignerPublicKeyRequestResult.InvalidResponse>(result)
+    }
+
+    @Test
+    fun signerPublicKeyParserRejectsMalformedResponseWithoutLeakingNsecLikeInput() {
+        val result = SignerPublicKeyResponseParser.parse(result = suppliedNsec)
+
+        val invalid = assertIs<SignerPublicKeyRequestResult.InvalidResponse>(result)
+        assertFalse(invalid.safeReason.contains(suppliedNsec))
     }
 
     @Test

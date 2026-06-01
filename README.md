@@ -73,14 +73,23 @@ The key-management policy is documented in [docs/key-management.md](docs/key-man
 
 ## Android External Signer Status
 
-Android builds include a NIP-55 discovery scaffold:
+Android builds include a NIP-55 discovery and public-key request scaffold:
 
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
 - Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
 - The login screen shows whether an Android signer is available and keeps the direct `nsec` field as a session-only fallback.
-- Pressing "Use Android signer" does not log in yet. It reports that external signer support was detected and that the login flow is not implemented.
-- Other Note does not request signing, NIP-44 encryption/decryption, or public-key import through Android signer in this pass.
+- Pressing "Use Android signer" explicitly launches a NIP-55 `get_public_key` intent. If the signer approves, Other Note creates an in-memory signer-backed session with public key, `npub`, and signer package metadata only.
+- Signer-backed note save/sync is not implemented yet. Other Note does not request signing or NIP-44 encryption/decryption through Android signer in this pass.
 - No `nsec` or private key is stored, logged, or sent to a relay/server as part of signer discovery.
+
+Manual Android signer test with Amber or another NIP-55 signer:
+
+1. Install a NIP-55-compatible Android signer such as Amber.
+2. Install/run the debug Android build.
+3. Tap "Use Android signer."
+4. Approve the public-key request in the signer.
+5. Confirm Other Note shows the abbreviated `npub` and the message "Signer login ready; note sync through signer is not implemented yet."
+6. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
 
 ## Build And Run
 
@@ -158,7 +167,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-OS keyring persistence, full Amber/NIP-55 signing/encryption integration, NIP-46, profile rendering, and inline media rendering are intentionally future work.
+OS keyring persistence, full Amber/NIP-55 signing/encryption integration beyond public-key request, NIP-46, profile rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 

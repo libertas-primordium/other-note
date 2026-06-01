@@ -2,10 +2,13 @@ package com.libertasprimordium.othernote.ui
 
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.RelayStatus
+import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
+import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrRepository
+import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
@@ -93,6 +96,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                         privateKeyHex = decoded.privateKey.hex,
                         npub = "npub unavailable in offline runtime",
                         publicKeyHex = "unavailable",
+                        authMethod = SessionAuthMethod.SessionOnlyNsec,
                     )
                     _mode.value = AppMode.Authenticated
                     return true
@@ -106,6 +110,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                     privateKeyHex = decoded.privateKey.hex,
                     npub = publicKey.npub,
                     publicKeyHex = publicKey.hex,
+                    authMethod = SessionAuthMethod.SessionOnlyNsec,
                 )
                 _mode.value = AppMode.Authenticated
                 _message.value = if (runtimeMode == AppRuntimeMode.DesktopDevRelay) {
@@ -122,11 +127,42 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
     }
 
-    fun externalSignerLoginNotImplemented() {
-        _message.value = if (externalSignerAvailable) {
-            "External signer support detected; login flow not implemented yet."
-        } else {
+    fun requestExternalSignerPublicKey() {
+        if (!externalSignerAvailable) {
             "No Android signer found. Install a NIP-55 signer such as Amber, or paste an nsec for this session."
+                .also { _message.value = it }
+            return
+        }
+        _message.value = "Waiting for signer..."
+        services.externalSignerPublicKeyRequester.requestPublicKey(::handleSignerPublicKeyResult)
+    }
+
+    private fun handleSignerPublicKeyResult(result: SignerPublicKeyRequestResult) {
+        when (result) {
+            is SignerPublicKeyRequestResult.Success -> {
+                _session.value = UserSession(
+                    nsec = "external-signer",
+                    privateKeyHex = "",
+                    npub = result.npub,
+                    publicKeyHex = result.pubkeyHex,
+                    authMethod = SessionAuthMethod.ExternalSigner,
+                    signerPackage = result.signerPackage,
+                )
+                _mode.value = AppMode.Authenticated
+                _message.value = "Signer login ready; note sync through signer is not implemented yet."
+            }
+            SignerPublicKeyRequestResult.Cancelled -> {
+                _message.value = "Signer request cancelled"
+            }
+            is SignerPublicKeyRequestResult.Unavailable -> {
+                _message.value = result.safeReason
+            }
+            is SignerPublicKeyRequestResult.Failed -> {
+                _message.value = result.safeReason
+            }
+            is SignerPublicKeyRequestResult.InvalidResponse -> {
+                _message.value = result.safeReason
+            }
         }
     }
 
@@ -144,6 +180,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun save(existing: Note?, markdown: String): Boolean {
+        val session = _session.value
+        if (session != null && !session.hasSessionPrivateKey()) {
+            _message.value = "Signer login ready; saving through signer is not implemented yet."
+            return false
+        }
         val result = saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
         _message.value = result.toCompactMessage()
         _diagnosticMessage.value = result.toDiagnosticMessage()
@@ -151,6 +192,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun delete(note: Note): Boolean {
+        val session = _session.value
+        if (session != null && !session.hasSessionPrivateKey()) {
+            _message.value = "Signer login ready; deleting through signer is not implemented yet."
+            return false
+        }
         val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
         _message.value = result.toCompactMessage()
         _diagnosticMessage.value = result.toDiagnosticMessage()
@@ -158,7 +204,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun sync() {
-        if (_session.value == null || runtimeMode != AppRuntimeMode.DesktopDevRelay) {
+        if (_session.value == null || runtimeMode != AppRuntimeMode.DesktopDevRelay || _session.value?.hasSessionPrivateKey() != true) {
             _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
             _message.value = _syncState.value.summary
             return
