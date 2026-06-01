@@ -1,6 +1,7 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.domain.NoteKind
+import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.domain.noteDTag
@@ -133,6 +134,33 @@ class SignerNoteEventBuilderTests {
         assertEquals(result.noteId, payload.noteId)
         assertEquals(SignerNoteEventBuilder.TestBodyMarkdown, payload.bodyMarkdown)
         assertFalse(payload.deleted)
+    }
+
+    @Test
+    fun buildsTombstoneWithSameDTagAndDeletedPayload() {
+        val fixture = fixture()
+        val nip44 = FakeNip44Operator()
+        val signer = SigningEventSigner(fixture.privateKey)
+        val builder = builder(nip44, signer)
+        val note = Note(
+            id = "existing-note-id",
+            createdAtMs = 1_600_000_000_000,
+            updatedAtMs = 1_600_000_000_000,
+            bodyMarkdown = "body to delete",
+        )
+
+        val result = assertIs<SignerNoteEventBuildResult.Success>(
+            builder.buildLocalTombstoneEvent(fixture.session, "com.example.signer", note),
+        )
+        val payload = JsonNotePayloadCodec.decode(nip44.lastPlaintext ?: error("missing plaintext")).getOrThrow()
+
+        assertEquals(note.id, result.note.id)
+        assertEquals(noteDTag(note.id), result.dTag)
+        assertEquals(noteEventTags(noteDTag(note.id)), result.signedEvent.tags)
+        assertEquals(note.id, payload.noteId)
+        assertEquals("", payload.bodyMarkdown)
+        assertTrue(payload.deleted)
+        assertFalse(result.safeSummary.contains(note.bodyMarkdown))
     }
 
     private fun builder(

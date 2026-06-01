@@ -1,6 +1,7 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.domain.NotePayload
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
@@ -20,6 +21,7 @@ import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
+import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -48,10 +50,10 @@ class SignerLocalSaveTests {
         assertEquals(30078, pendingEvent.kind)
         assertTrue(pendingEvent.tags.any { it == listOf("t", "other-note") })
         assertTrue(pendingEvent.tags.any { it.firstOrNull() == "d" && it.getOrNull(1)?.startsWith("other-note:note:") == true })
-        assertEquals(nip44.ciphertext, pendingEvent.content)
+        assertEquals(nip44.latestCiphertext, pendingEvent.content)
         assertTrue(crypto.validate(pendingEvent).getOrThrow())
         assertFalse(state.message.value.contains(body))
-        assertFalse(state.message.value.contains(nip44.ciphertext))
+        assertFalse(state.message.value.contains(nip44.latestCiphertext))
     }
 
     @Test
@@ -118,25 +120,129 @@ class SignerLocalSaveTests {
     }
 
     @Test
-    fun externalSignerDeleteReportsUnsupportedAndKeepsNoteVisible() = runBlocking {
+    fun externalSignerDeleteCreatesLocalTombstoneAndHidesNote() = runBlocking {
         val fixture = fixture()
-        val state = state(fixture, signer = TestEventSigner(fixture.privateKey))
+        val nip44 = LocalSaveNip44Operator()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
         val body = "keep this signer note"
 
         state.requestExternalSignerPublicKey()
         assertTrue(state.save(existing = null, markdown = body))
         val note = state.notes.notes.value.single()
+        val savedEvent = state.notes.pendingEvents.value.single()
+
+        val deleted = state.delete(note)
+
+        assertTrue(deleted)
+        assertTrue(state.notes.notes.value.isEmpty())
+        assertTrue(state.message.value.startsWith("Deleted locally"))
+        assertTrue(state.message.value.contains("Not synced to relays"))
+        val tombstoneEvent = state.notes.pendingEvents.value.single { it.id != savedEvent.id }
+        assertEquals(30078, tombstoneEvent.kind)
+        assertEquals(savedEvent.tags.first { it.firstOrNull() == "d" }, tombstoneEvent.tags.first { it.firstOrNull() == "d" })
+        assertTrue(tombstoneEvent.tags.any { it == listOf("t", "other-note") })
+        assertTrue(crypto.validate(tombstoneEvent).getOrThrow())
+        val tombstonePayload = JsonNotePayloadCodec.decode(nip44.lastPlaintext ?: error("missing tombstone plaintext")).getOrThrow()
+        assertEquals(note.id, tombstonePayload.noteId)
+        assertEquals("", tombstonePayload.bodyMarkdown)
+        assertTrue(tombstonePayload.deleted)
+        assertFalse(state.message.value.contains(body))
+        assertFalse(state.message.value.contains("nsec1"))
+    }
+
+    @Test
+    fun externalSignerDeleteCancellationKeepsNoteVisible() = runBlocking {
+        val fixture = fixture()
+        val nip44 = LocalSaveNip44Operator()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
+        state.requestExternalSignerPublicKey()
+        assertTrue(state.save(existing = null, markdown = "keep"))
+        val note = state.notes.notes.value.single()
         val pendingEventsBeforeDelete = state.notes.pendingEvents.value.toList()
+        nip44.encryptResult = SignerNip44OperationResult.Cancelled
 
         val deleted = state.delete(note)
 
         assertFalse(deleted)
-        assertEquals("Signer-backed delete is not implemented yet.", state.message.value)
-        assertEquals(body, state.notes.notes.value.single().bodyMarkdown)
-        assertFalse(state.notes.notes.value.single().deleted)
+        assertEquals("Signer note delete cancelled", state.message.value)
+        assertEquals(note, state.notes.notes.value.single())
         assertEquals(pendingEventsBeforeDelete, state.notes.pendingEvents.value)
-        assertFalse(state.message.value.contains(body))
-        assertFalse(state.message.value.contains("nsec1"))
+    }
+
+    @Test
+    fun externalSignerDeleteRejectsWrongPubkeyAndKeepsNoteVisible() = runBlocking {
+        val fixture = fixture()
+        val wrongKey = crypto.generatePrivateKey().getOrThrow()
+        val signer = TestEventSigner(fixture.privateKey)
+        val state = state(fixture, signer = signer)
+        state.requestExternalSignerPublicKey()
+        assertTrue(state.save(existing = null, markdown = "keep"))
+        val note = state.notes.notes.value.single()
+        val pendingEventsBeforeDelete = state.notes.pendingEvents.value.toList()
+        signer.privateKey = wrongKey
+
+        val deleted = state.delete(note)
+
+        assertFalse(deleted)
+        assertTrue(state.message.value.contains("signature") || state.message.value.contains("different pubkey"))
+        assertEquals(note, state.notes.notes.value.single())
+        assertEquals(pendingEventsBeforeDelete, state.notes.pendingEvents.value)
+    }
+
+    @Test
+    fun externalSignerDeleteRejectsPayloadMismatchAndKeepsNoteVisible() = runBlocking {
+        val fixture = fixture()
+        val nip44 = LocalSaveNip44Operator()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
+        state.requestExternalSignerPublicKey()
+        assertTrue(state.save(existing = null, markdown = "keep"))
+        val note = state.notes.notes.value.single()
+        val pendingEventsBeforeDelete = state.notes.pendingEvents.value.toList()
+        val badPayload = JsonNotePayloadCodec.encode(
+            NotePayload(
+                noteId = "wrong-note-id",
+                createdAtMs = note.createdAtMs,
+                updatedAtMs = note.updatedAtMs + 1,
+                bodyMarkdown = "",
+                deleted = true,
+            ),
+        )
+        nip44.decryptOverride = badPayload
+
+        val deleted = state.delete(note)
+
+        assertFalse(deleted)
+        assertTrue(state.message.value.contains("payload"))
+        assertEquals(note, state.notes.notes.value.single())
+        assertEquals(pendingEventsBeforeDelete, state.notes.pendingEvents.value)
+    }
+
+    @Test
+    fun externalSignerDeleteRejectsDeletedFalsePayloadAndKeepsNoteVisible() = runBlocking {
+        val fixture = fixture()
+        val nip44 = LocalSaveNip44Operator()
+        val state = state(fixture, nip44 = nip44, signer = TestEventSigner(fixture.privateKey))
+        state.requestExternalSignerPublicKey()
+        assertTrue(state.save(existing = null, markdown = "keep"))
+        val note = state.notes.notes.value.single()
+        val pendingEventsBeforeDelete = state.notes.pendingEvents.value.toList()
+        val badPayload = JsonNotePayloadCodec.encode(
+            NotePayload(
+                noteId = note.id,
+                createdAtMs = note.createdAtMs,
+                updatedAtMs = note.updatedAtMs + 1,
+                bodyMarkdown = "",
+                deleted = false,
+            ),
+        )
+        nip44.decryptOverride = badPayload
+
+        val deleted = state.delete(note)
+
+        assertFalse(deleted)
+        assertTrue(state.message.value.contains("payload"))
+        assertEquals(note, state.notes.notes.value.single())
+        assertEquals(pendingEventsBeforeDelete, state.notes.pendingEvents.value)
     }
 
     @Test
@@ -164,8 +270,8 @@ class SignerLocalSaveTests {
         fixture: Fixture,
         nip44: LocalSaveNip44Operator = LocalSaveNip44Operator(),
         signer: NostrSignerEventSigner,
-    ): AppState = AppState(
-        AppServices(
+    ): AppState {
+        val services = AppServices(
             mode = AppRuntimeMode.Offline,
             crypto = crypto,
             client = OfflineNostrClient(),
@@ -179,8 +285,9 @@ class SignerLocalSaveTests {
             ),
             externalSignerEventSigner = signer,
             externalSignerNip44Operator = nip44,
-        ),
-    )
+        )
+        return AppState(services)
+    }
 
     private fun fixture(): Fixture {
         val privateKey = crypto.generatePrivateKey().getOrThrow()
@@ -195,7 +302,7 @@ class SignerLocalSaveTests {
     )
 
     private inner class TestEventSigner(
-        private val privateKey: com.libertasprimordium.othernote.nostr.NostrPrivateKey,
+        var privateKey: com.libertasprimordium.othernote.nostr.NostrPrivateKey,
     ) : NostrSignerEventSigner {
         override fun signEvent(
             unsignedEvent: NostrEvent,
@@ -227,16 +334,24 @@ private class TestPublicKeyRequester(
 }
 
 private class LocalSaveNip44Operator(
-    val ciphertext: String = "encrypted-local-save-test",
-    private val encryptResult: SignerNip44OperationResult? = null,
-    private val decryptOverride: String? = null,
+    private val ciphertextPrefix: String = "encrypted-local-save-test",
+    var encryptResult: SignerNip44OperationResult? = null,
+    var decryptOverride: String? = null,
 ) : NostrSignerNip44Operator {
+    var lastPlaintext: String? = null
+    var latestCiphertext: String = ""
+        private set
+    private var encryptCount = 0
+
     override fun encryptToSelf(
         plaintext: String,
         currentUserPubkey: String,
         signerPackage: String?,
-    ): SignerNip44OperationResult =
-        encryptResult ?: SignerNip44OperationResult.Encrypted(ciphertext, signerPackage)
+    ): SignerNip44OperationResult {
+        lastPlaintext = plaintext
+        latestCiphertext = "$ciphertextPrefix-${++encryptCount}"
+        return encryptResult ?: SignerNip44OperationResult.Encrypted(latestCiphertext, signerPackage)
+    }
 
     override fun decryptFromSelf(
         ciphertext: String,

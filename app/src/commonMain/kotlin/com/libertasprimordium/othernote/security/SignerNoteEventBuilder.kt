@@ -111,11 +111,33 @@ class SignerNoteEventBuilder(
         )
     }
 
+    fun buildLocalTombstoneEvent(
+        session: UserSession,
+        signerPackage: String?,
+        existing: Note,
+        onStage: (SignerNoteEventBuildStage) -> Unit = {},
+    ): SignerNoteEventBuildResult {
+        val nowMs = nowMsProvider()
+        return buildNoteEvent(
+            session = session,
+            signerPackage = signerPackage,
+            note = existing.copy(
+                bodyMarkdown = "",
+                updatedAtMs = nowMs,
+                deleted = true,
+            ),
+            successMessage = "Deleted locally",
+            expectedDeleted = true,
+            onStage = onStage,
+        )
+    }
+
     private fun buildNoteEvent(
         session: UserSession,
         signerPackage: String?,
         note: Note,
         successMessage: String,
+        expectedDeleted: Boolean = false,
         onStage: (SignerNoteEventBuildStage) -> Unit,
     ): SignerNoteEventBuildResult {
         val verifier = crypto ?: return SignerNoteEventBuildResult.Unavailable(ProductionNostrCryptoFactory.unavailableReason)
@@ -136,7 +158,7 @@ class SignerNoteEventBuilder(
             is SignerNip44OperationResult.InvalidResponse -> return SignerNoteEventBuildResult.InvalidResponse(encrypted.safeReason)
             is SignerNip44OperationResult.Decrypted -> return SignerNoteEventBuildResult.InvalidResponse("Signer returned invalid encryption result")
         }
-        if (ciphertext.contains(note.bodyMarkdown) || ciphertext.contains(payloadJson)) {
+        if ((note.bodyMarkdown.isNotBlank() && ciphertext.contains(note.bodyMarkdown)) || ciphertext.contains(payloadJson)) {
             return SignerNoteEventBuildResult.InvalidResponse("Signer returned invalid encryption result")
         }
         onStage(SignerNoteEventBuildStage.Encrypted)
@@ -194,7 +216,7 @@ class SignerNoteEventBuilder(
         val decoded = JsonNotePayloadCodec.decode(plaintext).getOrElse {
             return SignerNoteEventBuildResult.InvalidResponse("Signer note payload failed decode")
         }
-        if (decoded != payload || decoded.deleted) {
+        if (decoded != payload || decoded.deleted != expectedDeleted) {
             return SignerNoteEventBuildResult.InvalidResponse("Signer note payload mismatch")
         }
         onStage(SignerNoteEventBuildStage.PayloadDecoded)
