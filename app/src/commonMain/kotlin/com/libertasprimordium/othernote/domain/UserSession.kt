@@ -12,6 +12,7 @@ data class UserSession(
 enum class SessionAuthMethod {
     SessionOnlyNsec,
     ExternalSigner,
+    RemoteSigner,
 }
 
 fun UserSession.abbreviatedNpub(): String =

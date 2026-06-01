@@ -9,6 +9,7 @@ import com.libertasprimordium.othernote.security.AndroidExternalSignerProvider
 import com.libertasprimordium.othernote.security.AndroidNip55EventSigner
 import com.libertasprimordium.othernote.security.AndroidNip55Nip44Operator
 import com.libertasprimordium.othernote.security.AndroidNip55PublicKeyRequester
+import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.OtherNoteApp
@@ -27,14 +28,16 @@ class MainActivity : ComponentActivity() {
         }
         publicKeyRequester.attachLauncher(publicKeyLauncher)
         eventSigner.attachLauncher(signEventLauncher)
+        val nostrClient = AndroidNostrClient()
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
             crypto = NonProductionNostrCrypto(),
-            client = AndroidNostrClient(),
+            client = nostrClient,
             externalSignerProvider = AndroidExternalSignerProvider(this),
             externalSignerPublicKeyRequester = publicKeyRequester,
             externalSignerEventSigner = eventSigner,
             externalSignerNip44Operator = nip44Operator,
+            remoteSigner = nostrClient.nip46RemoteSigner(),
             localEventCache = AndroidLocalEventCache(this),
             pendingWriteStore = AndroidPendingWriteStore(this),
             showRelayDiagnostics = showRelayDiagnostics(),

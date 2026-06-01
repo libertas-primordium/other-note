@@ -84,11 +84,16 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val message by appState.message.collectAsState()
     val mode by appState.mode.collectAsState()
     var nsec by remember { mutableStateOf("") }
+    var bunkerToken by remember { mutableStateOf("") }
     LaunchedEffect(mode) {
         when (mode) {
             AppMode.Authenticated -> {
                 onLoggedIn()
-                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay || appState.session.value?.authMethod == SessionAuthMethod.ExternalSigner) {
+                val authMethod = appState.session.value?.authMethod
+                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay ||
+                    authMethod == SessionAuthMethod.ExternalSigner ||
+                    authMethod == SessionAuthMethod.RemoteSigner
+                ) {
                     appState.startSync()
                 }
             }
@@ -109,6 +114,28 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             enabled = appState.externalSignerAvailable,
         ) {
             Text(if (appState.externalSignerAvailable) "Use Android signer" else "Install a NIP-55 signer such as Amber")
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(appState.remoteSignerStatus, color = OtherNoteMuted)
+        OutlinedTextField(
+            value = bunkerToken,
+            onValueChange = { bunkerToken = it },
+            label = { Text("Paste bunker:// remote signer token") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                if (appState.startRemoteSignerConnection(bunkerToken)) {
+                    bunkerToken = ""
+                }
+            },
+            enabled = appState.remoteSignerAvailable,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Connect remote signer")
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(

@@ -6,6 +6,11 @@ import kotlinx.coroutines.Deferred
 
 interface NostrClient {
     suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult
+    suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult =
+        RelayFetchResult(
+            events = emptyList(),
+            statuses = relays.map { RelayStatus(it, readable = false, message = "Generic event fetch not wired for this runtime") },
+        )
     suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult
     suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata?
 }

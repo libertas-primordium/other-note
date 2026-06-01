@@ -49,6 +49,23 @@ class DesktopNostrClient(
         )
     }
 
+    override suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult = coroutineScope {
+        val results = relays.distinct().map { relay ->
+            async(Dispatchers.IO) {
+                val url = normalizeRelayUrl(relay).getOrElse {
+                    return@async RelayFetchOneResult(
+                        status = RelayStatus(relay, readable = false, message = "stage=fetch outcome=invalid_url duration_ms=0 ${it.message ?: "Invalid relay URL"}"),
+                    )
+                }
+                fetchWithFilter(url, filter.copy(limit = minOf(filter.limit, maxEvents)), "generic")
+            }
+        }.map { it.await() }
+        RelayFetchResult(
+            events = results.flatMap { it.events },
+            statuses = results.map { it.status },
+        )
+    }
+
     override suspend fun fetchNotesIncrementally(
         relays: List<String>,
         authorPubkey: String,
@@ -256,7 +273,7 @@ class DesktopNostrClient(
         if (notices.isEmpty()) base else "$base; relay messages: ${notices.joinToString(" | ") { it.take(160) }}"
 
     private fun NostrFilter.safeLabel(): String =
-        "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},limit=$limit"
+        "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},p=${pTags.size},limit=$limit"
 
     private fun timedMessage(stage: String, outcome: String, start: TimeSource.Monotonic.ValueTimeMark, detail: String): String =
         "stage=$stage outcome=$outcome duration_ms=${start.elapsedNow().inWholeMilliseconds} ${detail.take(180)}"

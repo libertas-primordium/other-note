@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
+import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.defaultAppServices
@@ -24,12 +25,14 @@ object DesktopAppServicesFactory {
                 startupWarnings = listOf(ProductionNostrCryptoFactory.unavailableReason),
             )
         } else {
+            val relayClient = DesktopNostrClient()
             AppServices(
                 mode = AppRuntimeMode.DesktopDevRelay,
                 crypto = crypto,
-                client = DesktopNostrClient(),
+                client = relayClient,
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 secureSecretStore = DesktopSecureSecretStore(),
+                remoteSigner = relayClient.nip46RemoteSigner(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
                 startupWarnings = listOf("Developer relay runtime enabled"),
