@@ -96,7 +96,8 @@ class UtilityTests {
         val low = event("aaa", 20, "note-1", deleted = false, body = "low")
         val high = event("zzz", 20, "note-1", deleted = false, body = "high")
         val reduced = reduceNoteEvents(listOf(high, low)) { Result.success(it.content) }
-        assertEquals("high", reduced.notes.single().bodyMarkdown)
+        assertEquals("low", reduced.notes.single().bodyMarkdown)
+        assertEquals("aaa", reduced.selectedEvents.single().id)
     }
 
     @Test

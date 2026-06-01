@@ -29,7 +29,9 @@ fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<S
         .groupBy { it.second.dTag }
         .values
         .map { versions ->
-            versions.maxWith(compareBy<Pair<NostrEvent, Note>> { it.first.createdAt }.thenBy { it.first.id })
+            versions
+                .sortedWith(compareByDescending<Pair<NostrEvent, Note>> { it.first.createdAt }.thenBy { it.first.id })
+                .first()
         }
     return ReducedNoteState(
         notes = selected.map { it.second }.filterNot { it.deleted }.sortedByDescending { it.updatedAtMs },

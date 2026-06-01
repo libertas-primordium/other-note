@@ -47,7 +47,7 @@ The encrypted note payload schema is versioned:
 }
 ```
 
-Edits publish a new signed event with the same kind/pubkey/d-tag. Relay results are grouped by d tag and note id; the newest event by `created_at` wins. If timestamps tie, the lexicographically larger event id wins. Deletion uses an app-level tombstone with `deleted=true` and an empty body so relay DELETE support is not required.
+Edits publish a new signed event with the same kind/pubkey/d-tag. Relay results are grouped by d tag and note id; the newest event by `created_at` wins. If timestamps tie, NIP-01 replaceable/addressable behavior retains the event with the lowest event id in lexicographic order. Deletion uses an app-level tombstone with `deleted=true` and an empty body so relay DELETE support is not required.
 
 ## Relay Retention
 
