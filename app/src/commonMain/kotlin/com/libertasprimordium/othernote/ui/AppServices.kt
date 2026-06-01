@@ -8,6 +8,12 @@ import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
+import com.libertasprimordium.othernote.security.DefaultKeyManagementPolicy
+import com.libertasprimordium.othernote.security.KeyManagementPolicy
+import com.libertasprimordium.othernote.security.NostrSignerProvider
+import com.libertasprimordium.othernote.security.SecureSecretStore
+import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
+import com.libertasprimordium.othernote.security.UnavailableSecureSecretStore
 
 enum class AppRuntimeMode {
     Offline,
@@ -19,6 +25,9 @@ data class AppServices(
     val crypto: NostrCrypto,
     val client: NostrClient,
     val showRelayDiagnostics: Boolean = false,
+    val keyManagementPolicy: KeyManagementPolicy = DefaultKeyManagementPolicy,
+    val secureSecretStore: SecureSecretStore = UnavailableSecureSecretStore(),
+    val externalSignerProvider: NostrSignerProvider = UnavailableExternalSignerProvider(),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopDevRelay) DesktopDevRelayDefaults else DefaultRelays,

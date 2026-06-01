@@ -3,6 +3,7 @@ package com.libertasprimordium.othernote
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
+import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppState
 import kotlin.test.AfterTest
@@ -41,6 +42,8 @@ class DesktopRuntimeModeTests {
         assertEquals(false, services.showRelayDiagnostics)
         assertTrue(services.crypto.productionReady)
         assertIs<DesktopNostrClient>(services.client)
+        assertIs<DesktopSecureSecretStore>(services.secureSecretStore)
+        assertEquals(false, services.secureSecretStore.isAvailable)
         assertEquals(
             listOf(
                 "wss://relay.damus.io",

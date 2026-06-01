@@ -3,6 +3,7 @@ package com.libertasprimordium.othernote
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
+import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.defaultAppServices
@@ -17,6 +18,7 @@ object DesktopAppServicesFactory {
                 crypto = NonProductionNostrCrypto(),
                 client = OfflineNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
+                secureSecretStore = DesktopSecureSecretStore(),
                 startupWarnings = listOf(ProductionNostrCryptoFactory.unavailableReason),
             )
         } else {
@@ -25,6 +27,7 @@ object DesktopAppServicesFactory {
                 crypto = crypto,
                 client = DesktopNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
+                secureSecretStore = DesktopSecureSecretStore(),
                 startupWarnings = listOf("Developer relay runtime enabled"),
             )
         }
