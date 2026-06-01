@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.libertasprimordium.othernote.domain.Note
+import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.detectUrls
@@ -167,8 +168,13 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
             if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
                 Text("Developer relay runtime", color = OtherNotePurple)
             }
+            if (session?.authMethod == SessionAuthMethod.ExternalSigner) {
+                TextButton(onClick = { appState.requestExternalSignerTestSignature() }) {
+                    Text("Test signer signing")
+                }
+            }
             Text(message, color = OtherNoteMuted)
-            if (appState.showRelayDiagnostics && diagnostics.isNotBlank()) {
+            if ((appState.showRelayDiagnostics || appState.showNip55Diagnostics) && diagnostics.isNotBlank()) {
                 Text(diagnostics, color = OtherNoteMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(12.dp))

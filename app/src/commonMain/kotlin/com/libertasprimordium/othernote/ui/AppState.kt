@@ -9,6 +9,9 @@ import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
+import com.libertasprimordium.othernote.security.SignEventRequestResult
+import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
+import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
@@ -78,8 +81,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val diagnosticMessage: StateFlow<String> = _diagnosticMessage
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
+    val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
     val externalSignerAvailable: Boolean = services.externalSignerProvider.isAvailable
     val externalSignerDisplayName: String? = services.externalSignerProvider.displayName
+    val externalSignerCanSignEvent: Boolean = services.externalSignerProvider.canSignEvent
     val externalSignerStatus: String = if (services.externalSignerProvider.isAvailable) {
         "External signer detected: ${services.externalSignerProvider.displayName ?: "NIP-55 signer"}"
     } else {
@@ -161,6 +166,57 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = result.safeReason
             }
             is SignerPublicKeyRequestResult.InvalidResponse -> {
+                _message.value = result.safeReason
+            }
+        }
+    }
+
+    fun requestExternalSignerTestSignature() {
+        val session = _session.value
+        if (session?.authMethod != SessionAuthMethod.ExternalSigner) {
+            _message.value = "Use Android signer before testing signer event signing."
+            return
+        }
+        if (!externalSignerCanSignEvent) {
+            _message.value = "External signer event signing is unavailable."
+            return
+        }
+        val testEvent = SignerTestEventFactory.build(session.publicKeyHex).getOrElse {
+            _message.value = "Could not build signer test event."
+            return
+        }
+        if (showNip55Diagnostics) {
+            _diagnosticMessage.value = SignerSignEventRequestBuilder.build(
+                requestedEvent = testEvent,
+                currentUserPubkey = session.publicKeyHex,
+                signerPackage = session.signerPackage,
+            ).map { it.safeDiagnostics.joinToString("\n") }
+                .getOrElse { "Could not build signer test event diagnostics." }
+        }
+        _message.value = "Waiting for signer..."
+        services.externalSignerEventSigner.signEvent(
+            unsignedEvent = testEvent,
+            currentUserPubkey = session.publicKeyHex,
+            signerPackage = session.signerPackage,
+            onResult = ::handleSignerSignEventResult,
+        )
+    }
+
+    private fun handleSignerSignEventResult(result: SignEventRequestResult) {
+        when (result) {
+            is SignEventRequestResult.Success -> {
+                _message.value = "Signer test event signed and verified (${result.signedEvent.id.abbreviatedId()})"
+            }
+            SignEventRequestResult.Cancelled -> {
+                _message.value = "Signer signing cancelled"
+            }
+            is SignEventRequestResult.Unavailable -> {
+                _message.value = result.safeReason
+            }
+            is SignEventRequestResult.Failed -> {
+                _message.value = result.safeReason
+            }
+            is SignEventRequestResult.InvalidResponse -> {
                 _message.value = result.safeReason
             }
         }
@@ -297,6 +353,8 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         joinToString("\n") { "${it.url}: read=${it.readable} write=${it.writable} ${it.message.take(180)}" }
 
     private fun String.compactStatus(): String = lineSequence().firstOrNull().orEmpty().take(120)
+
+    private fun String.abbreviatedId(): String = take(12)
 
     private fun startupMessage(): String =
         if (services.mode == AppRuntimeMode.DesktopDevRelay) {
