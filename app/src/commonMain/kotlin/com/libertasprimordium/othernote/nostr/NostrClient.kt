@@ -16,7 +16,7 @@ data class RelayFetchResult(
 data class RelayPublishResult(
     val statuses: List<RelayStatus>,
 ) {
-    val allSucceeded: Boolean get() = statuses.all { it.writable }
+    val allSucceeded: Boolean get() = statuses.isNotEmpty() && statuses.all { it.writable }
 }
 
 data class ProfileMetadata(

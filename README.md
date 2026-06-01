@@ -11,9 +11,13 @@ Important security status:
 - GPLv3 license is preserved in `LICENSE`.
 - Private keys and decrypted note bodies are not logged.
 - `nsec` input is only kept in memory. The UI redacts it immediately after validation.
+- The login field hides pasted `nsec` text and clears it after successful validation or local-only entry.
+- Local-only mode is explicit. Notes can be created, viewed, edited, and deleted without a Nostr session.
 - Secure private-key persistence is intentionally disabled until platform secure storage is implemented.
 - Production Nostr crypto is not wired yet. The current `NonProductionNostrCrypto` validates NIP-19 `nsec` format but refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Relay networking is represented by clean interfaces and an offline adapter. Publishing and fetching surface explicit non-success status instead of fake success.
+- Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
+- Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
 ## Nostr Data Model
 
@@ -63,17 +67,66 @@ Prerequisites:
 - JDK 17 or newer.
 - Android SDK for Android builds.
 - Network access the first time Gradle resolves Compose Multiplatform and Kotlin plugin artifacts.
+- `local.properties` is required for Android builds when `ANDROID_HOME` is not set. It should contain `sdk.dir=/path/to/android/sdk` and must not be committed.
+- Debian packaging requires a full JDK 17+ with `jpackage`. Android Studio's bundled JBR is not enough.
 
 Commands:
 
 ```sh
 ./gradlew :app:run
+./gradlew :app:desktopTest
+./gradlew :app:desktopJar
 ./gradlew :app:assembleDebug
 ./gradlew :app:packageDeb
 ./gradlew :app:check
 ```
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
+
+## Safe Test Commands
+
+Normal local validation:
+
+```sh
+git diff --check
+./gradlew :app:desktopTest
+./gradlew :app:desktopJar
+```
+
+Android validation when the Android SDK is configured:
+
+```sh
+./gradlew :app:check
+./gradlew :app:assembleDebug
+```
+
+Desktop package validation when the active JDK includes `jpackage`:
+
+```sh
+./gradlew :app:packageDeb
+```
+
+Relay integration tests are intentionally opt-in and currently stop with a clear failure until a production crypto adapter is wired:
+
+```sh
+OTHER_NOTE_RELAY_TESTS=1 OTHER_NOTE_TEST_RELAYS=wss://relay.example.com ./gradlew :app:desktopTest
+```
+
+Generated relay-test notes are disposable. If relay tests are enabled in the future, encrypted test blobs may remain on public relays.
+
+## Crypto Adapter Status
+
+The production crypto boundary is `NostrCrypto` plus `ProductionNostrCryptoFactory`.
+
+Required production capabilities before real relay publishing:
+
+- Throwaway private-key generation.
+- NIP-19 `nsec`/`npub` encode/decode.
+- Public-key derivation from private key.
+- NIP-01 canonical event preimage, id hashing, Schnorr signing, and signature validation.
+- NIP-44 v2 encryption/decryption to self.
+
+Quartz was evaluated as the preferred Kotlin Multiplatform Nostr path because it is MIT-licensed and therefore GPLv3-compatible, and because it targets Nostr crypto across JVM/Android. Current Quartz artifacts resolve Kotlin 2.x metadata and transitive Kotlin 2.x standard libraries, while this project currently uses Kotlin 1.9.24 and Compose Multiplatform 1.6.11. To avoid destabilizing the build, Quartz is not integrated yet. The next crypto phase should either upgrade the Kotlin/Compose toolchain first or find a production Nostr crypto library that remains compatible with Kotlin 1.9.24.
 
 ## Architecture
 

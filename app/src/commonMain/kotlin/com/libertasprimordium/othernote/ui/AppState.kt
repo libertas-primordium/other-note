@@ -17,6 +17,12 @@ import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
+enum class AppMode {
+    SignedOut,
+    LocalOnly,
+    Authenticated,
+}
+
 class AppState {
     private val crypto = NonProductionNostrCrypto()
     private val client = OfflineNostrClient()
@@ -30,6 +36,9 @@ class AppState {
 
     private val _session = MutableStateFlow<UserSession?>(null)
     val session: StateFlow<UserSession?> = _session
+
+    private val _mode = MutableStateFlow(AppMode.SignedOut)
+    val mode: StateFlow<AppMode> = _mode
 
     private val _syncState = MutableStateFlow(SyncState(warnings = listOf("Production Nostr crypto is not wired yet")))
     val syncState: StateFlow<SyncState> = _syncState
@@ -46,6 +55,7 @@ class AppState {
                     npub = "npub unavailable until secp256k1 integration",
                     publicKeyHex = "unavailable",
                 )
+                _mode.value = AppMode.Authenticated
                 _message.value = "nsec validated. Public key derivation and relay publishing need a production crypto adapter."
                 true
             }
@@ -56,8 +66,15 @@ class AppState {
         }
     }
 
+    fun continueLocalOnly() {
+        _session.value = null
+        _mode.value = AppMode.LocalOnly
+        _message.value = "Local-only mode. Notes stay on this device and relay sync is disabled."
+    }
+
     suspend fun logout() {
         _session.value = null
+        _mode.value = AppMode.SignedOut
         notes.clear()
         _message.value = "Session cleared. Local in-memory notes were removed."
     }
@@ -73,6 +90,11 @@ class AppState {
     }
 
     suspend fun sync() {
+        if (_session.value == null) {
+            _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
+            _message.value = _syncState.value.summary
+            return
+        }
         _syncState.value = _syncState.value.copy(syncing = true)
         _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls())
         _message.value = _syncState.value.summary

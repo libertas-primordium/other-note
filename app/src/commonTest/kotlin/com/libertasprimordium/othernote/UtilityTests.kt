@@ -2,7 +2,9 @@ package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.domain.NotePayload
 import com.libertasprimordium.othernote.domain.noteDTag
+import com.libertasprimordium.othernote.nostr.NostrEventSerialization
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.sync.planRelayMigration
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
@@ -39,6 +41,34 @@ class UtilityTests {
             deleted = false,
         )
         assertEquals(payload, JsonNotePayloadCodec.decode(JsonNotePayloadCodec.encode(payload)).getOrThrow())
+    }
+
+    @Test
+    fun payloadJsonRoundTripsEscapedUnicodeAndCodeBlocks() {
+        val payload = NotePayload(
+            noteId = "note-json",
+            createdAtMs = 100,
+            updatedAtMs = 200,
+            bodyMarkdown = "Quote: \"hello\"\nBackslash: \\\nTab:\t\nUnicode: こんにちは\n```kotlin\nprintln(\"x\")\n```",
+            deleted = false,
+        )
+        val encoded = JsonNotePayloadCodec.encode(payload)
+        assertTrue(encoded.contains("body_markdown"))
+        assertEquals(payload, JsonNotePayloadCodec.decode(encoded).getOrThrow())
+    }
+
+    @Test
+    fun nip01PreimageDoesNotUseNotePayloadCodec() {
+        val preimage = NostrEventSerialization.canonicalPreimage(
+            UnsignedNostrEvent(
+                pubkey = "pub",
+                createdAt = 123,
+                kind = 30078,
+                tags = listOf(listOf("d", "other-note:note:abc"), listOf("t", "other-note")),
+                content = "encrypted-content",
+            ),
+        )
+        assertEquals("""[0,"pub",123,30078,[["d","other-note:note:abc"],["t","other-note"]],"encrypted-content"]""", preimage)
     }
 
     @Test
