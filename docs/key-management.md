@@ -28,12 +28,13 @@ Session-only `nsec` means the key is held only in process memory for the active 
 
 Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is also planned for later.
 
-Current Android NIP-55 status is discovery-only scaffold:
+Current Android NIP-55 status is discovery plus explicit public-key request:
 
 - Other Note uses generic NIP-55 `nostrsigner:` intent discovery to determine whether a signer app is installed.
 - Amber is the primary planned/tested target, but the architecture does not hard-require Amber.
-- The login UI can show signer availability and a "Use Android signer" scaffold action.
-- The scaffold does not yet request a public key, sign events, or call NIP-44 encrypt/decrypt through the signer.
+- The login UI can show signer availability and a "Use Android signer" action.
+- The action launches a user-triggered NIP-55 `get_public_key` intent and stores only public identity metadata in memory for the active app session: public key hex, `npub`, and signer package when returned.
+- The scaffold does not yet sign events or call NIP-44 encrypt/decrypt through the signer.
 - The scaffold must not store, log, or transmit `nsec` values or private keys.
 
 Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use password/autofill/credential behavior so Android and Google Password Manager can prompt where appropriate. The app itself must not save Android `nsec` values to plaintext app storage.
@@ -91,7 +92,7 @@ This policy is designed to prevent accidental plaintext private-key persistence,
 This pass does not implement:
 
 - OS keyring storage.
-- Full Android NIP-55 signer login, event signing, or NIP-44 encryption/decryption.
+- Android NIP-55 event signing or NIP-44 encryption/decryption.
 - NIP-46 remote signer/bunker support.
 - NIP-07 web signer support.
 - A web app.

@@ -15,9 +15,11 @@ import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.security.DefaultKeyManagementPolicy
 import com.libertasprimordium.othernote.security.KeyManagementPolicy
 import com.libertasprimordium.othernote.security.NostrSignerProvider
+import com.libertasprimordium.othernote.security.NostrSignerPublicKeyRequester
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
 import com.libertasprimordium.othernote.security.UnavailableSecureSecretStore
+import com.libertasprimordium.othernote.security.UnavailableSignerPublicKeyRequester
 
 enum class AppRuntimeMode {
     Offline,
@@ -32,6 +34,7 @@ data class AppServices(
     val keyManagementPolicy: KeyManagementPolicy = DefaultKeyManagementPolicy,
     val secureSecretStore: SecureSecretStore = UnavailableSecureSecretStore(),
     val externalSignerProvider: NostrSignerProvider = UnavailableExternalSignerProvider(),
+    val externalSignerPublicKeyRequester: NostrSignerPublicKeyRequester = UnavailableSignerPublicKeyRequester(),
     val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),

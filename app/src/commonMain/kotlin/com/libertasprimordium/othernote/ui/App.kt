@@ -30,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,7 +81,20 @@ fun OtherNoteApp(services: AppServices = defaultAppServices()) {
 @Composable
 fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val message by appState.message.collectAsState()
+    val mode by appState.mode.collectAsState()
     var nsec by remember { mutableStateOf("") }
+    LaunchedEffect(mode) {
+        when (mode) {
+            AppMode.Authenticated -> {
+                onLoggedIn()
+                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                    appState.startSync()
+                }
+            }
+            AppMode.LocalOnly -> onLoggedIn()
+            AppMode.SignedOut -> Unit
+        }
+    }
     Column(
         modifier = Modifier.fillMaxSize().background(OtherNoteBlack).padding(20.dp),
         verticalArrangement = Arrangement.Center,
@@ -90,7 +104,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         Spacer(Modifier.height(24.dp))
         Text(appState.externalSignerStatus, color = OtherNoteMuted)
         TextButton(
-            onClick = { appState.externalSignerLoginNotImplemented() },
+            onClick = { appState.requestExternalSignerPublicKey() },
             enabled = appState.externalSignerAvailable,
         ) {
             Text(if (appState.externalSignerAvailable) "Use Android signer" else "Install a NIP-55 signer such as Amber")
@@ -109,10 +123,6 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             onClick = {
                 if (appState.login(nsec)) {
                     nsec = ""
-                    onLoggedIn()
-                    if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
-                        appState.startSync()
-                    }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -122,7 +132,6 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         TextButton(onClick = {
             nsec = ""
             appState.continueLocalOnly()
-            onLoggedIn()
         }) {
             Text("Continue local-only")
         }
