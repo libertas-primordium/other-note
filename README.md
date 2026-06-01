@@ -17,6 +17,7 @@ Important security status:
 - `ProductionNostrCryptoFactory` is enabled for offline desktop/JVM tests after upgrading Quartz and the Kotlin/Compose/AGP toolchain. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until relay sync and storage behavior are reviewed.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Normal app runtime still uses an offline relay adapter. A bounded desktop/JVM WebSocket relay client exists for explicit opt-in integration tests only, and publishing/fetching surface explicit per-relay status instead of fake success.
+- Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; default desktop and all Android runtime paths remain offline/non-production.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -83,6 +84,53 @@ Commands:
 ./gradlew :app:check
 ```
 
+Default runtime remains offline. For manual desktop-only relay testing with throwaway keys:
+
+```sh
+OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run
+```
+
+The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. Use throwaway `nsec` values only. The pasted `nsec` is used only for the active process session, is redacted after login, and is not written to local files, relay settings, cache, logs, or test output. Saved-key mode is intentionally unavailable until OS keyring or external signer support is implemented.
+
+Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
+
+```sh
+OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS=1 ./gradlew :app:run
+```
+
+The equivalent diagnostics JVM property is `-Dothernote.showRelayDiagnostics=true`.
+
+Developer relay runtime defaults:
+
+- `wss://relay.damus.io`
+- `wss://relay.primal.net`
+- `wss://relay.nostr.net`
+- `wss://nos.lol`
+- `wss://relay.ditto.pub`
+
+Manual relay checklist:
+
+1. Create or obtain a throwaway `nsec`.
+2. Launch with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run`.
+3. Log in with the throwaway `nsec` and confirm the abbreviated `npub` appears.
+4. Create a note and verify at least one relay accepts the write.
+5. Restart in developer relay mode, log in with the same throwaway `nsec`, and refresh/fetch the note.
+6. Edit the note and verify refresh keeps only the newest version.
+7. Delete the note and verify refresh/restart hides the tombstoned note.
+
+Runtime troubleshooting:
+
+- Save/edit/delete is best-effort. A note becomes locally visible after the local encrypt/sign/validate/decrypt control passes and at least one relay accepts the write.
+- Remaining relay writes continue in the background after the first accepted write. Compact status reports aggregate progress; verbose per-relay status is hidden unless diagnostics are enabled.
+- Slow relays may fail, reject, or time out. One slow relay should not block a successful write from a faster relay.
+- Sync applies valid events incrementally as each relay completes. A recovered note can appear before the final aggregate sync status arrives, and later relay results can still update newer replacements or tombstones.
+- Verbose fetch diagnostics include safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. They do not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
+- If no note appears after sync, enable relay diagnostics to distinguish: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
+- Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
+- Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
+
+OS keyring persistence, Amber/NIP-55, NIP-46, profile rendering, and inline media rendering are intentionally future work.
+
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
 ## Safe Test Commands
@@ -142,7 +190,7 @@ The real crypto round-trip tests live under `desktopTest`. They generate throwaw
 - Sends `CLOSE` after bounded fetches.
 - Falls back to author/kind filtering if tag filtering does not return usable events.
 
-This client is not wired into normal app runtime yet. Public relay sync should remain behind explicit developer/test configuration until account, storage, and UI failure behavior are reviewed.
+This client is wired only into desktop developer relay runtime when `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` or `-Dothernote.devRelayRuntime=true` is set. Public relay sync remains unavailable in the default runtime.
 
 ## Architecture
 

@@ -1,0 +1,26 @@
+> Task :app:checkDesktopMainComposeLibrariesCompatibility
+> Task :app:kmpPartiallyResolvedDependenciesChecker
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:convertXmlValueResourcesForCommonMain NO-SOURCE
+> Task :app:copyNonXmlValueResourcesForCommonMain NO-SOURCE
+> Task :app:prepareComposeResourcesTaskForCommonMain NO-SOURCE
+> Task :app:generateResourceAccessorsForCommonMain NO-SOURCE
+> Task :app:convertXmlValueResourcesForDesktopMain NO-SOURCE
+> Task :app:copyNonXmlValueResourcesForDesktopMain NO-SOURCE
+> Task :app:prepareComposeResourcesTaskForDesktopMain NO-SOURCE
+> Task :app:generateResourceAccessorsForDesktopMain NO-SOURCE
+> Task :app:generateActualResourceCollectorsForDesktopMain UP-TO-DATE
+> Task :app:generateComposeResClass UP-TO-DATE
+> Task :app:generateExpectResourceCollectorsForCommonMain UP-TO-DATE
+> Task :app:compileKotlinDesktop UP-TO-DATE
+> Task :app:compileDesktopMainJava NO-SOURCE
+> Task :app:assembleDesktopMainResources UP-TO-DATE
+> Task :app:desktopProcessResources UP-TO-DATE
+> Task :app:processDesktopMainResources SKIPPED
+> Task :app:desktopMainClasses UP-TO-DATE
+> Task :app:desktopJar UP-TO-DATE
+> Task :app:prepareAppResources NO-SOURCE
+> Task :app:run
+
+BUILD SUCCESSFUL in 1m 12s
+10 actionable tasks: 3 executed, 7 up-to-date

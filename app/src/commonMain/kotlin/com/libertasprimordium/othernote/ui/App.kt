@@ -60,8 +60,8 @@ sealed class Screen {
 }
 
 @Composable
-fun OtherNoteApp() {
-    val appState = remember { AppState() }
+fun OtherNoteApp(services: AppServices = defaultAppServices()) {
+    val appState = remember(services) { AppState(services) }
     OtherNoteTheme {
         var screen by remember { mutableStateOf<Screen>(Screen.Login) }
         val mode by appState.mode.collectAsState()
@@ -101,6 +101,9 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                 if (appState.login(nsec)) {
                     nsec = ""
                     onLoggedIn()
+                    if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                        appState.startSync()
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -124,8 +127,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
 fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Unit, onSettings: () -> Unit) {
     val notes by appState.notes.notes.collectAsState()
     val session by appState.session.collectAsState()
-    val sync by appState.syncState.collectAsState()
     val message by appState.message.collectAsState()
+    val diagnostics by appState.diagnosticMessage.collectAsState()
     val scope = rememberCoroutineScope()
     Scaffold(
         topBar = {
@@ -143,8 +146,13 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
             Text(session?.abbreviatedNpub() ?: "Local-only session", color = OtherNoteMuted)
-            Text(sync.summary, color = OtherNoteMuted)
+            if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                Text("Developer relay runtime", color = OtherNotePurple)
+            }
             Text(message, color = OtherNoteMuted)
+            if (appState.showRelayDiagnostics && diagnostics.isNotBlank()) {
+                Text(diagnostics, color = OtherNoteMuted, fontSize = 12.sp)
+            }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
             Spacer(Modifier.height(12.dp))
@@ -210,11 +218,12 @@ fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit
             text = { Text("This creates an app-level tombstone event. Relay DELETE is not required.") },
             confirmButton = {
                 Button(onClick = {
-                    scope.launch {
-                        appState.delete(note)
-                        confirmDelete = false
-                        onBack()
-                    }
+                        scope.launch {
+                            if (appState.delete(note)) {
+                                confirmDelete = false
+                                onBack()
+                            }
+                        }
                 }) { Text("Delete") }
             },
             dismissButton = { OutlinedButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
@@ -247,8 +256,7 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
                 actions = {
                     TextButton(onClick = {
                         scope.launch {
-                            appState.save(note, markdown)
-                            onDone()
+                            if (appState.save(note, markdown)) onDone()
                         }
                     }) { Text("Save") }
                 },
