@@ -43,6 +43,7 @@ import com.libertasprimordium.othernote.security.InMemoryNip55SessionStore
 import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
 import com.libertasprimordium.othernote.security.Nip55SessionStoreResult
 import com.libertasprimordium.othernote.security.SavedNip46Session
+import com.libertasprimordium.othernote.security.SavedNip55Session
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
@@ -72,6 +73,30 @@ import kotlin.test.assertTrue
 
 class AppModeTests {
     @Test
+    fun signInLifecycleMatrixDocumentsLogoutForgetAndPersistenceContract() {
+        val matrix = signInLifecycleMatrix()
+
+        assertEquals(
+            listOf(
+                "Android NIP-55",
+                "NIP-46 remote signer",
+                "Desktop keyring nsec",
+                "Session-only nsec",
+                "Generated identity",
+                "Local-only",
+            ),
+            matrix.map { it.mode },
+        )
+        assertEquals("disables automatic restore; saved signer metadata remains", matrix.single { it.mode == "Android NIP-55" }.logout)
+        assertEquals("deletes only NIP-55 session metadata", matrix.single { it.mode == "Android NIP-55" }.forget)
+        assertEquals("saved reusable remote-signer session remains", matrix.single { it.mode == "NIP-46 remote signer" }.logout)
+        assertEquals("deletes only NIP-46 session state", matrix.single { it.mode == "NIP-46 remote signer" }.forget)
+        assertEquals("clears active session only", matrix.single { it.mode == "Session-only nsec" }.logout)
+        assertEquals("no saved session to forget", matrix.single { it.mode == "Local-only" }.forget)
+        assertTrue(matrix.all { it.storesUserPrivateKey == false })
+    }
+
+    @Test
     fun sharedDefaultRelaysUseMaintainedDevSet() {
         val urls = DefaultRelays.map { it.url }
 
@@ -100,6 +125,40 @@ class AppModeTests {
         state.sync()
 
         assertTrue(state.syncState.value.errors.single().contains("requires a validated nsec"))
+    }
+
+    @Test
+    fun localOnlyModeDoesNotCreateSignerOrSecretSessionMetadata() = runBlocking {
+        val nip55Store = InMemoryNip55SessionStore()
+        val nip46Store = InMemoryNip46SessionStore()
+        val keyring = FakeSecureSecretStore()
+        val requester = TestSignerPublicKeyRequester(
+            result = SignerPublicKeyRequestResult.Failed("Signer should not be requested"),
+            targetedResult = SignerPublicKeyRequestResult.Failed("Signer should not be requested"),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = requester,
+                nip55SessionStore = nip55Store,
+                nip46SessionStore = nip46Store,
+                secureSecretStore = keyring,
+            ),
+        )
+
+        state.continueLocalOnly()
+
+        assertEquals(AppMode.LocalOnly, state.mode.value)
+        assertNull(state.session.value)
+        assertEquals(0, requester.genericRequestCount)
+        assertTrue(requester.targetedPackages.isEmpty())
+        assertTrue(assertListedNip55Sessions(nip55Store).isEmpty())
+        assertTrue(assertListedNip46Sessions(nip46Store).isEmpty())
+        assertTrue(keyring.safeDiagnostics.none { it.startsWith("saved account") || it.startsWith("loaded account") })
     }
 
     @Test
@@ -235,6 +294,41 @@ class AppModeTests {
         assertTrue(saved.active)
         assertFalse(saved.toString().contains("nsec"))
         assertFalse(saved.toString().contains("privateKey"))
+    }
+
+    @Test
+    fun sessionOnlyNsecSignInDoesNotPersistToSavedSessionStores() = runBlocking {
+        val nip55Store = InMemoryNip55SessionStore()
+        val nip46Store = InMemoryNip46SessionStore()
+        val keyring = FakeSecureSecretStore()
+        val privateKeyHex = "0f".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    result = SignerPublicKeyRequestResult.Failed("Signer should not be requested"),
+                    targetedResult = SignerPublicKeyRequestResult.Failed("Signer should not be requested"),
+                ),
+                nip55SessionStore = nip55Store,
+                nip46SessionStore = nip46Store,
+                secureSecretStore = keyring,
+            ),
+        )
+
+        assertTrue(state.login(nsec))
+
+        val session = state.session.value ?: error("Missing session-only session")
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, session.authMethod)
+        assertEquals("nsec-redacted", session.nsec)
+        assertEquals(privateKeyHex, session.privateKeyHex)
+        assertTrue(assertListedNip55Sessions(nip55Store).isEmpty())
+        assertTrue(assertListedNip46Sessions(nip46Store).isEmpty())
+        assertTrue(keyring.safeDiagnostics.none { it.startsWith("saved account") || it.contains(nsec) })
     }
 
     @Test
@@ -598,6 +692,55 @@ class AppModeTests {
     }
 
     @Test
+    fun forgettingNip46SessionDoesNotDeleteSavedNip55Session() = runBlocking {
+        val androidPubkey = "10".repeat(32)
+        val androidNpub = Nip19.encode("npub", ByteArray(32) { 0x10 }) ?: error("npub encode failed")
+        val remotePubkey = "11".repeat(32)
+        val remoteNpub = Nip19.encode("npub", ByteArray(32) { 0x11 }) ?: error("npub encode failed")
+        val nip55Store = InMemoryNip55SessionStore()
+        val nip46Store = InMemoryNip46SessionStore()
+        nip55Store.saveSession(
+            SavedNip55Session(
+                userPubkey = androidPubkey,
+                userNpub = androidNpub,
+                signerPackage = "com.example.signer",
+                active = true,
+            ),
+        )
+        nip46Store.saveSession(
+            SavedNip46Session(
+                userPubkey = remotePubkey,
+                userNpub = remoteNpub,
+                clientPrivateKeyHex = "12".repeat(32),
+                clientPubkey = "13".repeat(32),
+                remoteSignerPubkey = "14".repeat(32),
+                relays = listOf("wss://relay.example.com"),
+            ),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(androidPubkey, androidNpub, "com.example.signer"),
+                ),
+                nip55SessionStore = nip55Store,
+                nip46SessionStore = nip46Store,
+            ),
+        )
+
+        assertTrue(state.forgetSavedRemoteSigner(remotePubkey))
+
+        assertTrue(assertListedNip46Sessions(nip46Store).isEmpty())
+        val androidSessions = assertListedNip55Sessions(nip55Store)
+        assertEquals(1, androidSessions.size)
+        assertEquals(androidPubkey, androidSessions.single().userPubkey)
+    }
+
+    @Test
     fun signerLoginStatusDoesNotExposeDevelopmentTestActions() {
         val pubkeyHex = "02".repeat(32)
         val npub = Nip19.encode("npub", ByteArray(32) { 0x02 }) ?: error("npub encode failed")
@@ -876,6 +1019,35 @@ class AppModeTests {
         assertFalse(serializedCacheForSafety.contains(editedText))
         assertFalse(serializedCacheForSafety.contains("body_markdown"))
         assertTrue(pending.loadPendingWrites(session.publicKeyHex).isEmpty())
+    }
+
+    @Test
+    fun generatedIdentitySessionDoesNotPersistSignerSessionMetadataWithoutExplicitKeyringSave() = runBlocking {
+        val nip55Store = InMemoryNip55SessionStore()
+        val nip46Store = InMemoryNip46SessionStore()
+        val keyring = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = keyring,
+                nip55SessionStore = nip55Store,
+                nip46SessionStore = nip46Store,
+            ),
+        )
+
+        assertTrue(state.generateFreshIdentity())
+        state.acknowledgeGeneratedIdentitySaved(true)
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        val generatedNsec = state.generatedIdentityState.value.nsecForDisplay()
+        assertTrue(state.useGeneratedIdentityForSession())
+
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, state.session.value?.authMethod)
+        assertTrue(assertListedNip55Sessions(nip55Store).isEmpty())
+        assertTrue(assertListedNip46Sessions(nip46Store).isEmpty())
+        assertTrue(keyring.safeDiagnostics.none { it.startsWith("saved account") || it.contains(generatedNsec) })
     }
 
     @Test
@@ -2088,6 +2260,65 @@ private suspend fun assertListedNip55Sessions(store: InMemoryNip55SessionStore) 
         is Nip55SessionStoreResult.Listed -> listed.sessions
         else -> error("Expected listed sessions, got $listed")
     }
+
+private suspend fun assertListedNip46Sessions(store: InMemoryNip46SessionStore) =
+    when (val listed = store.listSessions()) {
+        is Nip46SessionStoreResult.Listed -> listed.sessions
+        else -> error("Expected listed remote signer sessions, got $listed")
+    }
+
+private data class SignInLifecycleContract(
+    val mode: String,
+    val restart: String,
+    val logout: String,
+    val forget: String,
+    val storesUserPrivateKey: Boolean,
+)
+
+private fun signInLifecycleMatrix(): List<SignInLifecycleContract> = listOf(
+    SignInLifecycleContract(
+        mode = "Android NIP-55",
+        restart = "active saved signer session restores authenticated state",
+        logout = "disables automatic restore; saved signer metadata remains",
+        forget = "deletes only NIP-55 session metadata",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
+        mode = "NIP-46 remote signer",
+        restart = "saved remote-signer session can be reused",
+        logout = "saved reusable remote-signer session remains",
+        forget = "deletes only NIP-46 session state",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
+        mode = "Desktop keyring nsec",
+        restart = "keyring identity remains available",
+        logout = "clears active session only",
+        forget = "deletes only selected keyring identity",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
+        mode = "Session-only nsec",
+        restart = "does not restore",
+        logout = "clears active session only",
+        forget = "no saved session to forget",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
+        mode = "Generated identity",
+        restart = "does not restore unless explicitly saved through desktop keyring",
+        logout = "clears active session only",
+        forget = "no saved session to forget unless explicitly saved through desktop keyring",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
+        mode = "Local-only",
+        restart = "does not restore signer-backed auth",
+        logout = "clears local-only mode",
+        forget = "no saved session to forget",
+        storesUserPrivateKey = false,
+    ),
+)
 
 private class TestSignerEventSigner(
     private val sign: (NostrEvent) -> SignEventRequestResult,
