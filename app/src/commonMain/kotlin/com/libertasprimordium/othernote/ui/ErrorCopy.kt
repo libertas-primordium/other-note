@@ -71,6 +71,48 @@ fun userFacingErrorFor(raw: String): UserFacingError {
                 technicalDetails = source.safeTechnicalDetails(),
             )
 
+        lower.contains("desktop keyring is not available") ->
+            UserFacingError(
+                title = "Desktop keyring unavailable",
+                message = "Desktop keyring is not available. You can still sign in for this session.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("could not unlock the desktop keyring") ->
+            UserFacingError(
+                title = "Desktop keyring locked",
+                message = "Could not unlock the desktop keyring. Try again or use session-only sign-in.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("could not save this identity to the desktop keyring") ->
+            UserFacingError(
+                title = "Could not save identity",
+                message = "Could not save this identity to the desktop keyring.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("could not load this saved identity") ->
+            UserFacingError(
+                title = "Could not load saved identity",
+                message = "Could not load this saved identity.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("could not forget this saved identity") ->
+            UserFacingError(
+                title = "Could not forget saved identity",
+                message = "Could not forget this saved identity.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved identity is invalid") || lower.contains("saved identity does not match") ->
+            UserFacingError(
+                title = "Saved identity is invalid",
+                message = "This saved identity is invalid. Remove it and sign in again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
         lower.contains("relay test") || lower.contains("stage=relay_test") ->
             UserFacingError(
                 title = "Relay test failed",

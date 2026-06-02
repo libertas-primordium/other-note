@@ -6,6 +6,8 @@ import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.ui.GeneratedIdentityStep
+import com.libertasprimordium.othernote.ui.KeyringSaveConfirmationSource
+import com.libertasprimordium.othernote.ui.KeyringSaveWarningCopy
 import com.libertasprimordium.othernote.ui.RelayAddResult
 import com.libertasprimordium.othernote.ui.RelaySettingsRefreshResult
 import com.libertasprimordium.othernote.ui.SignInOptionEmphasis
@@ -34,6 +36,9 @@ import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
 import com.libertasprimordium.othernote.security.NostrSignerPublicKeyRequester
+import com.libertasprimordium.othernote.security.SavedNsecIdentity
+import com.libertasprimordium.othernote.security.SecureSecretStore
+import com.libertasprimordium.othernote.security.SecureSecretStoreResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
 import com.libertasprimordium.othernote.security.SignerNip44OperationResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
@@ -491,6 +496,505 @@ class AppModeTests {
         assertEquals(GeneratedIdentityStep.Idle, state.generatedIdentityState.value.step)
         assertFalse(state.generatedIdentityState.value.toString().contains(generatedNsec))
         assertNull(state.session.value)
+    }
+
+    @Test
+    fun savedIdentityMetadataDoesNotExposeNsec() {
+        val nsec = testNsecForPrivateKey("01".repeat(32))
+        val identity = SavedNsecIdentity(accountPubkey = "02".repeat(32), npub = "npub-test-safe", label = "Test")
+
+        assertFalse(identity.toString().contains(nsec))
+        assertFalse(identity.toString().contains("privateKey"))
+        assertFalse(identity.toString().contains("nsec"))
+    }
+
+    @Test
+    fun saveNsecToKeyringStoresOnlySafeIdentityMetadata() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val privateKeyHex = "01".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val expectedPubkey = privateKeyHex.reversed()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.saveNsecToKeyring(nsec))
+
+        val savedIdentity = state.savedIdentityState.value.identities.single()
+        assertEquals(expectedPubkey, savedIdentity.accountPubkey)
+        assertTrue(savedIdentity.npub.startsWith("npub-test-"))
+        assertFalse(savedIdentity.toString().contains(nsec))
+        assertFalse(store.safeDiagnostics.any { it.contains(nsec) })
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals(expectedPubkey, state.session.value?.publicKeyHex)
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, state.session.value?.authMethod)
+        assertTrue(state.message.value.contains("signed in"))
+    }
+
+    @Test
+    fun saveNsecToKeyringRequiresConfirmationBeforeSaving() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        state.requestExistingNsecKeyringSaveConfirmation()
+
+        assertEquals(KeyringSaveConfirmationSource.ExistingNsec, state.keyringSaveConfirmationState.value.source)
+        assertFalse(store.safeDiagnostics.any { it.startsWith("saved account") })
+        assertEquals(AppMode.SignedOut, state.mode.value)
+    }
+
+    @Test
+    fun cancellingKeyringSaveConfirmationDoesNotSave() {
+        val store = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        state.requestExistingNsecKeyringSaveConfirmation()
+        state.cancelKeyringSaveConfirmation()
+
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+        assertFalse(store.safeDiagnostics.any { it.startsWith("saved account") })
+        assertEquals(AppMode.SignedOut, state.mode.value)
+    }
+
+    @Test
+    fun confirmingKeyringSaveStoresIdentitySignsInAndRefreshesSavedIdentities() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val privateKeyHex = "0b".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val expectedPubkey = privateKeyHex.reversed()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        state.requestExistingNsecKeyringSaveConfirmation()
+        assertTrue(state.confirmExistingNsecKeyringSave(nsec))
+
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+        assertTrue(store.safeDiagnostics.any { it.startsWith("saved account") })
+        assertEquals(expectedPubkey, state.savedIdentityState.value.identities.single().accountPubkey)
+        assertEquals(expectedPubkey, state.session.value?.publicKeyHex)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+    }
+
+    @Test
+    fun generatedIdentityKeyringSaveRequiresAndUsesConfirmation() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.generateFreshIdentity())
+        state.acknowledgeGeneratedIdentitySaved(true)
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        val nsec = state.generatedIdentityState.value.nsecForDisplay()
+        state.requestGeneratedIdentityKeyringSaveConfirmation()
+
+        assertEquals(KeyringSaveConfirmationSource.GeneratedIdentity, state.keyringSaveConfirmationState.value.source)
+        assertFalse(store.safeDiagnostics.any { it.startsWith("saved account") })
+        assertTrue(state.confirmGeneratedIdentityKeyringSave())
+
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals(1, state.savedIdentityState.value.identities.size)
+        assertFalse(state.message.value.contains(nsec))
+        assertFalse(store.safeDiagnostics.any { it.contains(nsec) })
+    }
+
+    @Test
+    fun sessionOnlyAndSavedIdentitySignInBypassKeyringConfirmation() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val privateKeyHex = "0c".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val accountPubkey = privateKeyHex.reversed()
+        store.seed(accountPubkey, nsec)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.login(nsec))
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+        state.logout()
+        assertTrue(state.loginWithSavedIdentity(accountPubkey))
+
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+    }
+
+    @Test
+    fun keyringSaveWarningCopyDoesNotExposeSecretMaterial() {
+        val fixtureNsec = testNsecForPrivateKey("0d".repeat(32))
+        val copy = listOf(
+            KeyringSaveWarningCopy.title,
+            KeyringSaveWarningCopy.body,
+            KeyringSaveWarningCopy.description,
+        ).joinToString("\n")
+
+        assertFalse(copy.contains(fixtureNsec))
+        assertFalse(copy.contains("privateKey"))
+        assertFalse(copy.contains("raw private"))
+    }
+
+    @Test
+    fun savedKeyringIdentitySurvivesAppStateRestartAndLogoutDoesNotDeleteIt() = runBlocking {
+        val persistentKeyring = linkedMapOf<String, String>()
+        val privateKeyHex = "09".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val expectedPubkey = privateKeyHex.reversed()
+        val firstState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentKeyring),
+            ),
+        )
+
+        assertTrue(firstState.saveNsecToKeyring(nsec))
+        firstState.logout()
+
+        assertEquals(AppMode.SignedOut, firstState.mode.value)
+        assertTrue(persistentKeyring.containsKey(expectedPubkey))
+
+        val restartedState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentKeyring),
+            ),
+        )
+        assertTrue(restartedState.refreshSavedIdentities())
+
+        val savedIdentity = restartedState.savedIdentityState.value.identities.single()
+        assertEquals(expectedPubkey, savedIdentity.accountPubkey)
+        assertFalse(savedIdentity.toString().contains(nsec))
+        assertTrue(restartedState.loginWithSavedIdentity(expectedPubkey))
+        assertEquals(expectedPubkey, restartedState.session.value?.publicKeyHex)
+    }
+
+    @Test
+    fun forgettingSavedKeyringIdentityDeletesItAcrossAppStateRestart() = runBlocking {
+        val persistentKeyring = linkedMapOf<String, String>()
+        val privateKeyHex = "0a".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val expectedPubkey = privateKeyHex.reversed()
+        persistentKeyring[expectedPubkey] = nsec
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentKeyring),
+            ),
+        )
+
+        assertTrue(state.refreshSavedIdentities())
+        assertEquals(expectedPubkey, state.savedIdentityState.value.identities.single().accountPubkey)
+        assertTrue(state.forgetSavedIdentity(expectedPubkey))
+
+        val restartedState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentKeyring),
+            ),
+        )
+        assertTrue(restartedState.refreshSavedIdentities())
+
+        assertTrue(restartedState.savedIdentityState.value.identities.isEmpty())
+        assertFalse(persistentKeyring.containsKey(expectedPubkey))
+    }
+
+    @Test
+    fun availableKeyringStartsInCheckingStateUntilListCompletes() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = BlockingListSecureSecretStore(gate),
+            ),
+        )
+
+        assertTrue(state.secureSecretStoreAvailable)
+        assertTrue(state.savedIdentityState.value.loading)
+
+        gate.complete(Unit)
+        withTimeout(5_000) {
+            while (state.savedIdentityState.value.loading) yield()
+        }
+
+        assertTrue(state.savedIdentityState.value.identities.isEmpty())
+        assertNull(state.savedIdentityState.value.error)
+    }
+
+    @Test
+    fun availableEmptyKeyringLeavesSavedIdentityStateEmptyWithoutUnavailableError() = runBlocking {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(),
+            ),
+        )
+
+        assertTrue(state.refreshSavedIdentities())
+
+        assertTrue(state.secureSecretStoreAvailable)
+        assertTrue(state.savedIdentityState.value.identities.isEmpty())
+        assertNull(state.savedIdentityState.value.error)
+    }
+
+    @Test
+    fun unavailableKeyringShowsUnavailableStateInsteadOfEmptyState() = runBlocking {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+            ),
+        )
+
+        assertFalse(state.secureSecretStoreAvailable)
+        assertTrue(state.savedIdentityState.value.identities.isEmpty())
+        assertTrue(state.savedIdentityState.value.error.orEmpty().contains("not implemented"))
+    }
+
+    @Test
+    fun continueWithSavedIdentityCreatesSessionOnlySignerSession() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val privateKeyHex = "02".repeat(32)
+        val accountPubkey = privateKeyHex.reversed()
+        store.seed(accountPubkey, testNsecForPrivateKey(privateKeyHex))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.loginWithSavedIdentity(accountPubkey))
+
+        val session = state.session.value ?: error("Missing session")
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, session.authMethod)
+        assertEquals("nsec-redacted", session.nsec)
+        assertEquals(privateKeyHex, session.privateKeyHex)
+        assertEquals(accountPubkey, session.publicKeyHex)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+    }
+
+    @Test
+    fun savedIdentityPubkeyMismatchIsRejected() = runBlocking {
+        val privateKeyHex = "03".repeat(32)
+        val mismatchedPubkey = "04".repeat(32)
+        val store = FakeSecureSecretStore()
+        store.seed(mismatchedPubkey, testNsecForPrivateKey(privateKeyHex))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertFalse(state.loginWithSavedIdentity(mismatchedPubkey))
+
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("does not match"))
+        assertFalse(state.message.value.contains(testNsecForPrivateKey(privateKeyHex)))
+    }
+
+    @Test
+    fun invalidSavedIdentityIsRejectedWithoutLeakingSecret() = runBlocking {
+        val accountPubkey = "05".repeat(32)
+        val invalidSecret = "not-a-valid-nsec"
+        val store = FakeSecureSecretStore()
+        store.seed(accountPubkey, invalidSecret)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertFalse(state.loginWithSavedIdentity(accountPubkey))
+
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("invalid"))
+        assertFalse(state.message.value.contains(invalidSecret))
+    }
+
+    @Test
+    fun generatedIdentityCanBeSavedToFakeKeyringAndStartCurrentSession() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.generateFreshIdentity())
+        state.acknowledgeGeneratedIdentitySaved(true)
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        val nsec = state.generatedIdentityState.value.nsecForDisplay()
+        assertTrue(state.saveGeneratedIdentityToKeyring())
+
+        assertEquals(1, state.savedIdentityState.value.identities.size)
+        assertEquals(GeneratedIdentityStep.Idle, state.generatedIdentityState.value.step)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, state.session.value?.authMethod)
+        assertFalse(state.message.value.contains(nsec))
+        assertFalse(store.safeDiagnostics.any { it.contains(nsec) })
+    }
+
+    @Test
+    fun failedGeneratedIdentityKeyringSaveDoesNotDiscardSecret() = runBlocking {
+        val store = FakeSecureSecretStore(saveResult = SecureSecretStoreResult.Failed("Could not save this identity to the desktop keyring."))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.generateFreshIdentity())
+        state.acknowledgeGeneratedIdentitySaved(true)
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        assertFalse(state.saveGeneratedIdentityToKeyring())
+
+        assertEquals(GeneratedIdentityStep.Generated, state.generatedIdentityState.value.step)
+        assertNotNull(state.generatedIdentityState.value.secret)
+        Unit
+    }
+
+    @Test
+    fun forgetSavedIdentityRemovesKeyButKeepsActiveSessionUntilLogout() = runBlocking {
+        val privateKeyHex = "06".repeat(32)
+        val accountPubkey = privateKeyHex.reversed()
+        val store = FakeSecureSecretStore()
+        store.seed(accountPubkey, testNsecForPrivateKey(privateKeyHex))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+        assertTrue(state.loginWithSavedIdentity(accountPubkey))
+
+        assertTrue(state.forgetSavedIdentity(accountPubkey))
+
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals(accountPubkey, state.session.value?.publicKeyHex)
+        assertTrue(state.savedIdentityState.value.identities.isEmpty())
+        assertTrue(state.message.value.contains("Current session remains active until logout"))
+    }
+
+    @Test
+    fun unavailableKeyringKeepsSessionOnlySignInAvailable() = runBlocking {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+            ),
+        )
+        val nsec = testNsecForPrivateKey("07".repeat(32))
+
+        assertFalse(state.saveNsecToKeyring(nsec))
+        assertTrue(state.login(nsec))
+
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, state.session.value?.authMethod)
+        assertTrue(state.message.value.contains("Relay sync is disabled"))
+    }
+
+    @Test
+    fun keyringSaveFailureDoesNotCreateActiveSession() = runBlocking {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(
+                    saveResult = SecureSecretStoreResult.Failed("Could not save this identity to the desktop keyring."),
+                ),
+            ),
+        )
+        val nsec = testNsecForPrivateKey("08".repeat(32))
+
+        assertFalse(state.saveNsecToKeyring(nsec))
+
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("Could not save this identity"))
     }
 
     @Test
@@ -1271,6 +1775,69 @@ private class GeneratedIdentityTestCrypto : NostrCrypto {
         )
 
     override fun validate(event: NostrEvent): Result<Boolean> = Result.success(event.sig == "valid")
+}
+
+private fun testNsecForPrivateKey(privateKeyHex: String): String =
+    "nsec-test-$privateKeyHex"
+
+private class FakeSecureSecretStore(
+    private val saveResult: SecureSecretStoreResult? = null,
+    private val saved: MutableMap<String, String> = linkedMapOf(),
+) : SecureSecretStore {
+    override val isAvailable: Boolean = true
+    override val unavailableReason: String? = null
+    val safeDiagnostics = mutableListOf<String>()
+
+    fun seed(accountPubkey: String, nsec: String) {
+        saved[accountPubkey] = nsec
+    }
+
+    override suspend fun listSavedNsecs(): SecureSecretStoreResult {
+        safeDiagnostics += "listed identities"
+        return SecureSecretStoreResult.Listed(
+            saved.keys.map { SavedNsecIdentity(accountPubkey = it, npub = "", label = "Test keyring identity") },
+        )
+    }
+
+    override suspend fun saveNsec(accountId: String, nsec: String): SecureSecretStoreResult {
+        safeDiagnostics += "saved account ${accountId.take(12)}"
+        saveResult?.let { return it }
+        saved[accountId] = nsec
+        return SecureSecretStoreResult.Saved
+    }
+
+    override suspend fun loadNsec(accountId: String): SecureSecretStoreResult {
+        safeDiagnostics += "loaded account ${accountId.take(12)}"
+        return saved[accountId]?.let { SecureSecretStoreResult.Loaded(it) }
+            ?: SecureSecretStoreResult.Failed("Could not load this saved identity.")
+    }
+
+    override suspend fun deleteNsec(accountId: String): SecureSecretStoreResult {
+        safeDiagnostics += "deleted account ${accountId.take(12)}"
+        saved.remove(accountId)
+        return SecureSecretStoreResult.Deleted
+    }
+}
+
+private class BlockingListSecureSecretStore(
+    private val gate: CompletableDeferred<Unit>,
+) : SecureSecretStore {
+    override val isAvailable: Boolean = true
+    override val unavailableReason: String? = null
+
+    override suspend fun listSavedNsecs(): SecureSecretStoreResult {
+        gate.await()
+        return SecureSecretStoreResult.Listed(emptyList())
+    }
+
+    override suspend fun saveNsec(accountId: String, nsec: String): SecureSecretStoreResult =
+        SecureSecretStoreResult.Saved
+
+    override suspend fun loadNsec(accountId: String): SecureSecretStoreResult =
+        SecureSecretStoreResult.Failed("Could not load this saved identity.")
+
+    override suspend fun deleteNsec(accountId: String): SecureSecretStoreResult =
+        SecureSecretStoreResult.Deleted
 }
 
 private class AcceptingGeneratedIdentityClient : NostrClient {
