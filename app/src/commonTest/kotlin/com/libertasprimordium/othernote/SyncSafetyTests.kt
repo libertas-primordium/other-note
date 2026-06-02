@@ -32,6 +32,8 @@ import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
+import com.libertasprimordium.othernote.util.MarkdownBlock
+import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +47,22 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class SyncSafetyTests {
+    @Test
+    fun noteLifecycleMatrixDocumentsCrudRestartPendingAndMarkdownContract() {
+        val matrix = noteLifecycleMatrix()
+
+        assertEquals(
+            listOf("create", "edit", "delete", "restart", "pending writes", "account scope", "markdown"),
+            matrix.map { it.stage },
+        )
+        assertEquals("raw Markdown body is encrypted into one signed kind 30078 event", matrix.single { it.stage == "create" }.contract)
+        assertEquals("stable note id and d tag are preserved; latest event wins", matrix.single { it.stage == "edit" }.contract)
+        assertEquals("latest tombstone hides older visible versions", matrix.single { it.stage == "delete" }.contract)
+        assertEquals("cached signed encrypted events are reduced for the restored account", matrix.single { it.stage == "restart" }.contract)
+        assertEquals("unfinished relay writes keep signed encrypted events only", matrix.single { it.stage == "pending writes" }.contract)
+        assertTrue(matrix.all { it.storesPlaintext == false })
+    }
+
     @Test
     fun disabledCryptoSyncDoesNotDeleteLocalNotes() = runBlocking {
         val notes = InMemoryNoteRepository()
@@ -199,6 +217,41 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun pendingCreateWriteTargetsCreatedNoteIdentity() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val pendingStore = InMemoryPendingWriteStore()
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = false, message = "timeout"),
+            ),
+            autoCompletePublish = false,
+        )
+        val save = SaveNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        save.save(
+            existing = null,
+            bodyMarkdown = "**raw** `markdown`",
+            session = session(),
+            relays = listOf("wss://fast.example.com", "wss://slow.example.com"),
+        )
+
+        val note = notes.notes.value.single()
+        val pending = pendingStore.loadPendingWrites(session().publicKeyHex).single()
+        assertEquals(note.dTag, pending.event.dTag())
+        assertEquals(session().publicKeyHex, pending.accountPubkey)
+        assertFalse(pending.event.content.contains("**raw**"))
+        client.completePendingPublish()
+    }
+
+    @Test
     fun editPreservesNoteIdAndDTag() = runBlocking {
         val notes = InMemoryNoteRepository()
         val crypto = FakeCrypto(productionReady = true)
@@ -233,6 +286,45 @@ class SyncSafetyTests {
         assertEquals(noteDTag("same-id"), event.dTag())
         assertEquals(listOf(event), cache.loadEvents(session().publicKeyHex))
         assertFalse(event.content.contains("edited"))
+    }
+
+    @Test
+    fun pendingEditWriteUsesSameNoteIdentityAndLatestRawBody() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val pendingStore = InMemoryPendingWriteStore()
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = false, message = "timeout"),
+            ),
+            autoCompletePublish = false,
+        )
+        val save = SaveNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+        val existing = note("same-id", "old", updatedAtMs = nowMs() + 2_000)
+
+        val result = save.save(
+            existing = existing,
+            bodyMarkdown = "edited **bold**\n> quote",
+            session = session(),
+            relays = listOf("wss://fast.example.com", "wss://slow.example.com"),
+        )
+
+        assertIs<SaveResult.Published>(result)
+        val pending = pendingStore.loadPendingWrites(session().publicKeyHex).single()
+        val payload = decryptPayload(crypto, pending.event)
+        assertEquals(existing.id, payload.noteId)
+        assertEquals(noteDTag(existing.id), pending.event.dTag())
+        assertEquals("edited **bold**\n> quote", payload.bodyMarkdown)
+        assertFalse(payload.deleted)
+        assertFalse(pending.event.content.contains("edited **bold**"))
+        client.completePendingPublish()
     }
 
     @Test
@@ -321,6 +413,54 @@ class SyncSafetyTests {
             .getOrThrow()
         assertTrue(decoded.deleted)
         assertEquals("", decoded.bodyMarkdown)
+    }
+
+    @Test
+    fun pendingDeleteWriteIsTombstoneForSameIdentityAndReloadKeepsNoteHidden() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val pendingStore = InMemoryPendingWriteStore()
+        val target = note("delete-me", "body", updatedAtMs = nowMs() + 1_000)
+        notes.upsertLocal(target)
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(
+            firstAcceptedStatuses = listOf(RelayStatus("wss://fast.example.com", writable = true, message = "accepted")),
+            completeStatuses = listOf(
+                RelayStatus("wss://fast.example.com", writable = true, message = "accepted"),
+                RelayStatus("wss://slow.example.com", writable = false, message = "timeout"),
+            ),
+            autoCompletePublish = false,
+        )
+        val delete = DeleteNoteUseCase(
+            notes = notes,
+            nostr = NostrRepository(crypto, client),
+            localEventCache = cache,
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        val result = delete.delete(target, session(), listOf("wss://fast.example.com", "wss://slow.example.com"))
+
+        assertIs<SaveResult.Published>(result)
+        assertTrue(notes.notes.value.isEmpty())
+        val pending = pendingStore.loadPendingWrites(session().publicKeyHex).single()
+        val payload = decryptPayload(crypto, pending.event)
+        assertEquals(target.id, payload.noteId)
+        assertEquals(noteDTag(target.id), pending.event.dTag())
+        assertTrue(payload.deleted)
+        assertEquals("", payload.bodyMarkdown)
+
+        val reloadedNotes = InMemoryNoteRepository()
+        val sync = SyncNotesUseCase(
+            reloadedNotes,
+            NostrRepository(crypto, FakeClient()),
+            crypto,
+            localEventCache = cache,
+        )
+        sync.sync(session(), emptyList())
+
+        assertTrue(reloadedNotes.notes.value.isEmpty())
+        client.completePendingPublish()
     }
 
     @Test
@@ -458,6 +598,25 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun cachedEventsAreScopedToTheRestoredAccountPubkey() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val crypto = FakeCrypto(productionReady = true)
+        val otherAccountEvent = signedEvent(crypto, note("other-account-note", "other body", updatedAtMs = 3), createdAt = 3)
+        cache.upsertEvents("aa".repeat(32), listOf(otherAccountEvent))
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, FakeClient()),
+            crypto,
+            localEventCache = cache,
+        )
+
+        sync.sync(session(), emptyList())
+
+        assertTrue(notes.notes.value.isEmpty())
+    }
+
+    @Test
     fun cachedTombstoneHidesOlderCachedNote() = runBlocking {
         val notes = InMemoryNoteRepository()
         val cache = InMemoryLocalEventCache()
@@ -527,6 +686,42 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun rawMarkdownSurvivesEncryptedSaveFetchAndRenderingParserDoesNotMutateIt() = runBlocking {
+        val rawMarkdown = """
+            # Header
+            ## Subhead
+            **bold** and *italic* and ~strike~ and ~~gone~~ and `inline`
+            > quote
+            ```kotlin
+            **literal** `code`
+            ```
+        """.trimIndent()
+        val firstNotes = InMemoryNoteRepository()
+        val secondNotes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val saveClient = FakeClient(publishStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "accepted")))
+        val save = SaveNoteUseCase(firstNotes, NostrRepository(crypto, saveClient))
+
+        val saveResult = save.save(existing = null, bodyMarkdown = rawMarkdown, session = session(), relays = listOf("wss://relay.example.com"))
+        val renderedBlocks = markdownBlocks(rawMarkdown)
+        val fetchClient = FakeClient(
+            events = saveClient.published.toList(),
+            statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+        )
+        val sync = SyncNotesUseCase(secondNotes, NostrRepository(crypto, fetchClient), crypto)
+        sync.sync(session(), listOf("wss://relay.example.com"))
+
+        assertIs<SaveResult.Published>(saveResult)
+        assertEquals(rawMarkdown, firstNotes.notes.value.single().bodyMarkdown)
+        assertEquals(rawMarkdown, secondNotes.notes.value.single().bodyMarkdown)
+        assertTrue(renderedBlocks.any { it is MarkdownBlock.Heading && it.text == "Header" })
+        assertTrue(renderedBlocks.any { it is MarkdownBlock.BlockQuote && it.text == "quote" })
+        assertEquals("**literal** `code`", renderedBlocks.filterIsInstance<MarkdownBlock.CodeBlock>().single().code)
+        assertFalse(saveClient.published.single().content.contains(rawMarkdown))
+        assertFalse(saveClient.published.single().content.contains("body_markdown"))
+    }
+
+    @Test
     fun nextLoginRetriesUnfinishedPendingWritesWithoutResigning() = runBlocking {
         val notes = InMemoryNoteRepository()
         val crypto = FakeCrypto(productionReady = true)
@@ -556,6 +751,41 @@ class SyncSafetyTests {
         }
 
         assertEquals(listOf("wss://retry.example.com"), client.publishRelayBatches.single())
+        assertEquals(pendingEvent, client.published.single())
+    }
+
+    @Test
+    fun pendingRetryFailureDoesNotDuplicateOrRevertLatestLocalNote() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val pendingStore = InMemoryPendingWriteStore()
+        val edited = note("retry-edit", "latest body", updatedAtMs = 5_000).copy(sourceEventId = "latest-event")
+        val pendingEvent = signedEvent(crypto, edited, createdAt = 5)
+        notes.upsertLocal(edited)
+        pendingStore.enqueuePendingWrite(
+            accountPubkey = session().publicKeyHex,
+            event = pendingEvent,
+            targetRelays = listOf("wss://retry.example.com"),
+        )
+        val client = FakeClient(
+            publishStatuses = listOf(RelayStatus("wss://retry.example.com", writable = false, message = "rejected")),
+            statuses = listOf(RelayStatus("wss://read.example.com", readable = false, message = "timeout")),
+        )
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, client),
+            crypto,
+            pendingWriteStore = pendingStore,
+            publishScope = this,
+        )
+
+        sync.sync(session(), listOf("wss://retry.example.com"))
+        withTimeout(1_000) {
+            while (client.published.isEmpty()) delay(10)
+        }
+
+        assertEquals(listOf(edited), notes.notes.value)
+        assertEquals(1, notes.notes.value.size)
         assertEquals(pendingEvent, client.published.single())
     }
 
@@ -691,7 +921,56 @@ class SyncSafetyTests {
             NostrPrivateKey(session.privateKeyHex),
         ).getOrThrow()
     }
+
+    private fun decryptPayload(crypto: FakeCrypto, event: NostrEvent) =
+        crypto.decryptFromSelf(event.content, NostrPrivateKey(session().privateKeyHex), NostrPublicKey(session().publicKeyHex, session().npub))
+            .mapCatching { JsonNotePayloadCodec.decode(it).getOrThrow() }
+            .getOrThrow()
 }
+
+private data class NoteLifecycleContract(
+    val stage: String,
+    val contract: String,
+    val storesPlaintext: Boolean,
+)
+
+private fun noteLifecycleMatrix(): List<NoteLifecycleContract> = listOf(
+    NoteLifecycleContract(
+        stage = "create",
+        contract = "raw Markdown body is encrypted into one signed kind 30078 event",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "edit",
+        contract = "stable note id and d tag are preserved; latest event wins",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "delete",
+        contract = "latest tombstone hides older visible versions",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "restart",
+        contract = "cached signed encrypted events are reduced for the restored account",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "pending writes",
+        contract = "unfinished relay writes keep signed encrypted events only",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "account scope",
+        contract = "events and pending writes are scoped by account pubkey",
+        storesPlaintext = false,
+    ),
+    NoteLifecycleContract(
+        stage = "markdown",
+        contract = "view rendering parses raw Markdown without mutating stored note text",
+        storesPlaintext = false,
+    ),
+)
 
 private class FakeClient(
     private val events: List<NostrEvent> = emptyList(),
