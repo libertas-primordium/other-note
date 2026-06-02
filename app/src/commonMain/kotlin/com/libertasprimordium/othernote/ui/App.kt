@@ -31,7 +31,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -731,15 +735,19 @@ fun NotesListScreen(
     val diagnostics by appState.diagnosticMessage.collectAsState()
     val scope = rememberCoroutineScope()
     var notePendingDelete by remember { mutableStateOf<Note?>(null) }
+    var showAbout by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Other Note") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
                 actions = {
-                    TextButton(onClick = { scope.launch { appState.sync() } }) { Text("Sync") }
-                    TextButton(onClick = { scope.launch { appState.logout() } }) { Text("Logout") }
-                    TextButton(onClick = onSettings) { Text("Relays") }
+                    MainActionsMenu(
+                        onSync = { scope.launch { appState.sync() } },
+                        onRelays = onSettings,
+                        onAbout = { showAbout = true },
+                        onLogout = { scope.launch { appState.logout() } },
+                    )
                 },
             )
         },
@@ -795,6 +803,92 @@ fun NotesListScreen(
             },
         )
     }
+    if (showAbout) {
+        AboutOtherNoteDialog(onDismiss = { showAbout = false })
+    }
+}
+
+@Composable
+private fun MainActionsMenu(
+    onSync: () -> Unit,
+    onRelays: () -> Unit,
+    onAbout: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { expanded = true },
+            modifier = Modifier.semantics { contentDescription = "Main menu" },
+        ) {
+            Text("...", color = OtherNoteText, fontSize = 20.sp)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Sync now") },
+                onClick = {
+                    expanded = false
+                    onSync()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Relays") },
+                onClick = {
+                    expanded = false
+                    onRelays()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("About Other Note") },
+                onClick = {
+                    expanded = false
+                    onAbout()
+                },
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Logout") },
+                onClick = {
+                    expanded = false
+                    onLogout()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutOtherNoteDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("About Other Note") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Other Note", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text("Version 0.1.0", color = OtherNoteMuted)
+                Spacer(Modifier.height(12.dp))
+                Text("GPLv3 Nostr-backed encrypted notes app for Android and Debian/Linux desktop.")
+                Spacer(Modifier.height(10.dp))
+                Text("Key safety", fontWeight = FontWeight.Bold)
+                Text("Android NIP-55 keeps the private key in the signer app. NIP-46 keeps the private key in the remote signer. Desktop keyring identities are saved only after explicit confirmation. Session-only nsec sign-in is not persisted.")
+                Spacer(Modifier.height(10.dp))
+                Text("Platform status", fontWeight = FontWeight.Bold)
+                Text("Android and Debian/Linux desktop are the active tested targets. Windows, macOS, iOS, and web are future work.")
+                Spacer(Modifier.height(10.dp))
+                Text("Support and diagnostics", fontWeight = FontWeight.Bold)
+                Text("Share only safe summaries when troubleshooting. Do not share nsec values, private keys, signer tokens, decrypted notes, or raw relay payloads.")
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+    )
 }
 
 @Composable
