@@ -9,6 +9,7 @@ import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
+import com.libertasprimordium.othernote.data.ThemePreferenceStore
 import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.util.nowMs
@@ -195,6 +196,20 @@ class DesktopRelaySettingsPersistence(
 
     override suspend fun saveRelayUrls(urls: List<String>) {
         atomicWrite(file, RelaySettingsCodec.encode(urls))
+    }
+
+    private fun readFile(file: Path): String? =
+        runCatching { if (file.exists()) file.readText() else null }.getOrNull()
+}
+
+class DesktopThemePreferenceStore(
+    private val file: Path = DesktopLocalStorePaths.dataDir().resolve("theme-preference.txt"),
+) : ThemePreferenceStore {
+    override suspend fun loadThemeId(): String? =
+        readFile(file)?.trim()?.takeIf { it.isNotBlank() }
+
+    override suspend fun saveThemeId(themeId: String) {
+        atomicWrite(file, themeId.trim())
     }
 
     private fun readFile(file: Path): String? =

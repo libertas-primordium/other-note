@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
             localEventCache = AndroidLocalEventCache(this),
             pendingWriteStore = AndroidPendingWriteStore(this),
             relaySettings = RelaySettingsStore(persistence = AndroidRelaySettingsPersistence(this)),
+            themePreferenceStore = AndroidThemePreferenceStore(this),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
             startupWarnings = if (crypto.productionReady) {
