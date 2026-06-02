@@ -21,6 +21,13 @@ import com.libertasprimordium.othernote.sync.mergeRelayListTags
 import com.libertasprimordium.othernote.sync.parseRelayListEvent
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.selectLatestSignedEncryptedNoteEvents
+import com.libertasprimordium.othernote.ui.AppPlatform
+import com.libertasprimordium.othernote.ui.NoteCardAction
+import com.libertasprimordium.othernote.ui.NoteCardActionPresentation
+import com.libertasprimordium.othernote.ui.noteCardActionPresentation
+import com.libertasprimordium.othernote.ui.noteCardActionMenuText
+import com.libertasprimordium.othernote.ui.noteCardActionItems
+import com.libertasprimordium.othernote.ui.noteDeleteConfirmationText
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.MediaType
@@ -95,6 +102,59 @@ class UtilityTests {
 
         assertEquals(DefaultRelays.map { it.url }, store.normalizedUrls())
         assertEquals(DefaultRelays.map { it.url }, RelaySettingsCodec.decodeOrNull(persistence.raw.orEmpty()))
+    }
+
+    @Test
+    fun noteCardActionsExposeOpenEditAndGuardedDeleteLabels() {
+        val actions = noteCardActionItems()
+
+        assertEquals(listOf(NoteCardAction.Open, NoteCardAction.Edit, NoteCardAction.Delete), actions.map { it.action })
+        assertEquals("Open note", actions.single { it.action == NoteCardAction.Open }.accessibilityLabel)
+        assertEquals("Edit note", actions.single { it.action == NoteCardAction.Edit }.accessibilityLabel)
+        assertEquals("Delete note", actions.single { it.action == NoteCardAction.Delete }.accessibilityLabel)
+        assertTrue(actions.single { it.action == NoteCardAction.Delete }.destructive)
+    }
+
+    @Test
+    fun noteCardActionPresentationUsesLongPressOnAndroidAndVisibleButtonsOnDesktop() {
+        assertEquals(
+            NoteCardActionPresentation.LongPressMenu,
+            noteCardActionPresentation(AppPlatform.Android, availableWidthDp = 400),
+        )
+        assertEquals(
+            NoteCardActionPresentation.VisibleButtons,
+            noteCardActionPresentation(AppPlatform.Desktop, availableWidthDp = 400),
+        )
+        assertEquals(
+            NoteCardActionPresentation.LongPressMenu,
+            noteCardActionPresentation(AppPlatform.Desktop, availableWidthDp = 180),
+        )
+    }
+
+    @Test
+    fun mobileNoteActionMenuExposesEditDeleteAndCancelLabels() {
+        val actions = noteCardActionItems()
+        val menuText = noteCardActionMenuText()
+
+        assertEquals("Note actions", menuText.title)
+        assertEquals("Edit", actions.single { it.action == NoteCardAction.Edit }.label)
+        assertEquals("Delete", actions.single { it.action == NoteCardAction.Delete }.label)
+        assertEquals("Cancel", menuText.cancelLabel)
+    }
+
+    @Test
+    fun deleteConfirmationCopyIsUserFacingAndNonTechnical() {
+        val text = noteDeleteConfirmationText()
+        val visible = "${text.title}\n${text.body}\n${text.cancelLabel}\n${text.deleteLabel}"
+
+        assertEquals("Delete note?", text.title)
+        assertTrue(text.body.contains("syncs a deletion update"))
+        assertEquals("Cancel", text.cancelLabel)
+        assertEquals("Delete", text.deleteLabel)
+        assertFalse(visible.contains("tombstone"))
+        assertFalse(visible.contains("kind 30078"))
+        assertFalse(visible.contains("d-tag"))
+        assertFalse(visible.contains("body_markdown"))
     }
 
     @Test
