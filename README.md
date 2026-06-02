@@ -320,6 +320,8 @@ Desktop package validation when the active JDK includes `jpackage`:
 ./gradlew :app:packageDeb
 ```
 
+For install/runtime artifact checks before treating APK or Debian package output as a test candidate, see [docs/release-smoke-test.md](docs/release-smoke-test.md).
+
 Relay integration tests are intentionally opt-in. They generate throwaway keys at runtime, publish encrypted disposable kind `30078` test blobs, fetch them back, publish an update, and publish an app-level tombstone. Public relays may retain those encrypted blobs.
 
 ```sh
