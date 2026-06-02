@@ -54,6 +54,12 @@ private enum class SignerWriteAction {
     Delete,
 }
 
+data class EditorSaveState(
+    val inProgress: Boolean = false,
+    val message: String = "",
+    val error: String? = null,
+)
+
 class AppState(private val services: AppServices = defaultAppServices()) {
     private val crypto = services.crypto
     private val signerVerifier = ProductionNostrCryptoFactory.createOrNull()
@@ -131,6 +137,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     private val _diagnosticMessage = MutableStateFlow("")
     val diagnosticMessage: StateFlow<String> = _diagnosticMessage
+
+    private val _editorSaveState = MutableStateFlow(EditorSaveState())
+    val editorSaveState: StateFlow<EditorSaveState> = _editorSaveState
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
@@ -499,13 +508,30 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         return result !is SaveResult.Failed
     }
 
+    suspend fun saveFromEditor(existing: Note?, markdown: String): Boolean {
+        if (_editorSaveState.value.inProgress) return false
+        _editorSaveState.value = EditorSaveState(inProgress = true, message = "Saving...")
+        val saved = save(existing, markdown)
+        val safeMessage = _message.value.ifBlank { if (saved) "Saved" else "Save failed" }
+        _editorSaveState.value = if (saved) {
+            EditorSaveState(message = safeMessage)
+        } else {
+            EditorSaveState(error = safeMessage)
+        }
+        return saved
+    }
+
+    fun clearEditorSaveState() {
+        _editorSaveState.value = EditorSaveState()
+    }
+
     private suspend fun saveWithExternalSigner(existing: Note?, markdown: String, session: UserSession): Boolean {
         val builder = signerNoteEventBuilderFor(session)
         if (builder == null || !signerCanSignEvent(session) || !signerCanNip44RoundTrip(session)) {
             _message.value = "External signer local save is unavailable."
             return false
         }
-        _message.value = "Waiting for signer..."
+        setSaveProgress("Waiting for signer...")
         val result = if (session.authMethod == SessionAuthMethod.RemoteSigner) {
             withContext(Dispatchers.IO) {
                 if (existing == null) {
@@ -555,7 +581,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     private fun handleSignerNoteSaveStage(stage: SignerNoteEventBuildStage) {
-        _message.value = when (stage) {
+        setSaveProgress(when (stage) {
             SignerNoteEventBuildStage.PayloadEncoded -> "Waiting for signer..."
             SignerNoteEventBuildStage.Encrypted -> "Signer encrypted note"
             SignerNoteEventBuildStage.EventBuilt -> "Waiting for signer..."
@@ -563,6 +589,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             SignerNoteEventBuildStage.Validated -> "Signer signed note"
             SignerNoteEventBuildStage.Decrypted -> "Signer decrypted note"
             SignerNoteEventBuildStage.PayloadDecoded -> "Saving locally..."
+        })
+    }
+
+    private fun setSaveProgress(message: String) {
+        _message.value = message
+        if (_editorSaveState.value.inProgress) {
+            _editorSaveState.value = _editorSaveState.value.copy(message = message, error = null)
         }
     }
 

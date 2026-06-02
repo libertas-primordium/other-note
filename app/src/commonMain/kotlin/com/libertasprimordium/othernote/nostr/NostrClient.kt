@@ -32,9 +32,38 @@ interface FanoutNostrClient : NostrClient {
     ): PublishBestEffortHandle
 }
 
+interface Nip46LiveNostrClient : NostrClient {
+    suspend fun requestNip46Response(
+        relays: List<String>,
+        requestEvent: NostrEvent,
+        filter: NostrFilter,
+        timeoutMs: Long,
+        onCandidate: suspend (relay: String, event: NostrEvent) -> Boolean,
+    ): Nip46LiveRelayResult
+}
+
 data class PublishBestEffortHandle(
     val firstAccepted: Deferred<RelayPublishResult>,
     val complete: Deferred<RelayPublishResult>,
+)
+
+data class Nip46LiveRelayResult(
+    val responseFound: Boolean,
+    val publishStatuses: List<RelayStatus>,
+    val candidateEventCount: Int,
+    val liveEventAfterPublishCount: Int,
+    val relayOutcomes: List<Nip46LiveRelayOutcome> = emptyList(),
+)
+
+data class Nip46LiveRelayOutcome(
+    val relay: String,
+    val subscribed: Boolean,
+    val publishStatus: RelayStatus?,
+    val responseMatched: Boolean,
+    val candidateEventCount: Int,
+    val liveEventAfterPublishCount: Int,
+    val latencyMs: Long,
+    val failureReason: String?,
 )
 
 data class RelayFetchResult(

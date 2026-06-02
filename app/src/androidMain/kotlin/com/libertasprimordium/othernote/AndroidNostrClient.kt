@@ -3,6 +3,9 @@ package com.libertasprimordium.othernote
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.nostr.FanoutNostrClient
 import com.libertasprimordium.othernote.nostr.IncrementalNostrClient
+import com.libertasprimordium.othernote.nostr.Nip46LiveNostrClient
+import com.libertasprimordium.othernote.nostr.Nip46LiveRelayOutcome
+import com.libertasprimordium.othernote.nostr.Nip46LiveRelayResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrFilter
 import com.libertasprimordium.othernote.nostr.NostrRelayMessage
@@ -19,9 +22,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -37,7 +43,7 @@ class AndroidNostrClient(
         .build(),
     private val relayTimeoutMs: Long = 5_000,
     private val maxEvents: Int = 200,
-) : IncrementalNostrClient, FanoutNostrClient {
+) : IncrementalNostrClient, FanoutNostrClient, Nip46LiveNostrClient {
     override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult = coroutineScope {
         val results = relays.distinct().map { relay ->
             async(Dispatchers.IO) { fetchFromRelay(relay, authorPubkey) }
@@ -127,6 +133,76 @@ class AndroidNostrClient(
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
 
+    override suspend fun requestNip46Response(
+        relays: List<String>,
+        requestEvent: NostrEvent,
+        filter: NostrFilter,
+        timeoutMs: Long,
+        onCandidate: suspend (relay: String, event: NostrEvent) -> Boolean,
+    ): Nip46LiveRelayResult = coroutineScope {
+        val uniqueRelays = relays.distinct()
+        if (uniqueRelays.isEmpty()) {
+            return@coroutineScope Nip46LiveRelayResult(
+                responseFound = false,
+                publishStatuses = emptyList(),
+                candidateEventCount = 0,
+                liveEventAfterPublishCount = 0,
+                relayOutcomes = emptyList(),
+            )
+        }
+        val start = TimeSource.Monotonic.markNow()
+        val channel = Channel<Nip46RelayConversationResult>(Channel.UNLIMITED)
+        val stateMutex = Mutex()
+        val latestByRelay = uniqueRelays
+            .map { normalizeRelayUrl(it).getOrNull() ?: it }
+            .associateWith { relay ->
+                Nip46RelayConversationResult(
+                    relay = relay,
+                    subscribed = false,
+                    publishStatus = null,
+                    latencyMs = 0,
+                    failureReason = "not_started",
+                )
+            }
+            .toMutableMap()
+        suspend fun record(result: Nip46RelayConversationResult) {
+            stateMutex.withLock {
+                latestByRelay[result.relay] = result
+            }
+        }
+        val jobs = uniqueRelays.map { relay ->
+            launch(Dispatchers.IO) {
+                val result = runCatching { requestNip46OnRelay(relay, requestEvent, filter, timeoutMs, onCandidate, ::record) }
+                    .getOrElse { failedNip46Conversation(relay, it) }
+                record(result)
+                channel.send(result)
+            }
+        }
+        val results = mutableListOf<Nip46RelayConversationResult>()
+        var matched = false
+        while (results.size < uniqueRelays.size && !matched) {
+            val remaining = timeoutMs - start.elapsedNow().inWholeMilliseconds
+            if (remaining <= 0) break
+            val result = withTimeoutOrNull(remaining) { channel.receive() } ?: break
+            results += result
+            matched = result.matched
+        }
+        jobs.filter { it.isActive }.forEach { it.cancelAndJoin() }
+        channel.close()
+        val finalResults = stateMutex.withLock {
+            latestByRelay.mapValues { (_, result) ->
+                result.completeTimedOut(start)
+            }
+        }.values.toList()
+        Nip46LiveRelayResult(
+            responseFound = matched,
+            publishStatuses = finalResults.mapNotNull { it.publishStatus },
+            candidateEventCount = finalResults.sumOf { it.candidateEventCount },
+            liveEventAfterPublishCount = finalResults.sumOf { it.liveEventAfterPublishCount },
+            relayOutcomes = finalResults.map { it.toLiveOutcome() },
+        )
+    }
+
     private suspend fun publishToRelay(relay: String, event: NostrEvent): RelayStatus = withContext(Dispatchers.IO) {
         val start = TimeSource.Monotonic.markNow()
         val url = normalizeRelayUrl(relay).getOrElse {
@@ -213,6 +289,130 @@ class AndroidNostrClient(
         }
     }
 
+    private suspend fun requestNip46OnRelay(
+        relay: String,
+        requestEvent: NostrEvent,
+        filter: NostrFilter,
+        timeoutMs: Long,
+        onCandidate: suspend (relay: String, event: NostrEvent) -> Boolean,
+        onProgress: suspend (Nip46RelayConversationResult) -> Unit,
+    ): Nip46RelayConversationResult {
+        val start = TimeSource.Monotonic.markNow()
+        val url = normalizeRelayUrl(relay).getOrElse {
+            return Nip46RelayConversationResult(
+                relay = relay,
+                subscribed = false,
+                publishStatus = RelayStatus(relay, writable = false, message = timedMessage("nip46", "invalid_url", start, it.message ?: "Invalid relay URL")),
+                latencyMs = start.elapsedNow().inWholeMilliseconds,
+                failureReason = "invalid_url",
+            )
+        }
+        val socket = AndroidRelaySocket.connect(okHttpClient, url, relayTimeoutMs).getOrElse {
+            return Nip46RelayConversationResult(
+                relay = url,
+                subscribed = false,
+                publishStatus = RelayStatus(url, writable = false, message = timedMessage("nip46", "connect_failed", start, it.safeMessage())),
+                latencyMs = start.elapsedNow().inWholeMilliseconds,
+                failureReason = "connect_failed",
+            )
+        }
+        val subscriptionId = "other-note-nip46-${UUID.randomUUID()}"
+        return try {
+            socket.send(NostrWireJson.requestMessage(subscriptionId, filter))
+            var publishStatus: RelayStatus? = null
+            var candidateCount = 0
+            var liveAfterPublishCount = 0
+            val notices = mutableListOf<String>()
+            onProgress(
+                Nip46RelayConversationResult(
+                    relay = url,
+                    subscribed = true,
+                    publishStatus = null,
+                    latencyMs = start.elapsedNow().inWholeMilliseconds,
+                    failureReason = null,
+                ),
+            )
+            socket.send(NostrWireJson.publishEventMessage(requestEvent))
+            val matched = withTimeoutOrNull(timeoutMs) {
+                while (true) {
+                    val raw = socket.receive(timeoutMs) ?: return@withTimeoutOrNull false
+                    when (val message = runCatching { NostrWireJson.parseRelayMessage(raw) }.getOrNull()) {
+                        is NostrRelayMessage.Event -> if (message.subscriptionId == subscriptionId) {
+                            liveAfterPublishCount++
+                            candidateCount++
+                            onProgress(
+                                Nip46RelayConversationResult(
+                                    relay = url,
+                                    subscribed = true,
+                                    publishStatus = publishStatus,
+                                    candidateEventCount = candidateCount,
+                                    liveEventAfterPublishCount = liveAfterPublishCount,
+                                    latencyMs = start.elapsedNow().inWholeMilliseconds,
+                                    failureReason = null,
+                                ),
+                            )
+                            if (onCandidate(url, message.event)) return@withTimeoutOrNull true
+                        }
+                        is NostrRelayMessage.Ok -> if (message.eventId == requestEvent.id) {
+                            publishStatus = if (message.accepted) {
+                                RelayStatus(url, writable = true, message = timedMessage("publish", "accepted", start, message.message.ifBlank { "accepted" }))
+                            } else {
+                                RelayStatus(url, writable = false, message = timedMessage("publish", "rejected", start, message.message.ifBlank { "rejected" }))
+                            }
+                            onProgress(
+                                Nip46RelayConversationResult(
+                                    relay = url,
+                                    subscribed = true,
+                                    publishStatus = publishStatus,
+                                    candidateEventCount = candidateCount,
+                                    liveEventAfterPublishCount = liveAfterPublishCount,
+                                    latencyMs = start.elapsedNow().inWholeMilliseconds,
+                                    failureReason = if (message.accepted) null else "publish_rejected",
+                                ),
+                            )
+                            if (!message.accepted) return@withTimeoutOrNull false
+                        }
+                        is NostrRelayMessage.Closed -> if (message.subscriptionId == subscriptionId) {
+                            notices += message.message
+                            return@withTimeoutOrNull false
+                        }
+                        is NostrRelayMessage.Notice -> notices += message.message
+                        else -> Unit
+                    }
+                }
+                false
+            } ?: false
+            val finalPublishStatus = publishStatus ?: if (matched) {
+                RelayStatus(url, writable = true, message = timedMessage("publish", "response_matched", start, "response arrived before OK"))
+            } else {
+                RelayStatus(url, writable = false, message = timedMessage("publish", "timeout", start, timeoutMessage("Timed out waiting for OK or response", notices)))
+            }
+            val failureReason = when {
+                matched -> null
+                publishStatus?.writable == true -> "response_timeout"
+                publishStatus?.message?.contains("outcome=rejected") == true -> "publish_rejected"
+                publishStatus?.message?.contains("outcome=timeout") == true -> "publish_timeout"
+                publishStatus != null -> "publish_failed"
+                else -> "publish_timeout"
+            }
+            val result = Nip46RelayConversationResult(
+                relay = url,
+                subscribed = true,
+                publishStatus = finalPublishStatus,
+                candidateEventCount = candidateCount,
+                liveEventAfterPublishCount = liveAfterPublishCount,
+                matched = matched,
+                latencyMs = start.elapsedNow().inWholeMilliseconds,
+                failureReason = failureReason,
+            )
+            onProgress(result)
+            result
+        } finally {
+            runCatching { socket.send(NostrWireJson.closeMessage(subscriptionId)) }
+            socket.close()
+        }
+    }
+
     private fun fetchMessage(terminalMessage: String?, eventCount: Int, notices: List<String>): String {
         val base = when {
             eventCount >= maxEvents -> "Reached max event count: $eventCount"
@@ -228,6 +428,39 @@ private data class RelayFetchOneResult(
     val events: List<NostrEvent> = emptyList(),
     val status: RelayStatus,
 )
+
+private data class Nip46RelayConversationResult(
+    val relay: String,
+    val subscribed: Boolean,
+    val publishStatus: RelayStatus?,
+    val candidateEventCount: Int = 0,
+    val liveEventAfterPublishCount: Int = 0,
+    val matched: Boolean = false,
+    val latencyMs: Long = 0,
+    val failureReason: String? = null,
+)
+
+private fun Nip46RelayConversationResult.completeTimedOut(start: TimeSource.Monotonic.ValueTimeMark): Nip46RelayConversationResult {
+    if (matched || failureReason in setOf("invalid_url", "connect_failed", "publish_rejected", "failed")) return this
+    val timeoutMs = start.elapsedNow().inWholeMilliseconds
+    val finalStatus = publishStatus ?: RelayStatus(
+        url = relay,
+        writable = false,
+        message = "stage=nip46 outcome=timeout duration_ms=$timeoutMs " +
+            (if (subscribed) "timed out after subscription on same relay" else "global request timeout before subscription"),
+    )
+    val finalReason = when {
+        publishStatus?.writable == true -> "response_timeout"
+        subscribed -> "publish_timeout"
+        failureReason == "not_started" -> "request_timeout"
+        else -> failureReason ?: "request_timeout"
+    }
+    return copy(
+        publishStatus = finalStatus,
+        latencyMs = timeoutMs,
+        failureReason = finalReason,
+    )
+}
 
 private class AndroidRelaySocket private constructor(
     private val webSocket: WebSocket,
@@ -294,6 +527,30 @@ private fun failedFetchResult(relay: String, throwable: Throwable): RelayFetchOn
 private fun failedPublishStatus(relay: String, throwable: Throwable): RelayStatus =
     RelayStatus(relay, writable = false, message = "stage=publish outcome=failed duration_ms=0 ${throwable.safeMessage()}")
 
+private fun failedNip46Conversation(relay: String, throwable: Throwable): Nip46RelayConversationResult =
+    Nip46RelayConversationResult(
+        relay = normalizeRelayUrl(relay).getOrNull() ?: relay,
+        subscribed = false,
+        publishStatus = RelayStatus(
+            url = normalizeRelayUrl(relay).getOrNull() ?: relay,
+            writable = false,
+            message = "stage=nip46 outcome=failed duration_ms=0 ${throwable.safeMessage()}",
+        ),
+        failureReason = "failed",
+    )
+
+private fun Nip46RelayConversationResult.toLiveOutcome(): Nip46LiveRelayOutcome =
+    Nip46LiveRelayOutcome(
+        relay = relay,
+        subscribed = subscribed,
+        publishStatus = publishStatus,
+        responseMatched = matched,
+        candidateEventCount = candidateEventCount,
+        liveEventAfterPublishCount = liveEventAfterPublishCount,
+        latencyMs = latencyMs,
+        failureReason = failureReason,
+    )
+
 private fun timedMessage(stage: String, outcome: String, start: TimeSource.Monotonic.ValueTimeMark, detail: String): String =
     "stage=$stage outcome=$outcome duration_ms=${start.elapsedNow().inWholeMilliseconds} $detail"
 
@@ -301,6 +558,6 @@ private fun timeoutMessage(base: String, notices: List<String>): String =
     if (notices.isEmpty()) base else "$base; relay messages: ${notices.joinToString(" | ") { it.take(160) }}"
 
 private fun NostrFilter.safeLabel(): String =
-    "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},p=${pTags.size},limit=$limit"
+    "authors=${authors.size},kinds=${kinds.joinToString("/")},t=${tTags.joinToString("/").ifBlank { "none" }},p=${pTags.size},since=${since ?: "none"},limit=$limit"
 
 private fun Throwable.safeMessage(): String = "${this::class.simpleName}: ${message?.take(160).orEmpty()}"

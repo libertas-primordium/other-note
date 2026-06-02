@@ -297,30 +297,61 @@ fun RenderMarkdown(markdown: String) {
 @Composable
 fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val saveState by appState.editorSaveState.collectAsState()
     var markdown by remember(note?.id) { mutableStateOf(note?.bodyMarkdown.orEmpty()) }
+    LaunchedEffect(note?.id) {
+        appState.clearEditorSaveState()
+    }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (note == null) "New note" else "Edit note") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
-                navigationIcon = { TextButton(onClick = onDone) { Text("Cancel") } },
-                actions = {
+                navigationIcon = {
                     TextButton(onClick = {
-                        scope.launch {
-                            if (appState.save(note, markdown)) onDone()
-                        }
-                    }) { Text("Save") }
+                        appState.clearEditorSaveState()
+                        onDone()
+                    }) { Text("Cancel") }
+                },
+                actions = {
+                    TextButton(
+                        onClick = {
+                            if (saveState.inProgress) return@TextButton
+                            scope.launch {
+                                if (appState.saveFromEditor(note, markdown)) onDone()
+                            }
+                        },
+                        enabled = !saveState.inProgress,
+                    ) {
+                        Text(if (saveState.inProgress) "Saving..." else "Save")
+                    }
                 },
             )
         },
         containerColor = OtherNoteBlack,
     ) { padding ->
-        OutlinedTextField(
-            value = markdown,
-            onValueChange = { markdown = it },
-            modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp),
-            label = { Text("Markdown") },
-        )
+        Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
+            when {
+                saveState.error != null -> {
+                    Text(saveState.error.orEmpty(), color = OtherNotePurple, modifier = Modifier.padding(bottom = 8.dp))
+                }
+                saveState.inProgress || saveState.message.isNotBlank() -> {
+                    Text(saveState.message, color = OtherNoteMuted, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            }
+            OutlinedTextField(
+                value = markdown,
+                onValueChange = {
+                    markdown = it
+                    if (saveState.error != null) {
+                        appState.clearEditorSaveState()
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = { Text("Markdown") },
+                enabled = !saveState.inProgress,
+            )
+        }
     }
 }
 

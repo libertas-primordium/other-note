@@ -124,12 +124,17 @@ Other Note includes a first production-safe foundation for NIP-46 remote signer 
 - NIP-46 request and response events use kind `24133` and are encrypted through NIP-44 between the session communication key and the remote signer pubkey.
 - Direct `bunker://` connect requests send the remote signer pubkey from the token as the first `connect` param, followed by the optional token secret and requested Other Note permissions. The temporary communication pubkey is only the request event author and transport encryption key.
 - After connect, Other Note calls `get_public_key` and uses that returned user pubkey as the note account identity.
+- NIP-46 signer-transport relays are separate from the app's encrypted note relays. Signer relays carry kind `24133` app/signer requests and responses; note relays carry signed encrypted kind `30078` note events.
+- A bunker or signer may return or internally use its own transport relays. Those relays may differ from Other Note's editable note relay list.
+- Relay order from bunker tokens, signer metadata, or `switch_relays` is treated as advisory. Other Note keeps all valid signer relays as candidates, records session-local relay behavior, and prefers relays that actually accepted the temporary communication pubkey and returned a matching response.
+- Write-restricted signer relays can reject the temporary NIP-46 communication pubkey even when the final user account pubkey is allowed. Other Note treats that as a remote signer transport failure, not as an encrypted note publish failure.
 - Remote `sign_event` responses are validated for expected kind, content, tags, timestamp, pubkey, id, and signature before any relay publish.
 - Remote `nip44_encrypt` and `nip44_decrypt` are used for note save/edit/delete/recovery. The remote signer may see plaintext note payloads during these operations by design; use only a remote signer you trust with note plaintext.
 - Durable event cache and pending-write stores remain unchanged: they persist only signed encrypted events and safe relay metadata scoped by account pubkey. NIP-46 token secrets, transport private keys, decrypted notes, and decrypted payload JSON are not persisted.
 - Pending relay writes retry by republishing already signed encrypted events for the same user pubkey; retry does not require storing a user private key.
 - Client-initiated `nostrconnect://` URI generation is available in the protocol layer for tests/future UI, but the current usable login path is pasted `bunker://`.
 - Android NIP-46 login and remote signer requests run from background coroutines. Relay publish/fetch waits, response polling, JSON parsing, and NIP-44/signing work must not block Compose input dispatch or recomposition.
+- Editor save keeps the draft open while remote signer requests are pending. Signer-transport failures are shown inside the editor and do not create a local note or enqueue an app note pending write.
 
 Manual NIP-46 bunker checklist:
 
@@ -146,15 +151,20 @@ Manual NIP-46 bunker checklist:
 11. Reject or cancel a remote signer request and confirm the app shows a clean error without changing local notes.
 12. Stop the remote signer or relay and confirm timeout/failure messages do not expose token secrets, plaintext, or raw signer responses.
 13. Test partial relay failure and confirm local visible notes are preserved.
+14. If the signer uses a write-restricted kind `24133` transport relay, confirm the editor stays open and shows a remote signer relay rejection rather than hanging or navigating away.
 
 NIP-46 bunker troubleshooting:
 
 - If connection fails during the first request, check whether at least one configured relay accepted a kind `24133` write from Other Note's temporary NIP-46 communication pubkey.
 - Whitelist or write-restricted relays may reject the temporary communication pubkey even when the eventual user account pubkey is allowed.
-- For first compatibility testing, use a public relay that accepts writes from new pubkeys and is also watched by the bunker.
+- This is distinct from encrypted note publish failure. A signer-transport failure affects kind `24133` app/signer requests; note-publish failure affects kind `30078` encrypted note events sent to the app's note relays.
+- For first compatibility testing, use a public relay that accepts writes from new pubkeys and is also watched by the bunker. If Amber or another bunker injects a write-restricted personal relay, Other Note reports a signer-transport failure rather than waiting for a response that cannot arrive.
+- Relays may return stale kind `24133` responses for the same temporary communication pubkey. Other Note ignores decrypted responses whose `id` does not match the current request and times out with safe candidate/decrypt/mismatch counts if no matching response arrives.
+- Remote signer timeouts include the safe NIP-46 method name, short request ID prefix, relay source, attempted relay count, per-relay subscribed booleans, per-relay publish status, response candidate count, decrypt failure count, mismatched ID count, matched-response boolean, and elapsed time. During save this distinguishes encryption, signing, and decryption requests.
 - Treat `bunker://` secrets as sensitive and one-time-use. Regenerate the token after sharing screenshots, logs, or relay diagnostics.
 - Other Note uses the remote-signer-returned user pubkey as the account identity. The temporary NIP-46 transport pubkey is not the note account and is not persisted.
-- Current NIP-46 request/response handling publishes the encrypted request and polls/fetches for encrypted responses. A future pass should add a live response subscription opened before publish for bunkers or relays that do not retain fast responses.
+- NIP-46 request/response handling uses a dedicated live relay path: for each signer transport relay, Other Note opens the kind `24133` response subscription before publishing the encrypted request to that same relay, races relays, and returns the first decrypted response whose request ID matches. It no longer treats remote signer requests as normal note fanout plus post-publish history fetch.
+- Signer relay selection is behavior-based, not order-based. If one candidate rejects the temporary communication pubkey, only that relay is marked failed and the request continues on other candidates. `switch_relays` output remains advisory until a returned relay proves it can accept the request and return the matching response.
 - If Amber approval appears but Other Note later times out, this is still a response-path issue; the app should remain responsive for the full timeout window and must not show an Android ANR.
 
 ## Build And Run
