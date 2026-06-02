@@ -12,7 +12,10 @@
     <application
         android:theme="@style/AppTheme"
         android:label="Other Note"
+        android:icon="@drawable/ic_launcher"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/full_backup_content"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
