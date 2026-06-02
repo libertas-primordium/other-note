@@ -10,6 +10,7 @@ import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
+import com.libertasprimordium.othernote.data.ThemePreferenceStore
 import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.security.Nip46SessionCodec
@@ -193,6 +194,18 @@ class AndroidRelaySettingsPersistence(
 
     override suspend fun saveRelayUrls(urls: List<String>) {
         atomicWrite(file, RelaySettingsCodec.encode(urls))
+    }
+}
+
+class AndroidThemePreferenceStore(
+    context: Context,
+    private val file: File = File(context.applicationContext.noBackupFilesDir, "theme-preference.txt"),
+) : ThemePreferenceStore {
+    override suspend fun loadThemeId(): String? =
+        readFile(file)?.trim()?.takeIf { it.isNotBlank() }
+
+    override suspend fun saveThemeId(themeId: String) {
+        atomicWrite(file, themeId.trim())
     }
 }
 

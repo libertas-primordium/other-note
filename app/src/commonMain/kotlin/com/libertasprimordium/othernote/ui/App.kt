@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,7 +55,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -96,7 +96,8 @@ sealed class Screen {
 @Composable
 fun OtherNoteApp(services: AppServices = defaultAppServices()) {
     val appState = remember(services) { AppState(services) }
-    OtherNoteTheme {
+    val selectedThemeId by appState.selectedThemeId.collectAsState()
+    OtherNoteTheme(theme = otherNoteThemeForId(selectedThemeId)) {
         var screen by remember { mutableStateOf<Screen>(Screen.Login) }
         val mode by appState.mode.collectAsState()
         if (mode == AppMode.SignedOut && screen !is Screen.Login) screen = Screen.Login
@@ -216,7 +217,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             }
             androidSignerOption?.let { option ->
                 Spacer(Modifier.height(8.dp))
-                Button(
+                OtherNoteButton(
                     onClick = { appState.requestExternalSignerPublicKey() },
                     enabled = option.enabled,
                     modifier = Modifier.fillMaxWidth(),
@@ -394,7 +395,7 @@ private fun SavedIdentityRow(
                 Text("Desktop keyring", color = OtherNoteMuted, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Button(onClick = onContinue) {
+                OtherNoteButton(onClick = onContinue) {
                     Text("Continue")
                 }
                 TextButton(onClick = onForget) {
@@ -425,7 +426,7 @@ private fun SavedAndroidSignerRow(
                 Text(session.signerLabel?.takeIf { it.isNotBlank() } ?: session.signerPackage.safePrefix(), color = OtherNoteMuted, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Button(onClick = onContinue) {
+                OtherNoteButton(onClick = onContinue) {
                     Text("Continue")
                 }
                 TextButton(onClick = onForget) {
@@ -458,7 +459,7 @@ private fun SavedRemoteSignerRow(
                 Text("${session.relays.size} relay(s)", color = OtherNoteMuted, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Button(onClick = onContinue, enabled = enabled) {
+                OtherNoteButton(onClick = onContinue, enabled = enabled) {
                     Text("Continue")
                 }
                 TextButton(onClick = onForget, enabled = enabled) {
@@ -497,6 +498,27 @@ private fun InfoButton(label: String, onClick: () -> Unit) {
 }
 
 @Composable
+private fun OtherNoteButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = OtherNoteButtonBackground,
+            contentColor = OtherNoteButtonText,
+            disabledContainerColor = OtherNotePanel,
+            disabledContentColor = OtherNoteMuted,
+        ),
+        content = content,
+    )
+}
+
+@Composable
 private fun SignInSupportingText(text: String) {
     Text(text, color = OtherNoteMuted, fontSize = 13.sp)
 }
@@ -509,7 +531,7 @@ private fun SignInInfoDialog(topic: SignInInfoTopic, onDismiss: () -> Unit) {
         title = { Text(copy.title) },
         text = { Text(copy.body) },
         confirmButton = {
-            Button(onClick = onDismiss) {
+            OtherNoteButton(onClick = onDismiss) {
                 Text("Done")
             }
         },
@@ -561,7 +583,7 @@ private fun GeneratedIdentityExplanationDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { appState.generateFreshIdentity() }) {
+            OtherNoteButton(onClick = { appState.generateFreshIdentity() }) {
                 Text("Generate nsec")
             }
         },
@@ -643,7 +665,7 @@ private fun GeneratedIdentityRevealDialog(
             }
         },
         confirmButton = {
-            Button(
+            OtherNoteButton(
                 onClick = { appState.useGeneratedIdentityForSession() },
                 enabled = generatedIdentity.canUseForSession,
             ) {
@@ -672,7 +694,7 @@ private fun KeyringSaveConfirmationDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm) {
+            OtherNoteButton(onClick = onConfirm) {
                 Text("Save to keyring")
             }
         },
@@ -737,7 +759,9 @@ fun NotesListScreen(
     val scope = rememberCoroutineScope()
     var notePendingDelete by remember { mutableStateOf<Note?>(null) }
     var showAbout by remember { mutableStateOf(false) }
+    var showThemePicker by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    val selectedThemeId by appState.selectedThemeId.collectAsState()
     val searchedNotes = remember(notes, searchQuery) {
         filterVisibleNotesBySearchQuery(notes, searchQuery)
     }
@@ -751,6 +775,7 @@ fun NotesListScreen(
                     MainActionsMenu(
                         onSync = { scope.launch { appState.sync() } },
                         onRelays = onSettings,
+                        onTheme = { showThemePicker = true },
                         onAbout = { showAbout = true },
                         onLogout = { scope.launch { appState.logout() } },
                     )
@@ -769,7 +794,7 @@ fun NotesListScreen(
                 Text(diagnostics, color = OtherNoteMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
+            OtherNoteButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = searchQuery,
@@ -830,12 +855,21 @@ fun NotesListScreen(
     if (showAbout) {
         AboutOtherNoteDialog(onDismiss = { showAbout = false })
     }
+    if (showThemePicker) {
+        ThemeSelectionDialog(
+            themes = appState.availableThemes,
+            selectedThemeId = selectedThemeId,
+            onSelect = appState::selectTheme,
+            onDismiss = { showThemePicker = false },
+        )
+    }
 }
 
 @Composable
 private fun MainActionsMenu(
     onSync: () -> Unit,
     onRelays: () -> Unit,
+    onTheme: () -> Unit,
     onAbout: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -863,6 +897,13 @@ private fun MainActionsMenu(
                 onClick = {
                     expanded = false
                     onRelays()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Theme") },
+                onClick = {
+                    expanded = false
+                    onTheme()
                 },
             )
             DropdownMenuItem(
@@ -908,7 +949,45 @@ private fun AboutOtherNoteDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) {
+            OtherNoteButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+    )
+}
+
+@Composable
+private fun ThemeSelectionDialog(
+    themes: List<OtherNoteThemeDefinition>,
+    selectedThemeId: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Theme") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                themes.forEach { theme ->
+                    TextButton(
+                        onClick = { onSelect(theme.id) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Select ${theme.displayName} theme" },
+                    ) {
+                        Text(
+                            if (theme.id == selectedThemeId) {
+                                "${theme.displayName} (selected)"
+                            } else {
+                                theme.displayName
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OtherNoteButton(onClick = onDismiss) {
                 Text("Done")
             }
         },
@@ -1042,7 +1121,7 @@ private fun NoteCardActionMenu(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 10.dp),
                 )
-                Button(
+                OtherNoteButton(
                     onClick = onEdit,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1172,7 +1251,7 @@ private fun NoteDeleteConfirmationDialog(
         title = { Text(text.title) },
         text = { Text(text.body) },
         confirmButton = {
-            Button(
+            OtherNoteButton(
                 onClick = onConfirm,
                 modifier = Modifier.semantics { contentDescription = "Confirm delete note" },
             ) {
@@ -1216,14 +1295,15 @@ fun RenderMarkdown(markdown: String) {
             }
             is MarkdownBlock.CodeBlock -> Text(
                 block.code,
-                color = Color(0xFFE8D7FF),
+                color = OtherNoteCodeText,
                 fontFamily = FontFamily.Monospace,
-                modifier = Modifier.fillMaxWidth().background(Color(0xFF191020)).padding(10.dp),
+                modifier = Modifier.fillMaxWidth().background(OtherNoteCodeBackground).padding(10.dp),
             )
         }
     }
 }
 
+@Composable
 private fun renderInlineMarkdown(markdown: String) = buildAnnotatedString {
     markdownSpans(markdown).forEach { span ->
         when (span) {
@@ -1247,8 +1327,8 @@ private fun renderInlineMarkdown(markdown: String) = buildAnnotatedString {
                 pushStyle(
                     SpanStyle(
                         fontFamily = FontFamily.Monospace,
-                        color = Color(0xFFE8D7FF),
-                        background = Color(0xFF191020),
+                        color = OtherNoteCodeText,
+                        background = OtherNoteCodeBackground,
                     ),
                 )
                 append(span.text)
@@ -1398,7 +1478,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(12.dp))
             Column(Modifier.fillMaxWidth()) {
-                Button(
+                OtherNoteButton(
                     onClick = {
                         scope.launch {
                             when (val result = appState.testRelayBeforeAdd(relayToAdd, draftRelays)) {
@@ -1467,7 +1547,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(12.dp))
             Row {
-                Button(
+                OtherNoteButton(
                     onClick = {
                         scope.launch {
                             if (appState.saveRelays(draftRelays)) {
@@ -1497,7 +1577,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                Button(
+                OtherNoteButton(
                     onClick = {
                         val relay = appState.continueFailedRelayAdd()
                         if (relay != null && relay !in draftRelays) {
@@ -1523,7 +1603,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                 Text(warning.body)
             },
             confirmButton = {
-                Button(
+                OtherNoteButton(
                     onClick = {
                         scope.launch {
                             if (appState.continueRelayMigration()) {
@@ -1555,7 +1635,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                Button(
+                OtherNoteButton(
                     onClick = {
                         scope.launch {
                             if (appState.applyPublishedRelayListFromSettings(published.relays)) {

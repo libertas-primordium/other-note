@@ -26,6 +26,7 @@ object DesktopAppServicesFactory {
                 nip46SessionStore = DesktopNip46SessionStore(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
+                themePreferenceStore = DesktopThemePreferenceStore(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),
@@ -46,6 +47,7 @@ object DesktopAppServicesFactory {
                 nip46SessionStore = DesktopNip46SessionStore(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
+                themePreferenceStore = DesktopThemePreferenceStore(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),

@@ -368,6 +368,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val _profileState = MutableStateFlow(ProfileUiState())
     val profileState: StateFlow<ProfileUiState> = _profileState
 
+    private val _selectedThemeId = MutableStateFlow(NostrClassicTheme.id)
+    val selectedThemeId: StateFlow<String> = _selectedThemeId
+    val availableThemes: List<OtherNoteThemeDefinition> = BuiltInOtherNoteThemes
+    private var themeSelectionChangedInSession = false
+
     private val _keyringSaveConfirmationState = MutableStateFlow(KeyringSaveConfirmationState())
     val keyringSaveConfirmationState: StateFlow<KeyringSaveConfirmationState> = _keyringSaveConfirmationState
 
@@ -415,6 +420,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     init {
         appScope.launch {
+            loadThemePreference()
+        }
+        appScope.launch {
             runCatching { relaySettings.loadPersisted() }
                 .onFailure { _message.value = "Relay settings could not be loaded. ${it.safePersistenceMessage()}" }
         }
@@ -427,6 +435,26 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         appScope.launch {
             refreshSavedAndroidSigners()
             restoreActiveSavedAndroidSigner()
+        }
+    }
+
+    private suspend fun loadThemePreference() {
+        val stored = withContext(Dispatchers.IO) {
+            runCatching { services.themePreferenceStore.loadThemeId() }.getOrNull()
+        }
+        if (!themeSelectionChangedInSession) {
+            _selectedThemeId.value = otherNoteThemeForId(stored).id
+        }
+    }
+
+    fun selectTheme(themeId: String) {
+        val selected = otherNoteThemeForId(themeId)
+        themeSelectionChangedInSession = true
+        _selectedThemeId.value = selected.id
+        appScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { services.themePreferenceStore.saveThemeId(selected.id) }
+            }
         }
     }
 

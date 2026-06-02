@@ -6,6 +6,8 @@ import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
 import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsStore
+import com.libertasprimordium.othernote.data.NoopThemePreferenceStore
+import com.libertasprimordium.othernote.data.ThemePreferenceStore
 import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.DefaultRelayTester
@@ -62,6 +64,7 @@ data class AppServices(
     val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val relayTester: RelayTester = DefaultRelayTester(client, crypto),
+    val themePreferenceStore: ThemePreferenceStore = NoopThemePreferenceStore,
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopRelay || mode == AppRuntimeMode.DesktopDevRelay) DesktopRelayDefaults else DefaultRelays,
