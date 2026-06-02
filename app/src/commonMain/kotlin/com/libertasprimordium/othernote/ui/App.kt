@@ -2,6 +2,7 @@ package com.libertasprimordium.othernote.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
@@ -22,10 +24,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -43,11 +47,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
@@ -75,7 +83,13 @@ fun OtherNoteApp(services: AppServices = defaultAppServices()) {
         if (mode == AppMode.SignedOut && screen !is Screen.Login) screen = Screen.Login
         when (val current = screen) {
             Screen.Login -> LoginScreen(appState) { screen = Screen.List }
-            Screen.List -> NotesListScreen(appState, onOpen = { screen = Screen.Display(it) }, onNew = { screen = Screen.Edit(null) }, onSettings = { screen = Screen.Settings })
+            Screen.List -> NotesListScreen(
+                appState,
+                onOpen = { screen = Screen.Display(it) },
+                onEdit = { screen = Screen.Edit(it) },
+                onNew = { screen = Screen.Edit(null) },
+                onSettings = { screen = Screen.Settings },
+            )
             is Screen.Display -> NoteDisplayScreen(appState, current.note, onBack = { screen = Screen.List }, onEdit = { screen = Screen.Edit(current.note) })
             is Screen.Edit -> NoteEditScreen(appState, current.note, onDone = { screen = Screen.List })
             Screen.Settings -> RelaySettingsScreen(appState, onBack = { screen = Screen.List })
@@ -329,12 +343,19 @@ private fun AcknowledgementRow(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Unit, onSettings: () -> Unit) {
+fun NotesListScreen(
+    appState: AppState,
+    onOpen: (Note) -> Unit,
+    onEdit: (Note) -> Unit,
+    onNew: () -> Unit,
+    onSettings: () -> Unit,
+) {
     val notes by appState.notes.notes.collectAsState()
     val session by appState.session.collectAsState()
     val message by appState.message.collectAsState()
     val diagnostics by appState.diagnosticMessage.collectAsState()
     val scope = rememberCoroutineScope()
+    var notePendingDelete by remember { mutableStateOf<Note?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -375,9 +396,159 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(notes, key = { it.id }) { note ->
-                            NoteCard(note, onOpen)
+                            NoteCard(
+                                note = note,
+                                platform = appState.platform,
+                                onOpen = onOpen,
+                                onEdit = onEdit,
+                                onDeleteRequest = { notePendingDelete = it },
+                            )
                         }
                     }
+                }
+            }
+        }
+    }
+    notePendingDelete?.let { note ->
+        NoteDeleteConfirmationDialog(
+            onCancel = { notePendingDelete = null },
+            onConfirm = {
+                scope.launch {
+                    appState.delete(note)
+                    notePendingDelete = null
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun NoteCard(
+    note: Note,
+    platform: AppPlatform,
+    onOpen: (Note) -> Unit,
+    onEdit: (Note) -> Unit,
+    onDeleteRequest: (Note) -> Unit,
+) {
+    val actions = noteCardActionItems().associateBy { it.action }
+    val openAction = actions.getValue(NoteCardAction.Open)
+    val editAction = actions.getValue(NoteCardAction.Edit)
+    val deleteAction = actions.getValue(NoteCardAction.Delete)
+    var showActions by remember(note.id) { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val actionPresentation = noteCardActionPresentation(platform, maxWidth.value.toInt())
+        val cardModifier = when (actionPresentation) {
+            NoteCardActionPresentation.VisibleButtons -> Modifier
+                .fillMaxWidth()
+                .clickable(
+                    onClickLabel = openAction.accessibilityLabel,
+                    role = Role.Button,
+                ) { onOpen(note) }
+            NoteCardActionPresentation.LongPressMenu -> Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClickLabel = openAction.accessibilityLabel,
+                    onLongClickLabel = "Show note actions",
+                    role = Role.Button,
+                    onClick = { onOpen(note) },
+                    onLongClick = { showActions = true },
+                )
+        }
+        Card(
+            modifier = cardModifier,
+            colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text(truncateMarkdown(note.bodyMarkdown).ifBlank { "Untitled note" }, color = OtherNoteText)
+                Text(formatNoteCardUpdatedAt(note.updatedAtMs), color = OtherNoteMuted, fontSize = 12.sp)
+                if (actionPresentation == NoteCardActionPresentation.VisibleButtons) {
+                    Spacer(Modifier.height(8.dp))
+                    NoteCardActionButtons(
+                        editAction = editAction,
+                        deleteAction = deleteAction,
+                        onEdit = { onEdit(note) },
+                        onDeleteRequest = { onDeleteRequest(note) },
+                    )
+                }
+            }
+        }
+        if (showActions) {
+            NoteCardActionMenu(
+                editAction = editAction,
+                deleteAction = deleteAction,
+                onDismiss = { showActions = false },
+                onEdit = {
+                    showActions = false
+                    onEdit(note)
+                },
+                onDeleteRequest = {
+                    showActions = false
+                    onDeleteRequest(note)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun NoteCardActionMenu(
+    editAction: NoteCardActionItem,
+    deleteAction: NoteCardActionItem,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDeleteRequest: () -> Unit,
+) {
+    val menuText = noteCardActionMenuText()
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 320.dp)
+                .padding(horizontal = 12.dp),
+            colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Text(
+                    menuText.title,
+                    color = OtherNoteText,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 10.dp),
+                )
+                Button(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .semantics { contentDescription = editAction.accessibilityLabel },
+                ) {
+                    Text(editAction.label)
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onDeleteRequest,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .semantics { contentDescription = deleteAction.accessibilityLabel },
+                ) {
+                    Text(deleteAction.label)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+                ) {
+                    Text(menuText.cancelLabel)
                 }
             }
         }
@@ -385,16 +556,38 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
 }
 
 @Composable
-fun NoteCard(note: Note, onOpen: (Note) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onOpen(note) },
-        colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(truncateMarkdown(note.bodyMarkdown).ifBlank { "Untitled note" }, color = OtherNoteText)
-            Text(formatNoteCardUpdatedAt(note.updatedAtMs), color = OtherNoteMuted, fontSize = 12.sp)
+private fun NoteCardActionButtons(
+    editAction: NoteCardActionItem,
+    deleteAction: NoteCardActionItem,
+    onEdit: () -> Unit,
+    onDeleteRequest: () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 180.dp) {
+            Column(Modifier.fillMaxWidth()) {
+                NoteCardActionButton(editAction, onEdit, Modifier.fillMaxWidth())
+                NoteCardActionButton(deleteAction, onDeleteRequest, Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                NoteCardActionButton(editAction, onEdit)
+                NoteCardActionButton(deleteAction, onDeleteRequest)
+            }
         }
+    }
+}
+
+@Composable
+private fun NoteCardActionButton(
+    action: NoteCardActionItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier.semantics { contentDescription = action.accessibilityLabel },
+    ) {
+        Text(action.label)
     }
 }
 
@@ -429,24 +622,48 @@ fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit
         }
     }
     if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete note?") },
-            text = { Text("This creates an app-level tombstone event. Relay DELETE is not required.") },
-            confirmButton = {
-                Button(onClick = {
-                        scope.launch {
-                            val deleted = appState.delete(note)
-                            confirmDelete = false
-                            if (deleted) {
-                                onBack()
-                            }
-                        }
-                }) { Text("Delete") }
+        NoteDeleteConfirmationDialog(
+            onCancel = { confirmDelete = false },
+            onConfirm = {
+                scope.launch {
+                    val deleted = appState.delete(note)
+                    confirmDelete = false
+                    if (deleted) {
+                        onBack()
+                    }
+                }
             },
-            dismissButton = { OutlinedButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
         )
     }
+}
+
+@Composable
+private fun NoteDeleteConfirmationDialog(
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val text = noteDeleteConfirmationText()
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(text.title) },
+        text = { Text(text.body) },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.semantics { contentDescription = "Confirm delete note" },
+            ) {
+                Text(text.deleteLabel)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onCancel,
+                modifier = Modifier.semantics { contentDescription = "Cancel delete note" },
+            ) {
+                Text(text.cancelLabel)
+            }
+        },
+    )
 }
 
 @Composable
