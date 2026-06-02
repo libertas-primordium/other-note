@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
+import com.libertasprimordium.othernote.security.DesktopNip46SessionStore
 import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
 import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppPlatform
@@ -22,6 +23,7 @@ object DesktopAppServicesFactory {
                 client = OfflineNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 secureSecretStore = DesktopSecureSecretStore(),
+                nip46SessionStore = DesktopNip46SessionStore(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
                 relaySettings = RelaySettingsStore(
@@ -41,6 +43,7 @@ object DesktopAppServicesFactory {
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
                 secureSecretStore = DesktopSecureSecretStore(),
                 remoteSigner = relayClient.nip46RemoteSigner(),
+                nip46SessionStore = DesktopNip46SessionStore(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
                 relaySettings = RelaySettingsStore(

@@ -42,7 +42,7 @@ fun buildSignInOptions(
             SignInOptionUi(
                 kind = SignInOptionKind.RemoteSigner,
                 label = "Connect bunker",
-                supportingCopy = "Advanced. Connect a NIP-46 bunker or remote signer.",
+                supportingCopy = "Advanced. Pair with a bunker or remote signer while your private key stays in that signer.",
                 emphasis = SignInOptionEmphasis.Secondary,
             ),
         )

@@ -13,10 +13,69 @@ fun userFacingErrorFor(raw: String): UserFacingError {
     return when {
         source.isBlank() -> unexpectedError(source)
 
+        lower.contains("unsupported remote signer token scheme") ->
+            UserFacingError(
+                title = "Bunker link is invalid",
+                message = "Paste a bunker:// remote signer link from your signer app.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("remote signer token is missing a public key") ||
+            lower.contains("remote signer token has malformed public key") ->
+            UserFacingError(
+                title = "Bunker link is invalid",
+                message = "This remote signer link does not contain a valid signer public key. Create a fresh bunker link in your signer and try again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("remote signer token must include at least one relay") ||
+            lower.contains("remote signer relay url is invalid") ||
+            lower.contains("remote signer relays must use wss://") ->
+            UserFacingError(
+                title = "Bunker link is missing a relay",
+                message = "This remote signer link does not include a usable signer relay. Create a fresh bunker link that includes a wss:// relay.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("remote signer pairing token is missing a required secret") ->
+            UserFacingError(
+                title = "Pairing link is missing a secret",
+                message = "This pairing link is missing the secret Other Note needs to verify the signer response. Create a fresh link and try again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved remote signer session pubkey mismatch") ->
+            UserFacingError(
+                title = "Saved remote signer does not match",
+                message = "The remote signer returned a different account public key than the saved session. Forget this remote signer and pair again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved remote signer session is corrupted") ->
+            UserFacingError(
+                title = "Saved remote signer is invalid",
+                message = "This saved remote signer session is invalid. Forget it and pair the signer again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved remote signer session could not be loaded") ->
+            UserFacingError(
+                title = "Could not load saved remote signer",
+                message = "Other Note could not load the saved remote signer session. You can retry, forget it, or pair a new signer.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved remote signer session could not be forgotten") ->
+            UserFacingError(
+                title = "Could not forget remote signer",
+                message = "Other Note could not remove this saved remote signer session.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
         lower.contains("already") && (lower.contains("bunker") || lower.contains("paired") || lower.contains("connect")) ->
             UserFacingError(
                 title = "Bunker link already used",
-                message = "This bunker link appears to already be paired in the signer app. Delete the old connection in the signer or create a fresh bunker link.",
+                message = "This signer already has a connection for this app. Use the saved remote signer session, or reset pairing in the signer and create a fresh bunker link.",
                 technicalDetails = source.safeTechnicalDetails(),
             )
 

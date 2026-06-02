@@ -15,12 +15,14 @@ import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.RelayTester
 import com.libertasprimordium.othernote.security.DefaultKeyManagementPolicy
 import com.libertasprimordium.othernote.security.KeyManagementPolicy
+import com.libertasprimordium.othernote.security.Nip46SessionStore
 import com.libertasprimordium.othernote.security.Nip46RemoteSigner
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
 import com.libertasprimordium.othernote.security.NostrSignerPublicKeyRequester
 import com.libertasprimordium.othernote.security.SecureSecretStore
+import com.libertasprimordium.othernote.security.UnavailableNip46SessionStore
 import com.libertasprimordium.othernote.security.UnavailableSignerEventSigner
 import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
 import com.libertasprimordium.othernote.security.UnavailableSignerNip44Operator
@@ -53,6 +55,7 @@ data class AppServices(
     val externalSignerEventSigner: NostrSignerEventSigner = UnavailableSignerEventSigner(),
     val externalSignerNip44Operator: NostrSignerNip44Operator = UnavailableSignerNip44Operator(),
     val remoteSigner: Nip46RemoteSigner? = null,
+    val nip46SessionStore: Nip46SessionStore = UnavailableNip46SessionStore(),
     val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val relayTester: RelayTester = DefaultRelayTester(client, crypto),

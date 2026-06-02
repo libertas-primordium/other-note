@@ -24,6 +24,7 @@ import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.security.Nip46EventKind
 import com.libertasprimordium.othernote.security.Nip46ConnectResult
+import com.libertasprimordium.othernote.security.InMemoryNip46SessionStore
 import com.libertasprimordium.othernote.security.Nip46Method
 import com.libertasprimordium.othernote.security.Nip46PayloadJson
 import com.libertasprimordium.othernote.security.Nip46RemoteSigner
@@ -31,11 +32,13 @@ import com.libertasprimordium.othernote.security.Nip46RequestPayload
 import com.libertasprimordium.othernote.security.Nip46RequestTransport
 import com.libertasprimordium.othernote.security.Nip46Response
 import com.libertasprimordium.othernote.security.Nip46ResponsePayload
+import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
 import com.libertasprimordium.othernote.security.Nip46TransportSession
 import com.libertasprimordium.othernote.security.RelayNip46RequestTransport
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
+import com.libertasprimordium.othernote.ui.RemoteSignerPairingStage
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -771,10 +774,253 @@ class Nip46RemoteSignerTests {
 
         assertTrue(accepted)
         assertEquals(null, state.session.value)
-        assertTrue(state.message.value.contains("Connecting"))
+        assertEquals(RemoteSignerPairingStage.WaitingForSigner, state.remoteSignerPairingState.value.stage)
+        assertTrue(state.remoteSignerPairingState.value.inProgress)
+        assertTrue(state.remoteSignerPairingState.value.message.contains("private key stays"))
         withTimeout(1_500) {
             while (state.session.value?.authMethod != SessionAuthMethod.RemoteSigner) delay(10)
         }
+        assertEquals(RemoteSignerPairingStage.Connected, state.remoteSignerPairingState.value.stage)
+    }
+
+    @Test
+    fun appRejectsDuplicateRemoteSignerPairingAttemptWhileOneIsActive() = runBlocking {
+        val fixture = fixture()
+        val remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture, delayMs = 150), crypto)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = remoteSigner,
+            ),
+        )
+
+        assertTrue(state.startRemoteSignerConnection("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com"))
+        assertFalse(state.startRemoteSignerConnection("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com"))
+
+        assertTrue(state.message.value.contains("already in progress"))
+        assertEquals(RemoteSignerPairingStage.WaitingForSigner, state.remoteSignerPairingState.value.stage)
+        withTimeout(1_500) {
+            while (state.session.value?.authMethod != SessionAuthMethod.RemoteSigner) delay(10)
+        }
+    }
+
+    @Test
+    fun appRemoteSignerInvalidTokenUsesSafePairingCopy() {
+        val fixture = fixture()
+        val remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture), crypto)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = remoteSigner,
+            ),
+        )
+
+        assertFalse(state.startRemoteSignerConnection("nostrsigner://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=must-not-appear"))
+
+        assertEquals(RemoteSignerPairingStage.Failed, state.remoteSignerPairingState.value.stage)
+        assertTrue(state.remoteSignerPairingState.value.message.contains("bunker://"))
+        assertFalse(state.remoteSignerPairingState.value.message.contains("must-not-appear"))
+        assertFalse(state.remoteSignerPairingState.value.toString().contains("must-not-appear"))
+    }
+
+    @Test
+    fun firstTimePairingPersistsReusableNip46Session() = runBlocking {
+        val fixture = fixture()
+        val store = InMemoryNip46SessionStore()
+        val transport = FakeNip46Transport(crypto, fixture)
+        val remoteSigner = Nip46RemoteSigner(transport, crypto)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = remoteSigner,
+                nip46SessionStore = store,
+            ),
+        )
+
+        assertTrue(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=pair-secret"))
+
+        val listed = assertIs<Nip46SessionStoreResult.Listed>(store.listSessions())
+        val metadata = listed.sessions.single()
+        assertEquals(fixture.userPubkey, metadata.userPubkey)
+        assertEquals(fixture.remotePubkey, metadata.remoteSignerPubkey)
+        assertEquals(transport.connectClientPubkeys.single(), metadata.clientPubkey)
+        val loaded = assertIs<Nip46SessionStoreResult.Loaded>(store.loadSession(fixture.userPubkey)).session
+        assertEquals(metadata.clientPubkey, loaded.clientPubkey)
+        assertFalse(loaded.toString().contains(loaded.clientPrivateKeyHex))
+        assertFalse(loaded.toString().contains("pair-secret"))
+    }
+
+    @Test
+    fun savedNip46SessionResumeUsesStoredClientKeyWithoutNewConnect() = runBlocking {
+        val fixture = fixture()
+        val store = InMemoryNip46SessionStore()
+        val transport = FakeNip46Transport(crypto, fixture)
+        val remoteSigner = Nip46RemoteSigner(transport, crypto)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = remoteSigner,
+                nip46SessionStore = store,
+            ),
+        )
+
+        assertTrue(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=pair-secret"))
+        val saved = assertIs<Nip46SessionStoreResult.Loaded>(store.loadSession(fixture.userPubkey)).session
+        state.logout()
+
+        assertTrue(state.loginWithSavedRemoteSigner(fixture.userPubkey))
+
+        assertEquals(1, transport.connectParams.size)
+        assertEquals(saved.clientPubkey, transport.requestClientPubkeys.last())
+        assertTrue((transport.methodCounts[Nip46Method.GetPublicKey.wireName] ?: 0) >= 2)
+        assertEquals(SessionAuthMethod.RemoteSigner, state.session.value?.authMethod)
+        assertEquals(fixture.userPubkey, state.session.value?.publicKeyHex)
+    }
+
+    @Test
+    fun appStartupListsPersistedSavedNip46Session() = runBlocking {
+        val fixture = fixture()
+        val store = InMemoryNip46SessionStore()
+        val firstState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture), crypto),
+                nip46SessionStore = store,
+            ),
+        )
+        assertTrue(firstState.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=pair-secret"))
+        firstState.logout()
+
+        val restartedState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture), crypto),
+                nip46SessionStore = store,
+            ),
+        )
+        withTimeout(1_500) {
+            while (restartedState.savedRemoteSignerState.value.sessions.isEmpty()) delay(10)
+        }
+
+        val saved = restartedState.savedRemoteSignerState.value.sessions.single()
+        assertEquals(fixture.userPubkey, saved.userPubkey)
+        assertEquals(fixture.remotePubkey, saved.remoteSignerPubkey)
+        assertFalse(saved.toString().contains("pair-secret"))
+    }
+
+    @Test
+    fun savedNip46SessionPubkeyMismatchFailsSafely() = runBlocking {
+        val fixture = fixture()
+        val other = fixture()
+        val store = InMemoryNip46SessionStore()
+        val transport = FakeNip46Transport(crypto, fixture)
+        val remoteSigner = Nip46RemoteSigner(transport, crypto)
+        val firstState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = remoteSigner,
+                nip46SessionStore = store,
+            ),
+        )
+        assertTrue(firstState.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com"))
+        val saved = assertIs<Nip46SessionStoreResult.Loaded>(store.loadSession(fixture.userPubkey)).session
+        store.saveSession(saved.copy(userPubkey = other.userPubkey, userNpub = other.userNpub))
+        firstState.logout()
+
+        assertFalse(firstState.loginWithSavedRemoteSigner(other.userPubkey))
+
+        assertNull(firstState.session.value)
+        assertTrue(firstState.message.value.contains("different account") || firstState.message.value.contains("Forget"))
+        assertFalse(firstState.message.value.contains(saved.clientPrivateKeyHex))
+    }
+
+    @Test
+    fun logoutKeepsSavedNip46SessionButForgetDeletesIt() = runBlocking {
+        val fixture = fixture()
+        val store = InMemoryNip46SessionStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture), crypto),
+                nip46SessionStore = store,
+            ),
+        )
+
+        assertTrue(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com"))
+        state.logout()
+
+        assertEquals(1, assertIs<Nip46SessionStoreResult.Listed>(store.listSessions()).sessions.size)
+        assertTrue(state.forgetSavedRemoteSigner(fixture.userPubkey))
+        assertEquals(0, assertIs<Nip46SessionStoreResult.Listed>(store.listSessions()).sessions.size)
+    }
+
+    @Test
+    fun newPairingAfterForgetCreatesFreshClientKey() = runBlocking {
+        val fixture = fixture()
+        val store = InMemoryNip46SessionStore()
+        val transport = FakeNip46Transport(crypto, fixture)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = Nip46RemoteSigner(transport, crypto),
+                nip46SessionStore = store,
+            ),
+        )
+
+        assertTrue(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=first"))
+        val firstClientPubkey = transport.connectClientPubkeys.single()
+        assertTrue(state.forgetSavedRemoteSigner(fixture.userPubkey))
+        assertTrue(state.startRemoteSignerConnection("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=second"))
+        withTimeout(1_500) {
+            while (transport.connectClientPubkeys.size < 2) delay(10)
+        }
+
+        assertNotEquals(firstClientPubkey, transport.connectClientPubkeys.last())
+    }
+
+    @Test
+    fun alreadyConnectedFreshPairingIsNotAcceptedAsSuccess() = runBlocking {
+        val fixture = fixture()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = CapturingNostrClient(),
+                remoteSigner = Nip46RemoteSigner(
+                    FakeNip46Transport(
+                        crypto,
+                        fixture,
+                        errorByMethod = mapOf(Nip46Method.Connect.wireName to "bunker link already paired secret=must-not-appear"),
+                    ),
+                    crypto,
+                ),
+                nip46SessionStore = InMemoryNip46SessionStore(),
+            ),
+        )
+
+        assertFalse(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com&secret=must-not-appear"))
+
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("saved remote signer") || state.message.value.contains("fresh bunker link"))
+        assertFalse(state.message.value.contains("must-not-appear"))
     }
 
     private fun connectedSigner(fixture: Fixture, transport: FakeNip46Transport): Nip46RemoteSigner {
@@ -893,10 +1139,14 @@ private class FakeNip46Transport(
     val nip44DecryptParams = mutableListOf<List<String>>()
     val requestRelaySnapshots = mutableListOf<List<String>>()
     val requestRelaySources = mutableListOf<String>()
+    val requestClientPubkeys = mutableListOf<String>()
+    val methodCounts = mutableMapOf<String, Int>()
 
     override suspend fun sendRequest(session: Nip46TransportSession, request: Nip46RequestPayload): Result<Nip46Response> = runCatching {
         requestRelaySnapshots += session.relays
         requestRelaySources += session.relaySource
+        requestClientPubkeys += session.clientPubkey
+        methodCounts[request.method] = (methodCounts[request.method] ?: 0) + 1
         if (delayMs > 0) delay(delayMs)
         throwMessage?.let { error(it) }
         throwByMethod[request.method]?.let { error(it) }

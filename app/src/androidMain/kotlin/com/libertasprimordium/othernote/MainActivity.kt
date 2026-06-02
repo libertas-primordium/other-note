@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
             externalSignerEventSigner = eventSigner,
             externalSignerNip44Operator = nip44Operator,
             remoteSigner = nostrClient.nip46RemoteSigner(),
+            nip46SessionStore = AndroidNip46SessionStore(this),
             localEventCache = AndroidLocalEventCache(this),
             pendingWriteStore = AndroidPendingWriteStore(this),
             relaySettings = RelaySettingsStore(persistence = AndroidRelaySettingsPersistence(this)),
