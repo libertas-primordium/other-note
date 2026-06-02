@@ -1,5 +1,6 @@
 package com.libertasprimordium.othernote
 
+import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
@@ -8,6 +9,7 @@ import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
+import com.libertasprimordium.othernote.ui.DesktopRelayDefaults
 
 object DesktopAppServicesFactory {
     fun create(): AppServices {
@@ -22,6 +24,10 @@ object DesktopAppServicesFactory {
                 secureSecretStore = DesktopSecureSecretStore(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
+                relaySettings = RelaySettingsStore(
+                    DesktopRelayDefaults,
+                    DesktopRelaySettingsPersistence(),
+                ),
                 startupWarnings = listOf(ProductionNostrCryptoFactory.unavailableReason),
             )
         } else {
@@ -37,6 +43,10 @@ object DesktopAppServicesFactory {
                 remoteSigner = relayClient.nip46RemoteSigner(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
+                relaySettings = RelaySettingsStore(
+                    DesktopRelayDefaults,
+                    DesktopRelaySettingsPersistence(),
+                ),
                 startupWarnings = listOf(
                     if (developerFlagEnabled) {
                         "Desktop relay runtime enabled; developer relay flag is no longer required"

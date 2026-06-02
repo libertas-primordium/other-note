@@ -3,6 +3,7 @@ package com.libertasprimordium.othernote.ui
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.OtherNoteTag
+import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
@@ -15,6 +16,7 @@ import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
+import com.libertasprimordium.othernote.nostr.RelayTestResult
 import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
@@ -87,6 +89,24 @@ data class GeneratedIdentityState(
         } else {
             "nsec hidden until you reveal it"
         }
+}
+
+data class RelayAddTestState(
+    val inProgress: Boolean = false,
+    val warning: RelayAddWarning? = null,
+)
+
+data class RelayAddWarning(
+    val relayUrl: String,
+    val safeReason: String,
+)
+
+sealed interface RelayAddResult {
+    data class Added(val relayUrl: String) : RelayAddResult
+    data class ValidationFailed(val message: String) : RelayAddResult
+    data class Duplicate(val relayUrl: String) : RelayAddResult
+    data object WaitingForUserChoice : RelayAddResult
+    data object InProgress : RelayAddResult
 }
 
 class AppState(private val services: AppServices = defaultAppServices()) {
@@ -175,6 +195,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val _generatedIdentityState = MutableStateFlow(GeneratedIdentityState())
     val generatedIdentityState: StateFlow<GeneratedIdentityState> = _generatedIdentityState
 
+    private val _relayAddTestState = MutableStateFlow(RelayAddTestState())
+    val relayAddTestState: StateFlow<RelayAddTestState> = _relayAddTestState
+
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
     val externalSignerAvailable: Boolean = services.externalSignerProvider.isAvailable
@@ -192,12 +215,20 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     } else {
         services.externalSignerProvider.unavailableReason ?: "External signer unavailable"
     }
+    val defaultRelayUrls: List<String> = DefaultRelays.map { it.url }
     val signInOptions: List<SignInOptionUi>
         get() = buildSignInOptions(
             platform = platform,
             externalSignerAvailable = externalSignerAvailable,
             remoteSignerAvailable = remoteSignerAvailable,
         )
+
+    init {
+        appScope.launch {
+            runCatching { relaySettings.loadPersisted() }
+                .onFailure { _message.value = "Relay settings could not be loaded. ${it.safePersistenceMessage()}" }
+        }
+    }
 
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {
@@ -1086,21 +1117,83 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _diagnosticMessage.value = statuses.toSafeSummary()
     }
 
-    suspend fun saveRelays(rawRelays: List<String>) {
+    suspend fun saveRelays(rawRelays: List<String>): Boolean {
         val newConfig = relaySettings.previewChange(rawRelays)
         val configs = newConfig.getOrNull()
         if (configs == null) {
             _message.value = newConfig.exceptionOrNull()?.message ?: "Invalid relay settings"
-            return
+            return false
         }
         val old = relaySettings.normalizedUrls()
         val plan = migrateRelays.migrate(old, configs.map { it.url })
-        relaySettings.commit(configs)
+        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
+        if (persisted.isFailure) {
+            _message.value = "Relay settings could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            return false
+        }
         _message.value = buildString {
             append("Relay settings saved.")
             if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
             if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
         }
+        return true
+    }
+
+    suspend fun testRelayBeforeAdd(rawRelay: String, existingRelays: List<String>): RelayAddResult {
+        if (_relayAddTestState.value.inProgress) return RelayAddResult.InProgress
+        val parsed = relaySettings.previewChange(listOf(rawRelay))
+        val normalized = parsed.getOrNull()?.singleOrNull()?.url
+        if (normalized == null) {
+            return RelayAddResult.ValidationFailed(parsed.exceptionOrNull()?.message ?: "Invalid relay URL")
+        }
+        if (normalized in existingRelays) {
+            return RelayAddResult.Duplicate(normalized)
+        }
+        _relayAddTestState.value = RelayAddTestState(inProgress = true)
+        val result = withContext(Dispatchers.IO) {
+            services.relayTester.testAppRelay(normalized, _session.value)
+        }
+        return when (result) {
+            is RelayTestResult.Success -> {
+                _relayAddTestState.value = RelayAddTestState()
+                RelayAddResult.Added(normalized)
+            }
+            is RelayTestResult.Failure -> {
+                _relayAddTestState.value = RelayAddTestState(
+                    warning = RelayAddWarning(
+                        relayUrl = normalized,
+                        safeReason = result.userMessage,
+                    ),
+                )
+                RelayAddResult.WaitingForUserChoice
+            }
+        }
+    }
+
+    fun cancelFailedRelayAdd() {
+        _relayAddTestState.value = RelayAddTestState()
+    }
+
+    fun continueFailedRelayAdd(): String? {
+        val relay = _relayAddTestState.value.warning?.relayUrl
+        _relayAddTestState.value = RelayAddTestState()
+        return relay
+    }
+
+    suspend fun restoreDefaultRelays(): Boolean {
+        val old = relaySettings.normalizedUrls()
+        val plan = migrateRelays.migrate(old, defaultRelayUrls)
+        val persisted = runCatching { relaySettings.restoreDefaultsAndPersist() }
+        if (persisted.isFailure) {
+            _message.value = "Default relay settings could not be restored. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            return false
+        }
+        _message.value = buildString {
+            append("Default app relays restored.")
+            if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
+            if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
+        }
+        return true
     }
 
     private fun SaveResult.toCompactMessage(): String = when (this) {

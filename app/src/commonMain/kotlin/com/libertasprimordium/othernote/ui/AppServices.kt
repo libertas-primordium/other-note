@@ -7,11 +7,12 @@ import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.domain.DefaultRelays
-import com.libertasprimordium.othernote.domain.RelayConfig
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
+import com.libertasprimordium.othernote.nostr.DefaultRelayTester
 import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
+import com.libertasprimordium.othernote.nostr.RelayTester
 import com.libertasprimordium.othernote.security.DefaultKeyManagementPolicy
 import com.libertasprimordium.othernote.security.KeyManagementPolicy
 import com.libertasprimordium.othernote.security.Nip46RemoteSigner
@@ -54,6 +55,7 @@ data class AppServices(
     val remoteSigner: Nip46RemoteSigner? = null,
     val localEventCache: LocalEventCache = InMemoryLocalEventCache(),
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
+    val relayTester: RelayTester = DefaultRelayTester(client, crypto),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopRelay || mode == AppRuntimeMode.DesktopDevRelay) DesktopRelayDefaults else DefaultRelays,
@@ -61,13 +63,7 @@ data class AppServices(
     val startupWarnings: List<String> = emptyList(),
 )
 
-val DesktopRelayDefaults = listOf(
-    RelayConfig("wss://relay.damus.io"),
-    RelayConfig("wss://relay.primal.net"),
-    RelayConfig("wss://relay.nostr.net"),
-    RelayConfig("wss://nos.lol"),
-    RelayConfig("wss://relay.ditto.pub"),
-)
+val DesktopRelayDefaults = DefaultRelays
 
 val DesktopDevRelayDefaults = DesktopRelayDefaults
 

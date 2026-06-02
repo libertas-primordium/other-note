@@ -526,8 +526,12 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
 @Composable
 fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     val relays by appState.relaySettings.relays.collectAsState()
+    val syncState by appState.syncState.collectAsState()
+    val relayAddState by appState.relayAddTestState.collectAsState()
     val scope = rememberCoroutineScope()
-    var relayText by remember(relays) { mutableStateOf(relays.joinToString("\n") { it.url }) }
+    var draftRelays by remember(relays) { mutableStateOf(relays.map { it.url }) }
+    var relayToAdd by remember { mutableStateOf("") }
+    var relayError by remember { mutableStateOf<String?>(null) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -538,25 +542,151 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
         },
         containerColor = OtherNoteBlack,
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Text("App relays", color = OtherNoteText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("These relays sync encrypted note events. They do not change NIP-46 remote-signer transport relays.", color = OtherNoteMuted)
+            Spacer(Modifier.height(6.dp))
+            Text("Other Note publishes encrypted kind 30078 note events only. At least one readable and writable relay is needed for relay sync and publishing.", color = OtherNoteMuted)
+            Spacer(Modifier.height(6.dp))
             Text("Public relays may purge old events. Add a relay you control for stronger long-term retention.", color = OtherNoteMuted)
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
-                value = relayText,
-                onValueChange = { relayText = it },
-                label = { Text("One relay URL per line") },
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                value = relayToAdd,
+                onValueChange = {
+                    relayToAdd = it
+                    relayError = null
+                },
+                label = { Text("Add relay hostname or URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !relayAddState.inProgress,
             )
             Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            when (val result = appState.testRelayBeforeAdd(relayToAdd, draftRelays)) {
+                                is RelayAddResult.Added -> {
+                                    draftRelays = (draftRelays + result.relayUrl).distinct()
+                                    relayToAdd = ""
+                                    relayError = null
+                                }
+                                is RelayAddResult.ValidationFailed -> relayError = result.message
+                                is RelayAddResult.Duplicate -> relayError = "Relay already exists: ${result.relayUrl}"
+                                RelayAddResult.WaitingForUserChoice -> relayError = null
+                                RelayAddResult.InProgress -> relayError = "Relay test already in progress"
+                            }
+                        }
+                    },
+                    enabled = !relayAddState.inProgress,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (relayAddState.inProgress) "Testing relay..." else "Add relay") }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            if (appState.restoreDefaultRelays()) {
+                                relayError = null
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Restore defaults") }
+            }
+            relayError?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = OtherNotePurple)
+            }
+            Spacer(Modifier.height(16.dp))
+            if (draftRelays.isEmpty()) {
+                Text("No app relays configured. Relay sync and publishing require at least one valid wss:// relay.", color = OtherNotePurple)
+            } else {
+                draftRelays.forEachIndexed { index, relay ->
+                    RelaySettingsRow(
+                        relay = relay,
+                        status = syncState.relayStatuses.firstOrNull { it.url == relay }?.message,
+                        onRemove = {
+                            draftRelays = draftRelays.toMutableList().also { it.removeAt(index) }
+                            relayError = null
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Row {
-                Button(onClick = {
-                    scope.launch {
-                        appState.saveRelays(relayText.lines().filter { it.isNotBlank() })
-                        onBack()
-                    }
-                }) { Text("Save") }
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (appState.saveRelays(draftRelays)) {
+                                relayError = null
+                                onBack()
+                            } else {
+                                relayError = appState.message.value
+                            }
+                        }
+                    },
+                    enabled = draftRelays.isNotEmpty(),
+                ) { Text("Save") }
                 Spacer(Modifier.width(8.dp))
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
+            }
+        }
+    }
+    relayAddState.warning?.let { warning ->
+        AlertDialog(
+            onDismissRequest = { appState.cancelFailedRelayAdd() },
+            title = { Text("Relay test failed") },
+            text = {
+                Column {
+                    Text("This relay may not work for syncing notes.")
+                    Spacer(Modifier.height(8.dp))
+                    Text(warning.safeReason)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val relay = appState.continueFailedRelayAdd()
+                        if (relay != null && relay !in draftRelays) {
+                            draftRelays = (draftRelays + relay).distinct()
+                            relayToAdd = ""
+                            relayError = null
+                        }
+                    },
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { appState.cancelFailedRelayAdd() }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RelaySettingsRow(
+    relay: String,
+    status: String?,
+    onRemove: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(relay, color = OtherNoteText)
+            status?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it.take(160), color = OtherNoteMuted, fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onRemove) {
+                Text("Remove")
             }
         }
     }

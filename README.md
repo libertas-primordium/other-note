@@ -57,13 +57,19 @@ Edits publish a new signed event with the same kind/pubkey/d-tag. Relay results 
 
 ## Relay Retention
 
-Default relays are editable:
+Default app/note relays are editable and persist locally on Android and desktop:
 
 - `wss://relay.damus.io`
 - `wss://relay.primal.net`
 - `wss://relay.nostr.net`
 - `wss://nos.lol`
 - `wss://relay.ditto.pub`
+
+Relay settings edit the app relays used for encrypted kind `30078` note fetch/publish. They do not edit NIP-46 remote-signer transport relays, which are sourced from bunker tokens and signer transport state for encrypted kind `24133` request/response traffic.
+
+Users may enter relay hostnames with or without `wss://`; for example, `relay.primal.net` is normalized to `wss://relay.primal.net`. Production relays should use `wss://`; `ws://` is accepted only for local development hosts such as `localhost`. Query strings, fragments, malformed URLs, duplicate normalized URLs, and `http://` or `https://` URLs are rejected. The settings screen can restore the default relay set, and saving an empty relay list is blocked because relay sync and publishing require at least one app relay.
+
+New relays are tested before being added. Direct/session-only key sessions publish and fetch a harmless non-note test event from the candidate relay. Signer-backed or local-only contexts use a bounded read/connect test instead, so relay testing does not mutate NIP-46 signer-transport relays or issue raw signer request payloads. If the test succeeds, the relay is added silently. If it fails, Other Note shows a safe warning and asks whether to cancel or continue adding the relay anyway.
 
 Public relays may purge old events. Add a relay you control for stronger long-term retention.
 
@@ -203,6 +209,7 @@ Desktop relay runtime keeps a local durability layer at `~/.local/share/other-no
 
 - `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
 - `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, and safe error strings.
+- `relay-settings.json` stores only the local app relay URL list.
 - Pending writes are retried on login, sync, or manual refresh for the same account pubkey. The retry path republishes the existing signed event and does not require storing or re-signing with an old private key.
 - The retry policy is intentionally bounded for now: unfinished relays are retried up to three times per stored pending write. A pending write is removed after every target relay accepts it or all unfinished target relays hit the retry cap.
 - Deleting this local directory clears the cache and pending retry queue, but it does not delete events already published to relays.
@@ -211,6 +218,7 @@ Android external-signer relay runtime keeps the same durable encrypted event and
 
 - `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
 - `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, safe error strings, and timestamps.
+- `relay-settings.json` stores only the local app relay URL list.
 - The files are used only after Android signer login for the same public key. Loading the encrypted event cache does not require network or signer access, but decrypting cached events still requires signer-mediated NIP-44 decrypt for the active session.
 - Direct `nsec` fallback remains session-only and unsaved. When production crypto and a relay client are available it can publish/recover encrypted notes; otherwise it remains local/offline and must not emit plaintext. Saved-device key storage remains future work and must use OS-backed secure storage when implemented.
 
