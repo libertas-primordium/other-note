@@ -29,6 +29,7 @@ import com.libertasprimordium.othernote.ui.noteCardActionMenuText
 import com.libertasprimordium.othernote.ui.noteCardActionItems
 import com.libertasprimordium.othernote.ui.noteDeleteConfirmationText
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
+import com.libertasprimordium.othernote.ui.userFacingErrorFor
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.MediaType
 import com.libertasprimordium.othernote.util.detectUrls
@@ -155,6 +156,74 @@ class UtilityTests {
         assertFalse(visible.contains("kind 30078"))
         assertFalse(visible.contains("d-tag"))
         assertFalse(visible.contains("body_markdown"))
+    }
+
+    @Test
+    fun nip46TimeoutMapsToReadableUserFacingCopy() {
+        val raw = "stage=response_fetch_timed_out reason=no_matching_response method=nip44_encrypt request_id=abc123 relay_source=token publish_accepted_count=1 candidate_events=24"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Remote signer did not respond", error.title)
+        assertTrue(error.message.contains("encryption request"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertTrue(error.technicalDetails?.contains("response_fetch_timed_out") == true)
+    }
+
+    @Test
+    fun nip46RelayRejectionMapsToReadableUserFacingCopy() {
+        val raw = "stage=relay_publish_failed method=sign_event outcome=rejected relay_source=token publish_accepted_count=0 candidate_events=0"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Remote signer relay rejected the request", error.title)
+        assertTrue(error.message.contains("temporary client key"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+    }
+
+    @Test
+    fun bunkerAlreadyPairedMapsToReadableGuidance() {
+        val raw = "Remote signer returned connect error: bunker link already paired stage=connect secret=must-not-appear"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Bunker link already used", error.title)
+        assertTrue(error.message.contains("fresh bunker link"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("must-not-appear"))
+    }
+
+    @Test
+    fun relayTestFailureMapsToReadableWarning() {
+        val raw = "Relay rejected the test event. stage=relay_test_publish outcome=rejected secret=must-not-appear nsec1leak privateKey=leak body_markdown"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Relay test failed", error.title)
+        assertTrue(error.message.contains("publish and fetch events"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("must-not-appear"))
+        assertFalse(error.message.contains("nsec1leak"))
+        assertFalse(error.message.contains("privateKey"))
+        assertFalse(error.message.contains("body_markdown"))
+    }
+
+    @Test
+    fun persistenceFailureDoesNotExposeExceptionClassOrFilePath() {
+        val raw = "Save failed: pending write persistence failed. NoSuchFileException: /home/spencer/.local/share/other-note/pending-writes/test.pending.json.tmp"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Could not save local state", error.title)
+        assertTrue(error.message.contains("file permissions"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("NoSuchFileException"))
+        assertFalse(error.message.contains("/home/spencer"))
+    }
+
+    @Test
+    fun unexpectedTechnicalErrorUsesGenericFallback() {
+        val raw = "UnexpectedStateException: stage=decode outcome=failed candidate_events=2"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Something went wrong", error.title)
+        assertEquals("Other Note could not complete the action. Try again.", error.message)
+        assertPrimaryErrorCopyIsReadable(error.message)
     }
 
     @Test
@@ -404,6 +473,23 @@ class UtilityTests {
             content = "",
             sig = "valid",
         )
+}
+
+private fun assertPrimaryErrorCopyIsReadable(message: String) {
+    val rawKeys = listOf(
+        "stage=",
+        "outcome=",
+        "candidate_events",
+        "publish_accepted_count",
+        "response_fetch_timed_out",
+        "NoSuchFileException",
+        "secret=",
+        "privateKey",
+        "body_markdown",
+    )
+    rawKeys.forEach { key ->
+        assertFalse(message.contains(key), "Primary error copy should not contain $key")
+    }
 }
 
 private object AcceptingValidationCrypto : NostrCrypto {

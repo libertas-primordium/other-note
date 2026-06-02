@@ -1066,7 +1066,8 @@ class AppModeTests {
         assertEquals(RelayAddResult.WaitingForUserChoice, result)
         val warning = state.relayAddTestState.value.warning ?: error("Missing relay warning")
         assertEquals("wss://relay.example.com", warning.relayUrl)
-        assertTrue(warning.safeReason.contains("Relay rejected"))
+        assertTrue(warning.safeReason.contains("publish and fetch events"))
+        assertPlainRelayMigrationWarning("Relay test failed", warning.safeReason)
         assertFalse(warning.safeReason.contains("must-not-appear"))
         assertFalse(warning.safeReason.contains("nsec1leak"))
         assertFalse(warning.safeReason.contains("privateKey=leak"))
@@ -1096,7 +1097,8 @@ class AppModeTests {
 
         assertEquals(RelayAddResult.WaitingForUserChoice, result)
         val warning = state.relayAddTestState.value.warning ?: error("Missing relay warning")
-        assertTrue(warning.safeReason.contains("No matching test event"))
+        assertTrue(warning.safeReason.contains("publish and fetch events"))
+        assertPlainRelayMigrationWarning("Relay test failed", warning.safeReason)
     }
 
     @Test
