@@ -5,6 +5,7 @@ import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrWireJson
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
+import com.libertasprimordium.othernote.sync.RelayListKind
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
@@ -98,7 +99,9 @@ object SignerSignEventRequestBuilder {
     ): Result<SignEventLaunchRequest> = runCatching {
         require(requestedEvent.pubkey == currentUserPubkey) { "Requested event pubkey must match current user" }
         require(requestedEvent.id.isNotBlank()) { "Requested event id must not be blank" }
-        require(requestedEvent.content.isNotBlank()) { "Requested event content must not be blank" }
+        require(requestedEvent.content.isNotBlank() || requestedEvent.kind == RelayListKind) {
+            "Requested event content must not be blank"
+        }
         val payload = SignEventPayload.from(requestedEvent, shape)
         val eventJson = json.encodeToString(payload)
         require(eventJson.isNotBlank()) { "NIP-55 sign_event payload must not be blank" }

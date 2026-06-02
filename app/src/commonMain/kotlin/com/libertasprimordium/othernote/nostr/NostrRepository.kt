@@ -87,6 +87,7 @@ class NostrRepository(
     }
 
     suspend fun fetch(relays: List<String>, pubkey: String): RelayFetchResult = client.fetchNotes(relays, pubkey)
+    suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult = client.fetchEvents(relays, filter)
     suspend fun fetchIncrementally(
         relays: List<String>,
         pubkey: String,

@@ -121,6 +121,7 @@ class Nip46ProtocolTests {
 
         assertTrue(permissions.contains("get_public_key"))
         assertTrue(permissions.contains("sign_event:30078"))
+        assertTrue(permissions.contains("sign_event:10002"))
         assertTrue(permissions.contains("nip44_encrypt"))
         assertTrue(permissions.contains("nip44_decrypt"))
         assertTrue(permissions.contains("ping"))
