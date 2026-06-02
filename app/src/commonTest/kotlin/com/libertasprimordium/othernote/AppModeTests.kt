@@ -6,6 +6,7 @@ import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.ui.GeneratedIdentityStep
+import com.libertasprimordium.othernote.ui.RelayAddResult
 import com.libertasprimordium.othernote.ui.SignInOptionEmphasis
 import com.libertasprimordium.othernote.ui.SignInOptionKind
 import com.libertasprimordium.othernote.ui.buildSignInOptions
@@ -14,12 +15,15 @@ import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.NostrFilter
 import com.libertasprimordium.othernote.nostr.NostrPrivateKey
 import com.libertasprimordium.othernote.nostr.NostrPublicKey
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProfileMetadata
 import com.libertasprimordium.othernote.nostr.RelayFetchResult
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
+import com.libertasprimordium.othernote.nostr.RelayTester
+import com.libertasprimordium.othernote.nostr.RelayTestResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.NoteKind
@@ -38,7 +42,10 @@ import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
 import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -499,6 +506,146 @@ class AppModeTests {
 
         assertEquals(listOf(listOf("wss://relay.one.example", "wss://relay.two.example")), client.publishedRelayBatches)
     }
+
+    @Test
+    fun successfulRelayTestAddsNormalizedNakedRelayWithoutCachingTestEvent() = runBlocking {
+        val client = RelayTestClient()
+        val cache = InMemoryLocalEventCache()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                localEventCache = cache,
+            ),
+        )
+
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        val result = state.testRelayBeforeAdd("relay.example.com", emptyList())
+
+        assertEquals(RelayAddResult.Added("wss://relay.example.com"), result)
+        assertFalse(state.relayAddTestState.value.inProgress)
+        assertNull(state.relayAddTestState.value.warning)
+        assertEquals(1, client.published.size)
+        assertTrue(cache.loadEvents(state.session.value?.publicKeyHex.orEmpty()).isEmpty())
+        val testEvent = client.published.single()
+        assertEquals(1, testEvent.kind)
+        assertFalse(testEvent.content.contains("body_markdown"))
+        assertFalse(testEvent.content.contains("nsec"))
+    }
+
+    @Test
+    fun failedRelayTestRequiresUserChoiceBeforeAdding() = runBlocking {
+        val client = RelayTestClient(
+            publishStatus = RelayStatus(
+                "wss://relay.example.com",
+                writable = false,
+                message = "stage=publish outcome=rejected secret=must-not-appear nsec1leak privateKey=leak body_markdown",
+            ),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+            ),
+        )
+
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        val result = state.testRelayBeforeAdd("relay.example.com", emptyList())
+
+        assertEquals(RelayAddResult.WaitingForUserChoice, result)
+        val warning = state.relayAddTestState.value.warning ?: error("Missing relay warning")
+        assertEquals("wss://relay.example.com", warning.relayUrl)
+        assertTrue(warning.safeReason.contains("Relay rejected"))
+        assertFalse(warning.safeReason.contains("must-not-appear"))
+        assertFalse(warning.safeReason.contains("nsec1leak"))
+        assertFalse(warning.safeReason.contains("privateKey=leak"))
+        assertFalse(warning.safeReason.contains("body_markdown"))
+
+        state.cancelFailedRelayAdd()
+        assertNull(state.relayAddTestState.value.warning)
+
+        state.testRelayBeforeAdd("relay.example.com", emptyList())
+        assertEquals("wss://relay.example.com", state.continueFailedRelayAdd())
+        assertNull(state.relayAddTestState.value.warning)
+    }
+
+    @Test
+    fun noMatchingRelayTestEventWarnsInsteadOfAdding() = runBlocking {
+        val client = RelayTestClient(returnPublishedEvent = false)
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+            ),
+        )
+
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        val result = state.testRelayBeforeAdd("relay.example.com", emptyList())
+
+        assertEquals(RelayAddResult.WaitingForUserChoice, result)
+        val warning = state.relayAddTestState.value.warning ?: error("Missing relay warning")
+        assertTrue(warning.safeReason.contains("No matching test event"))
+    }
+
+    @Test
+    fun relayTestFallsBackToReadConnectWhenNoSessionKeyIsAvailable() = runBlocking {
+        val client = RelayTestClient()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+            ),
+        )
+
+        val result = state.testRelayBeforeAdd("relay.example.com", emptyList())
+
+        assertEquals(RelayAddResult.Added("wss://relay.example.com"), result)
+        assertTrue(client.published.isEmpty())
+        assertEquals(1, client.fetchFilters.size)
+    }
+
+    @Test
+    fun duplicateRelayAddDoesNotRunRelayTest() = runBlocking {
+        val client = RelayTestClient()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+            ),
+        )
+
+        val result = state.testRelayBeforeAdd("relay.example.com", listOf("wss://relay.example.com"))
+
+        assertEquals(RelayAddResult.Duplicate("wss://relay.example.com"), result)
+        assertTrue(client.published.isEmpty())
+        assertTrue(client.fetchFilters.isEmpty())
+    }
+
+    @Test
+    fun relayAddPreventsDuplicateSubmissionWhileTestIsRunning() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                relayTester = BlockingRelayTester(gate),
+            ),
+        )
+
+        val first = async { state.testRelayBeforeAdd("relay.example.com", emptyList()) }
+        while (!state.relayAddTestState.value.inProgress) yield()
+
+        assertEquals(RelayAddResult.InProgress, state.testRelayBeforeAdd("relay.two.example", emptyList()))
+
+        gate.complete(Unit)
+        assertEquals(RelayAddResult.Added("wss://relay.example.com"), first.await())
+    }
 }
 
 private class TestSignerPublicKeyRequester(
@@ -627,4 +774,47 @@ private class AcceptingGeneratedIdentityClient : NostrClient {
     }
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
+}
+
+private class RelayTestClient(
+    private val publishStatus: RelayStatus? = null,
+    private val fetchReadable: Boolean = true,
+    private val returnPublishedEvent: Boolean = true,
+) : NostrClient {
+    val published = mutableListOf<NostrEvent>()
+    val fetchFilters = mutableListOf<NostrFilter>()
+
+    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
+        RelayFetchResult(emptyList(), relays.map { RelayStatus(it, readable = true, message = "ok") })
+
+    override suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult {
+        fetchFilters += filter
+        val events = if (returnPublishedEvent) published else emptyList()
+        return RelayFetchResult(
+            events = events,
+            statuses = relays.map {
+                RelayStatus(it, readable = fetchReadable, message = if (fetchReadable) "stage=fetch outcome=complete" else "stage=fetch outcome=timeout")
+            },
+        )
+    }
+
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
+        published += event
+        return RelayPublishResult(
+            relays.map { relay ->
+                publishStatus?.copy(url = relay) ?: RelayStatus(relay, writable = true, message = "stage=publish outcome=accepted")
+            },
+        )
+    }
+
+    override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
+}
+
+private class BlockingRelayTester(
+    private val gate: CompletableDeferred<Unit>,
+) : RelayTester {
+    override suspend fun testAppRelay(relayUrl: String, session: com.libertasprimordium.othernote.domain.UserSession?): RelayTestResult {
+        gate.await()
+        return RelayTestResult.Success(relayUrl, mode = "test")
+    }
 }

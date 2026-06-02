@@ -527,6 +527,7 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
 fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     val relays by appState.relaySettings.relays.collectAsState()
     val syncState by appState.syncState.collectAsState()
+    val relayAddState by appState.relayAddTestState.collectAsState()
     val scope = rememberCoroutineScope()
     var draftRelays by remember(relays) { mutableStateOf(relays.map { it.url }) }
     var relayToAdd by remember { mutableStateOf("") }
@@ -556,28 +557,32 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                     relayToAdd = it
                     relayError = null
                 },
-                label = { Text("Add wss:// relay URL") },
+                label = { Text("Add relay hostname or URL") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !relayAddState.inProgress,
             )
             Spacer(Modifier.height(12.dp))
             Column(Modifier.fillMaxWidth()) {
                 Button(
                     onClick = {
-                        val parsed = appState.relaySettings.previewChange(listOf(relayToAdd))
-                        val normalized = parsed.getOrNull()?.singleOrNull()?.url
-                        when {
-                            normalized == null -> relayError = parsed.exceptionOrNull()?.message ?: "Invalid relay URL"
-                            normalized in draftRelays -> relayError = "Relay already exists: $normalized"
-                            else -> {
-                                draftRelays = (draftRelays + normalized).distinct()
-                                relayToAdd = ""
-                                relayError = null
+                        scope.launch {
+                            when (val result = appState.testRelayBeforeAdd(relayToAdd, draftRelays)) {
+                                is RelayAddResult.Added -> {
+                                    draftRelays = (draftRelays + result.relayUrl).distinct()
+                                    relayToAdd = ""
+                                    relayError = null
+                                }
+                                is RelayAddResult.ValidationFailed -> relayError = result.message
+                                is RelayAddResult.Duplicate -> relayError = "Relay already exists: ${result.relayUrl}"
+                                RelayAddResult.WaitingForUserChoice -> relayError = null
+                                RelayAddResult.InProgress -> relayError = "Relay test already in progress"
                             }
                         }
                     },
+                    enabled = !relayAddState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Add relay") }
+                ) { Text(if (relayAddState.inProgress) "Testing relay..." else "Add relay") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
@@ -629,6 +634,36 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                 OutlinedButton(onClick = onBack) { Text("Cancel") }
             }
         }
+    }
+    relayAddState.warning?.let { warning ->
+        AlertDialog(
+            onDismissRequest = { appState.cancelFailedRelayAdd() },
+            title = { Text("Relay test failed") },
+            text = {
+                Column {
+                    Text("This relay may not work for syncing notes.")
+                    Spacer(Modifier.height(8.dp))
+                    Text(warning.safeReason)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val relay = appState.continueFailedRelayAdd()
+                        if (relay != null && relay !in draftRelays) {
+                            draftRelays = (draftRelays + relay).distinct()
+                            relayToAdd = ""
+                            relayError = null
+                        }
+                    },
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { appState.cancelFailedRelayAdd() }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

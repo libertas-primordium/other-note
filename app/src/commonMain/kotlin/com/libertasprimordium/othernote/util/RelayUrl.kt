@@ -6,10 +6,11 @@ fun normalizeRelayUrl(raw: String): Result<String> {
     if (trimmed.any { it.isWhitespace() }) {
         return Result.failure(IllegalArgumentException("Relay URL must not contain spaces"))
     }
-    val scheme = trimmed.substringBefore("://", missingDelimiterValue = "")
-    val rest = trimmed.substringAfter("://", missingDelimiterValue = "")
+    val withScheme = if ("://" in trimmed) trimmed else "wss://$trimmed"
+    val scheme = withScheme.substringBefore("://", missingDelimiterValue = "")
+    val rest = withScheme.substringAfter("://", missingDelimiterValue = "")
     if (scheme.isBlank() || rest.isBlank()) {
-        return Result.failure(IllegalArgumentException("Relay URL must include wss://"))
+        return Result.failure(IllegalArgumentException("Relay URL is malformed"))
     }
     val normalizedScheme = scheme.lowercase()
     if (normalizedScheme == "http" || normalizedScheme == "https") {

@@ -27,15 +27,17 @@ import kotlin.test.assertTrue
 class UtilityTests {
     @Test
     fun relayUrlsNormalizeAndRejectInvalidSchemes() {
+        assertEquals("wss://relay.primal.net", normalizeRelayUrl("relay.primal.net").getOrThrow())
+        assertEquals("wss://relay.example.com/path", normalizeRelayUrl("relay.example.com/path").getOrThrow())
         assertEquals("wss://relay.example.com", normalizeRelayUrl(" WSS://Relay.Example.com/ ").getOrThrow())
         assertEquals("wss://relay.example.com/nostr", normalizeRelayUrl("wss://relay.example.com/nostr/").getOrThrow())
         assertEquals("ws://localhost:7000", normalizeRelayUrl("ws://localhost:7000/").getOrThrow())
-        assertTrue(normalizeRelayUrl("relay.example.com/").isFailure)
         assertTrue(normalizeRelayUrl("https://relay.example.com").isFailure)
         assertTrue(normalizeRelayUrl("http://relay.example.com").isFailure)
         assertTrue(normalizeRelayUrl("wss://relay.example.com/?token=secret").isFailure)
         assertTrue(normalizeRelayUrl("wss://relay.example.com/#fragment").isFailure)
         assertTrue(normalizeRelayUrl("wss://relay example.com").isFailure)
+        assertTrue(normalizeRelayUrl("not a relay").isFailure)
         assertTrue(normalizeRelayUrl("ws://relay.example.com").isFailure)
     }
 
@@ -46,7 +48,7 @@ class UtilityTests {
         val preview = store.previewChange(
             listOf(
                 " WSS://Relay.Example.com/ ",
-                "wss://relay.example.com",
+                "relay.example.com",
                 "wss://relay.example.com/nostr/",
             ),
         ).getOrThrow()

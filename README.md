@@ -67,7 +67,9 @@ Default app/note relays are editable and persist locally on Android and desktop:
 
 Relay settings edit the app relays used for encrypted kind `30078` note fetch/publish. They do not edit NIP-46 remote-signer transport relays, which are sourced from bunker tokens and signer transport state for encrypted kind `24133` request/response traffic.
 
-Relay URLs must be WebSocket relay URLs. Production relays should use `wss://`; `ws://` is accepted only for local development hosts such as `localhost`. Query strings, fragments, malformed URLs, duplicate normalized URLs, and `http://` or `https://` URLs are rejected. The settings screen can restore the default relay set, and saving an empty relay list is blocked because relay sync and publishing require at least one app relay.
+Users may enter relay hostnames with or without `wss://`; for example, `relay.primal.net` is normalized to `wss://relay.primal.net`. Production relays should use `wss://`; `ws://` is accepted only for local development hosts such as `localhost`. Query strings, fragments, malformed URLs, duplicate normalized URLs, and `http://` or `https://` URLs are rejected. The settings screen can restore the default relay set, and saving an empty relay list is blocked because relay sync and publishing require at least one app relay.
+
+New relays are tested before being added. Direct/session-only key sessions publish and fetch a harmless non-note test event from the candidate relay. Signer-backed or local-only contexts use a bounded read/connect test instead, so relay testing does not mutate NIP-46 signer-transport relays or issue raw signer request payloads. If the test succeeds, the relay is added silently. If it fails, Other Note shows a safe warning and asks whether to cancel or continue adding the relay anyway.
 
 Public relays may purge old events. Add a relay you control for stronger long-term retention.
 

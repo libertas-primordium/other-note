@@ -63,7 +63,9 @@ Local relay settings are app/note relay settings only. They control the WebSocke
 
 Relay settings may persist only normalized relay URLs and safe metadata. They must never store `nsec`, private keys, generated key material, NIP-46 token secrets, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. Android stores the local app relay list in app-private no-backup storage; desktop stores it under the local app data directory.
 
-Relay URL validation should accept production `wss://` relay URLs and reject malformed URLs, `http://`, `https://`, query strings, fragments, whitespace, and duplicates after normalization. `ws://` may be accepted only for local development hosts. Removing all app relays is blocked in the current UI because relay sync and publishing require at least one app relay. Users can explicitly restore the default app relay set.
+Relay URL validation should accept production `wss://` relay URLs and naked relay hostnames that can be safely normalized to `wss://`. It must reject malformed URLs, `http://`, `https://`, query strings, fragments, whitespace, and duplicates after normalization. `ws://` may be accepted only for local development hosts. Removing all app relays is blocked in the current UI because relay sync and publishing require at least one app relay. Users can explicitly restore the default app relay set.
+
+Relay testing applies only to local app/note relays. A direct/session-only key session may publish and fetch a harmless non-note test event to verify write and read capability. Signer-backed or local-only contexts should use a bounded read/connect test unless a safe signer-mediated write test is explicitly implemented. Relay test diagnostics may include relay URL, status class, latency, event counts, and safe truncated relay errors only. Failed tests may be overridden by explicit user confirmation.
 
 Published relay-list discovery or publishing, including NIP-65 kind `10002`, is future work and must be implemented in a dedicated pass. Local settings should remain local until that feature is designed and tested.
 
