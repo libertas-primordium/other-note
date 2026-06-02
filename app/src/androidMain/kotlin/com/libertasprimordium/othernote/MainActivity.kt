@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.AndroidExternalSignerProvider
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
             remoteSigner = nostrClient.nip46RemoteSigner(),
             localEventCache = AndroidLocalEventCache(this),
             pendingWriteStore = AndroidPendingWriteStore(this),
+            relaySettings = RelaySettingsStore(persistence = AndroidRelaySettingsPersistence(this)),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
             startupWarnings = if (crypto.productionReady) {

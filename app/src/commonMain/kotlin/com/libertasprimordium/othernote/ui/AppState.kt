@@ -3,6 +3,7 @@ package com.libertasprimordium.othernote.ui
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.OtherNoteTag
+import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
@@ -192,12 +193,20 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     } else {
         services.externalSignerProvider.unavailableReason ?: "External signer unavailable"
     }
+    val defaultRelayUrls: List<String> = DefaultRelays.map { it.url }
     val signInOptions: List<SignInOptionUi>
         get() = buildSignInOptions(
             platform = platform,
             externalSignerAvailable = externalSignerAvailable,
             remoteSignerAvailable = remoteSignerAvailable,
         )
+
+    init {
+        appScope.launch {
+            runCatching { relaySettings.loadPersisted() }
+                .onFailure { _message.value = "Relay settings could not be loaded. ${it.safePersistenceMessage()}" }
+        }
+    }
 
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {
@@ -1086,21 +1095,42 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _diagnosticMessage.value = statuses.toSafeSummary()
     }
 
-    suspend fun saveRelays(rawRelays: List<String>) {
+    suspend fun saveRelays(rawRelays: List<String>): Boolean {
         val newConfig = relaySettings.previewChange(rawRelays)
         val configs = newConfig.getOrNull()
         if (configs == null) {
             _message.value = newConfig.exceptionOrNull()?.message ?: "Invalid relay settings"
-            return
+            return false
         }
         val old = relaySettings.normalizedUrls()
         val plan = migrateRelays.migrate(old, configs.map { it.url })
-        relaySettings.commit(configs)
+        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
+        if (persisted.isFailure) {
+            _message.value = "Relay settings could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            return false
+        }
         _message.value = buildString {
             append("Relay settings saved.")
             if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
             if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
         }
+        return true
+    }
+
+    suspend fun restoreDefaultRelays(): Boolean {
+        val old = relaySettings.normalizedUrls()
+        val plan = migrateRelays.migrate(old, defaultRelayUrls)
+        val persisted = runCatching { relaySettings.restoreDefaultsAndPersist() }
+        if (persisted.isFailure) {
+            _message.value = "Default relay settings could not be restored. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            return false
+        }
+        _message.value = buildString {
+            append("Default app relays restored.")
+            if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
+            if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
+        }
+        return true
     }
 
     private fun SaveResult.toCompactMessage(): String = when (this) {

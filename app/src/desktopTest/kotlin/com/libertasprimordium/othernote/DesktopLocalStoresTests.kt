@@ -265,6 +265,23 @@ class DesktopLocalStoresTests {
         assertFalse(raw.contains("body_markdown"))
     }
 
+    @Test
+    fun desktopRelaySettingsPersistenceRoundTripsSafeRelayJson() = runBlocking {
+        val file = Files.createTempDirectory("other-note-relay-settings-test").resolve("relay-settings.json")
+        val store = DesktopRelaySettingsPersistence(file)
+        val relays = listOf("wss://relay.example.com", "wss://relay.example.com/nostr")
+
+        store.saveRelayUrls(relays)
+
+        assertEquals(relays, store.loadRelayUrls())
+        val raw = file.readText()
+        assertTrue(raw.contains("wss://relay.example.com"))
+        assertFalse(raw.contains(TestNsec))
+        assertFalse(raw.contains(TestPrivateKey))
+        assertFalse(raw.contains(TestPlaintextBody))
+        assertFalse(raw.contains(TestPlaintextJson))
+    }
+
     private fun event(
         id: String = "11".repeat(32),
         content: String = "encrypted-content",

@@ -7,7 +7,6 @@ import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.domain.DefaultRelays
-import com.libertasprimordium.othernote.domain.RelayConfig
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrClient
 import com.libertasprimordium.othernote.nostr.NostrCrypto
@@ -61,13 +60,7 @@ data class AppServices(
     val startupWarnings: List<String> = emptyList(),
 )
 
-val DesktopRelayDefaults = listOf(
-    RelayConfig("wss://relay.damus.io"),
-    RelayConfig("wss://relay.primal.net"),
-    RelayConfig("wss://relay.nostr.net"),
-    RelayConfig("wss://nos.lol"),
-    RelayConfig("wss://relay.ditto.pub"),
-)
+val DesktopRelayDefaults = DefaultRelays
 
 val DesktopDevRelayDefaults = DesktopRelayDefaults
 

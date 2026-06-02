@@ -36,6 +36,7 @@ import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvid
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
 import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
+import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -479,6 +480,25 @@ class AppModeTests {
         assertFalse(state.generatedIdentityState.value.toString().contains(generatedNsec))
         assertNull(state.session.value)
     }
+
+    @Test
+    fun savedAppRelaySettingsDriveNotePublishRelays() = runBlocking {
+        val client = AcceptingGeneratedIdentityClient()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                relaySettings = RelaySettingsStore(),
+            ),
+        )
+
+        assertTrue(state.saveRelays(listOf("wss://relay.one.example", " WSS://Relay.Two.Example/ ")))
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        assertTrue(state.save(existing = null, markdown = "relay settings publish note"))
+
+        assertEquals(listOf(listOf("wss://relay.one.example", "wss://relay.two.example")), client.publishedRelayBatches)
+    }
 }
 
 private class TestSignerPublicKeyRequester(
@@ -596,11 +616,15 @@ private class GeneratedIdentityTestCrypto : NostrCrypto {
 }
 
 private class AcceptingGeneratedIdentityClient : NostrClient {
+    val publishedRelayBatches = mutableListOf<List<String>>()
+
     override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
         RelayFetchResult(emptyList(), relays.map { RelayStatus(it, readable = true, message = "ok") })
 
-    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult =
-        RelayPublishResult(relays.map { RelayStatus(it, writable = true, message = "accepted") })
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
+        publishedRelayBatches += relays
+        return RelayPublishResult(relays.map { RelayStatus(it, writable = true, message = "accepted") })
+    }
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
 }

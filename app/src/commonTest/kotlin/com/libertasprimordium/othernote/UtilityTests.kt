@@ -1,7 +1,11 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.domain.NotePayload
+import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.noteDTag
+import com.libertasprimordium.othernote.data.RelaySettingsCodec
+import com.libertasprimordium.othernote.data.RelaySettingsPersistence
+import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.NostrEventSerialization
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.Nip19
@@ -14,6 +18,7 @@ import com.libertasprimordium.othernote.util.MediaType
 import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
 import com.libertasprimordium.othernote.util.truncateMarkdown
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -22,8 +27,63 @@ import kotlin.test.assertTrue
 class UtilityTests {
     @Test
     fun relayUrlsNormalizeAndRejectInvalidSchemes() {
-        assertEquals("wss://relay.example.com", normalizeRelayUrl("relay.example.com/").getOrThrow())
+        assertEquals("wss://relay.example.com", normalizeRelayUrl(" WSS://Relay.Example.com/ ").getOrThrow())
+        assertEquals("wss://relay.example.com/nostr", normalizeRelayUrl("wss://relay.example.com/nostr/").getOrThrow())
+        assertEquals("ws://localhost:7000", normalizeRelayUrl("ws://localhost:7000/").getOrThrow())
+        assertTrue(normalizeRelayUrl("relay.example.com/").isFailure)
         assertTrue(normalizeRelayUrl("https://relay.example.com").isFailure)
+        assertTrue(normalizeRelayUrl("http://relay.example.com").isFailure)
+        assertTrue(normalizeRelayUrl("wss://relay.example.com/?token=secret").isFailure)
+        assertTrue(normalizeRelayUrl("wss://relay.example.com/#fragment").isFailure)
+        assertTrue(normalizeRelayUrl("wss://relay example.com").isFailure)
+        assertTrue(normalizeRelayUrl("ws://relay.example.com").isFailure)
+    }
+
+    @Test
+    fun relaySettingsDeduplicateAndRejectEmptyLists() {
+        val store = RelaySettingsStore()
+
+        val preview = store.previewChange(
+            listOf(
+                " WSS://Relay.Example.com/ ",
+                "wss://relay.example.com",
+                "wss://relay.example.com/nostr/",
+            ),
+        ).getOrThrow()
+
+        assertEquals(listOf("wss://relay.example.com", "wss://relay.example.com/nostr"), preview.map { it.url })
+        assertTrue(store.previewChange(emptyList()).isFailure)
+    }
+
+    @Test
+    fun relaySettingsPersistenceRoundTripsSafeRelayUrls() = runBlocking {
+        val persistence = MemoryRelaySettingsPersistence()
+        val store = RelaySettingsStore(persistence = persistence)
+        val custom = store.previewChange(listOf("wss://relay.example.com", "wss://relay.example.com/nostr")).getOrThrow()
+
+        store.commitAndPersist(custom)
+        val restored = RelaySettingsStore(persistence = persistence)
+        restored.loadPersisted()
+
+        assertEquals(custom.map { it.url }, restored.normalizedUrls())
+        val serialized = persistence.raw ?: error("Missing serialized relay settings")
+        assertTrue(serialized.contains("wss://relay.example.com"))
+        assertFalse(serialized.contains("nsec"))
+        assertFalse(serialized.contains("privateKey"))
+        assertFalse(serialized.contains("body_markdown"))
+    }
+
+    @Test
+    fun relaySettingsRestoreDefaultsPersistsExpectedDefaultSet() = runBlocking {
+        val persistence = MemoryRelaySettingsPersistence()
+        val store = RelaySettingsStore(persistence = persistence)
+        val custom = store.previewChange(listOf("wss://relay.example.com")).getOrThrow()
+        store.commitAndPersist(custom)
+
+        store.restoreDefaultsAndPersist()
+
+        assertEquals(DefaultRelays.map { it.url }, store.normalizedUrls())
+        assertEquals(DefaultRelays.map { it.url }, RelaySettingsCodec.decodeOrNull(persistence.raw.orEmpty()))
     }
 
     @Test
@@ -154,5 +214,16 @@ class UtilityTests {
             content = JsonNotePayloadCodec.encode(payload),
             sig = "sig",
         )
+    }
+}
+
+private class MemoryRelaySettingsPersistence : RelaySettingsPersistence {
+    var raw: String? = null
+
+    override suspend fun loadRelayUrls(): List<String>? =
+        raw?.let { RelaySettingsCodec.decodeOrNull(it) }
+
+    override suspend fun saveRelayUrls(urls: List<String>) {
+        raw = RelaySettingsCodec.encode(urls)
     }
 }

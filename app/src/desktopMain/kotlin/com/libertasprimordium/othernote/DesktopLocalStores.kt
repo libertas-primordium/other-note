@@ -7,6 +7,8 @@ import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingRelayWrite
 import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
+import com.libertasprimordium.othernote.data.RelaySettingsCodec
+import com.libertasprimordium.othernote.data.RelaySettingsPersistence
 import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.util.nowMs
@@ -183,6 +185,20 @@ class DesktopPendingWriteStore(
     private fun bump() {
         _changes.value = _changes.value + 1
     }
+}
+
+class DesktopRelaySettingsPersistence(
+    private val file: Path = DesktopLocalStorePaths.dataDir().resolve("relay-settings.json"),
+) : RelaySettingsPersistence {
+    override suspend fun loadRelayUrls(): List<String>? =
+        readFile(file)?.let { RelaySettingsCodec.decodeOrNull(it) }
+
+    override suspend fun saveRelayUrls(urls: List<String>) {
+        atomicWrite(file, RelaySettingsCodec.encode(urls))
+    }
+
+    private fun readFile(file: Path): String? =
+        runCatching { if (file.exists()) file.readText() else null }.getOrNull()
 }
 
 private fun atomicWrite(file: Path, content: String) {
