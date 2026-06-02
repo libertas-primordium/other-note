@@ -8,6 +8,7 @@ import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.sync.planRelayMigration
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
+import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.MediaType
 import com.libertasprimordium.othernote.util.detectUrls
@@ -126,6 +127,20 @@ class UtilityTests {
         val truncated = truncateMarkdown("# Heading\n\n**bold** text", maxChars = 20)
         assertFalse(truncated.contains("#"))
         assertTrue(truncated.startsWith("Heading"))
+    }
+
+    @Test
+    fun noteGridColumnPolicyUsesTwoColumnsForNormalPhoneWidths() {
+        assertEquals(1, noteGridColumnCount(300))
+        assertEquals(2, noteGridColumnCount(336))
+        assertEquals(2, noteGridColumnCount(600))
+    }
+
+    @Test
+    fun noteGridColumnPolicyAdaptsForDesktopWidths() {
+        assertEquals(3, noteGridColumnCount(840))
+        assertEquals(5, noteGridColumnCount(1_440))
+        assertEquals(6, noteGridColumnCount(2_400))
     }
 
     private fun event(id: String, createdAt: Long, noteId: String, deleted: Boolean, body: String): NostrEvent {
