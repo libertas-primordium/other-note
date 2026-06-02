@@ -17,20 +17,27 @@ interface LocalEventCache {
 }
 
 class InMemoryLocalEventCache : LocalEventCache {
+    private val lock = Any()
     private val records = mutableMapOf<String, MutableMap<String, CachedNostrEventRecord>>()
 
     override suspend fun upsertEvents(accountPubkey: String, events: List<NostrEvent>) {
-        val accountRecords = records.getOrPut(accountPubkey) { mutableMapOf() }
-        events.forEach { event ->
-            accountRecords[event.id] = CachedNostrEventRecord(accountPubkey, event, com.libertasprimordium.othernote.util.nowMs())
+        synchronized(lock) {
+            val accountRecords = records.getOrPut(accountPubkey) { mutableMapOf() }
+            events.forEach { event ->
+                accountRecords[event.id] = CachedNostrEventRecord(accountPubkey, event, com.libertasprimordium.othernote.util.nowMs())
+            }
         }
     }
 
     override suspend fun loadEvents(accountPubkey: String): List<NostrEvent> =
-        records[accountPubkey]?.values?.map { it.event }.orEmpty()
+        synchronized(lock) {
+            records[accountPubkey]?.values?.map { it.event }.orEmpty()
+        }
 
     override suspend fun clearAccount(accountPubkey: String) {
-        records.remove(accountPubkey)
+        synchronized(lock) {
+            records.remove(accountPubkey)
+        }
     }
 }
 
@@ -78,24 +85,27 @@ interface PendingWriteStore {
 }
 
 class InMemoryPendingWriteStore : PendingWriteStore {
+    private val lock = Any()
     private val writes = mutableMapOf<String, PendingRelayWrite>()
     private val _changes = MutableStateFlow(0L)
     override val changes: StateFlow<Long> = _changes
 
     override suspend fun enqueuePendingWrite(accountPubkey: String, event: NostrEvent, targetRelays: List<String>) {
-        val now = com.libertasprimordium.othernote.util.nowMs()
-        val existing = writes[event.id]
-        writes[event.id] = PendingRelayWrite(
-            accountPubkey = accountPubkey,
-            event = event,
-            targetRelays = targetRelays.distinct(),
-            relayStatuses = existing?.relayStatuses.orEmpty() + targetRelays.distinct().associateWith { existing?.relayStatuses?.get(it) ?: PendingWriteStatus.Pending },
-            retryCounts = existing?.retryCounts.orEmpty(),
-            lastSafeErrorByRelay = existing?.lastSafeErrorByRelay.orEmpty(),
-            createdAtMs = existing?.createdAtMs ?: now,
-            updatedAtMs = now,
-        )
-        bump()
+        synchronized(lock) {
+            val now = com.libertasprimordium.othernote.util.nowMs()
+            val existing = writes[event.id]
+            writes[event.id] = PendingRelayWrite(
+                accountPubkey = accountPubkey,
+                event = event,
+                targetRelays = targetRelays.distinct(),
+                relayStatuses = existing?.relayStatuses.orEmpty() + targetRelays.distinct().associateWith { existing?.relayStatuses?.get(it) ?: PendingWriteStatus.Pending },
+                retryCounts = existing?.retryCounts.orEmpty(),
+                lastSafeErrorByRelay = existing?.lastSafeErrorByRelay.orEmpty(),
+                createdAtMs = existing?.createdAtMs ?: now,
+                updatedAtMs = now,
+            )
+            bump()
+        }
     }
 
     override suspend fun markRelayAccepted(eventId: String, relayUrl: String) {
@@ -128,16 +138,22 @@ class InMemoryPendingWriteStore : PendingWriteStore {
     }
 
     override suspend fun loadPendingWrites(accountPubkey: String): List<PendingRelayWrite> =
-        writes.values.filter { it.accountPubkey == accountPubkey }
+        synchronized(lock) {
+            writes.values.filter { it.accountPubkey == accountPubkey }
+        }
 
     override suspend fun removeCompletedWrite(eventId: String) {
-        writes.remove(eventId)
-        bump()
+        synchronized(lock) {
+            writes.remove(eventId)
+            bump()
+        }
     }
 
     private fun update(eventId: String, transform: (PendingRelayWrite) -> PendingRelayWrite) {
-        writes[eventId]?.let { writes[eventId] = transform(it) }
-        bump()
+        synchronized(lock) {
+            writes[eventId]?.let { writes[eventId] = transform(it) }
+            bump()
+        }
     }
 
     private fun bump() {

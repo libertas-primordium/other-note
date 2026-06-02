@@ -192,6 +192,22 @@ sealed class Nip46Response {
     data class Success(val id: String, val result: String) : Nip46Response()
     data class Error(val id: String, val safeMessage: String) : Nip46Response()
     data class AuthChallenge(val id: String, val safeUrl: String) : Nip46Response()
+    data class TransportFailure(val id: String, val reason: Nip46FailureReason, val safeMessage: String) : Nip46Response()
+}
+
+enum class Nip46FailureReason {
+    TokenParseFailure,
+    TransportKeyGenerationFailure,
+    SignerRelayPublishRejected,
+    SignerRelayPublishTimedOut,
+    SignerRelayConnectionFailed,
+    NoSignerResponse,
+    SignerResponseDecryptFailed,
+    SignerResponseIdMismatch,
+    SignerRequestTimedOut,
+    SignerRejectedRequest,
+    SignerTransportFailed,
+    AppNoteRelayPublishFailed,
 }
 
 object Nip46PayloadJson {
@@ -208,6 +224,9 @@ object Nip46PayloadJson {
 
     fun encodeResponse(payload: Nip46ResponsePayload): String =
         json.encodeToString(Nip46ResponsePayload.serializer(), payload)
+
+    fun decodeResponsePayload(raw: String): Result<Nip46ResponsePayload> =
+        runCatching { json.decodeFromString(Nip46ResponsePayload.serializer(), raw) }
 
     fun decodeResponse(raw: String, expectedRequestId: String): Result<Nip46Response> = runCatching {
         val payload = json.decodeFromString(Nip46ResponsePayload.serializer(), raw)

@@ -21,6 +21,7 @@ data class NostrFilter(
     val kinds: List<Int> = listOf(NoteKind),
     val tTags: List<String> = listOf(OtherNoteTag),
     val pTags: List<String> = emptyList(),
+    val since: Long? = null,
     val limit: Int = 200,
 )
 
@@ -125,6 +126,7 @@ object NostrWireJson {
         if (filter.pTags.isNotEmpty()) {
             put("#p", stringArray(filter.pTags))
         }
+        filter.since?.let { put("since", JsonPrimitive(it)) }
         put("limit", JsonPrimitive(filter.limit))
     }
 
