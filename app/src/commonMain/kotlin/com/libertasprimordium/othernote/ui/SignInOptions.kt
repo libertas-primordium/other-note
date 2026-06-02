@@ -22,6 +22,48 @@ data class SignInOptionUi(
     val enabled: Boolean = true,
 )
 
+enum class SignInInfoTopic {
+    AndroidSigner,
+    RemoteSigner,
+    ExistingNsec,
+    CreateIdentity,
+    LocalOnly,
+    DesktopKeyring,
+}
+
+data class SignInInfoCopy(
+    val title: String,
+    val body: String,
+)
+
+fun signInInfoCopy(topic: SignInInfoTopic): SignInInfoCopy =
+    when (topic) {
+        SignInInfoTopic.AndroidSigner -> SignInInfoCopy(
+            title = "Android signer",
+            body = "Your private key stays in the signer app. Other Note remembers the approved signer session so it can reopen without asking Amber just to sign in. Log out ends automatic sign-in. Forget removes only this device's saved signer metadata.",
+        )
+        SignInInfoTopic.RemoteSigner -> SignInInfoCopy(
+            title = "Remote signer",
+            body = "Your private key stays in the remote signer or bunker. Other Note stores a reusable remote-signer session and sends encrypted signer requests through signer relays. Forget removes only this device's saved remote-signer session.",
+        )
+        SignInInfoTopic.ExistingNsec -> SignInInfoCopy(
+            title = "Existing nsec",
+            body = "This uses the pasted nsec only for the current session. Other Note does not save it to app files. On desktop, saving to the keyring is a separate explicit action. Keep your nsec somewhere secure.",
+        )
+        SignInInfoTopic.CreateIdentity -> SignInInfoCopy(
+            title = "Create identity",
+            body = "This creates a fresh nsec. Other Note cannot recover it for you. Save it securely or import it into a signer before relying on this identity long term.",
+        )
+        SignInInfoTopic.LocalOnly -> SignInInfoCopy(
+            title = "Local-only",
+            body = "Local-only mode does not sync to relays and does not use a signer. It is useful for quick local notes, but it is not an encrypted Nostr account session.",
+        )
+        SignInInfoTopic.DesktopKeyring -> SignInInfoCopy(
+            title = "Desktop keyring",
+            body = KeyringSaveWarningCopy.description,
+        )
+    }
+
 fun buildSignInOptions(
     platform: AppPlatform,
     externalSignerAvailable: Boolean,

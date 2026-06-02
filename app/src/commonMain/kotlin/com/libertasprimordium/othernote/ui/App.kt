@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -46,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -114,6 +117,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val scope = rememberCoroutineScope()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
+    var infoTopic by remember { mutableStateOf<SignInInfoTopic?>(null) }
     val signInOptions = appState.signInOptions
     val androidSignerOption = signInOptions.firstOrNull { it.kind == SignInOptionKind.AndroidSigner }
     val remoteSignerOption = signInOptions.firstOrNull { it.kind == SignInOptionKind.RemoteSigner }
@@ -144,8 +148,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         Spacer(Modifier.height(24.dp))
 
         if (appState.platform == AppPlatform.Desktop) {
-            SignInSectionTitle("Saved identities")
-            SignInSupportingText("Stored in your desktop keyring. This is device-local and not a backup.")
+            SignInSectionHeader("Saved identities", SignInInfoTopic.DesktopKeyring) { infoTopic = it }
             Spacer(Modifier.height(8.dp))
             when {
                 !appState.secureSecretStoreAvailable -> SignInSupportingText(appState.secureSecretStoreStatus)
@@ -173,13 +176,10 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         }
 
         if (appState.platform == AppPlatform.Android && (androidSignerOption != null || appState.savedAndroidSignerAvailable)) {
-            SignInSectionTitle("Recommended")
-            SignInSupportingText(androidSignerOption?.supportingCopy ?: "Use an Android signer so Other Note never stores your nsec.")
-            SignInSupportingText("Your private key stays in your signer app. Other Note can remember this signer so you can continue without selecting it every time.")
+            SignInSectionHeader("Android signer", SignInInfoTopic.AndroidSigner) { infoTopic = it }
             Text(appState.externalSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
             if (appState.savedAndroidSignerAvailable) {
                 Spacer(Modifier.height(8.dp))
-                Text("Saved Android signers", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 when {
                     savedAndroidSigners.loading -> SignInSupportingText("Checking saved Android signers...")
                     savedAndroidSigners.error != null -> SignInSupportingText(savedAndroidSigners.error.orEmpty())
@@ -201,7 +201,6 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                         )
                     }
                 }
-                SignInSupportingText("Forgetting the signer removes only this app's saved Android signer connection from this device.")
             }
             androidSignerOption?.let { option ->
                 Spacer(Modifier.height(8.dp))
@@ -217,15 +216,10 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         }
 
         remoteSignerOption?.let { option ->
-            SignInSectionTitle("Remote signer")
-            SignInSupportingText(option.supportingCopy)
-            SignInSupportingText("Your private key stays in the signer. Other Note sends encrypted requests through signer relays after you approve the connection.")
-            Spacer(Modifier.height(6.dp))
-            RemoteSignerPermissionSummary()
+            SignInSectionHeader("Remote signer", SignInInfoTopic.RemoteSigner) { infoTopic = it }
             Text(appState.remoteSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
             if (appState.savedRemoteSignerAvailable) {
                 Spacer(Modifier.height(8.dp))
-                Text("Saved remote signers", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 when {
                     savedRemoteSigners.loading -> SignInSupportingText("Checking saved remote signers...")
                     savedRemoteSigners.error != null -> SignInSupportingText(savedRemoteSigners.error.orEmpty())
@@ -248,17 +242,15 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                         )
                     }
                 }
-                SignInSupportingText("Other Note stores a reusable remote-signer session so you do not have to pair every time. Forgetting it removes this app's remote-signer session from this device.")
             } else {
                 Spacer(Modifier.height(6.dp))
                 SignInSupportingText(appState.savedRemoteSignerStatus)
             }
             Spacer(Modifier.height(8.dp))
-            Text("Pair a new remote signer", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = bunkerToken,
                 onValueChange = { bunkerToken = it },
-                label = { Text("Paste bunker:// remote signer token") },
+                label = { Text("Paste bunker:// token") },
                 singleLine = true,
                 enabled = !remoteSignerPairing.inProgress,
                 visualTransformation = PasswordVisualTransformation(),
@@ -280,8 +272,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             Spacer(Modifier.height(18.dp))
         }
 
-        SignInSectionTitle("Use existing nsec")
-        SignInSupportingText(nsecOption.supportingCopy)
+        SignInSectionHeader("Existing nsec", SignInInfoTopic.ExistingNsec) { infoTopic = it }
+        SignInSupportingText("Session-only")
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = nsec,
@@ -313,25 +305,28 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             ) {
                 Text("Save to this device's keyring")
             }
-            SignInSupportingText(
-                if (appState.secureSecretStoreAvailable) {
-                    KeyringSaveWarningCopy.description
-                } else {
-                    appState.secureSecretStoreStatus
-                },
-            )
+            if (!appState.secureSecretStoreAvailable) SignInSupportingText(appState.secureSecretStoreStatus)
         }
         Spacer(Modifier.height(12.dp))
-        SignInSupportingText(generatedIdentityOption.supportingCopy)
-        TextButton(onClick = { appState.startGeneratedIdentityFlow() }) {
-            Text(generatedIdentityOption.label)
+        Text("Other options", color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { appState.startGeneratedIdentityFlow() }, modifier = Modifier.weight(1f)) {
+                Text(generatedIdentityOption.label)
+            }
+            InfoButton(label = "About create identity") { infoTopic = SignInInfoTopic.CreateIdentity }
         }
         Spacer(Modifier.height(8.dp))
-        TextButton(onClick = {
-            nsec = ""
-            appState.continueLocalOnly()
-        }) {
-            Text("Continue local-only")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(
+                onClick = {
+                    nsec = ""
+                    appState.continueLocalOnly()
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Continue local-only")
+            }
+            InfoButton(label = "About local-only") { infoTopic = SignInInfoTopic.LocalOnly }
         }
         Spacer(Modifier.height(12.dp))
         Text(message, color = OtherNoteMuted)
@@ -359,6 +354,12 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             },
         )
     }
+    infoTopic?.let { topic ->
+        SignInInfoDialog(
+            topic = topic,
+            onDismiss = { infoTopic = null },
+        )
+    }
 }
 
 @Composable
@@ -371,15 +372,22 @@ private fun SavedIdentityRow(
         colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
         shape = RoundedCornerShape(8.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(identity.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
-            Text("Saved in desktop keyring", color = OtherNoteMuted, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue with saved key")
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(identity.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+                Text("Desktop keyring", color = OtherNoteMuted, fontSize = 12.sp)
             }
-            TextButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
-                Text("Forget from this device")
+            Column(horizontalAlignment = Alignment.End) {
+                Button(onClick = onContinue) {
+                    Text("Continue")
+                }
+                TextButton(onClick = onForget) {
+                    Text("Forget")
+                }
             }
         }
     }
@@ -395,15 +403,22 @@ private fun SavedAndroidSignerRow(
         colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
         shape = RoundedCornerShape(8.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
-            Text(session.signerLabel?.takeIf { it.isNotBlank() } ?: session.signerPackage.safePrefix(), color = OtherNoteMuted, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue with Android signer")
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+                Text(session.signerLabel?.takeIf { it.isNotBlank() } ?: session.signerPackage.safePrefix(), color = OtherNoteMuted, fontSize = 12.sp)
             }
-            TextButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
-                Text("Forget Android signer")
+            Column(horizontalAlignment = Alignment.End) {
+                Button(onClick = onContinue) {
+                    Text("Continue")
+                }
+                TextButton(onClick = onForget) {
+                    Text("Forget")
+                }
             }
         }
     }
@@ -420,24 +435,53 @@ private fun SavedRemoteSignerRow(
         colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
         shape = RoundedCornerShape(8.dp),
     ) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
-            Text("Remote signer ${session.remoteSignerPubkey.safePrefix()}", color = OtherNoteMuted, fontSize = 12.sp)
-            Text("${session.relays.size} signer relay(s)", color = OtherNoteMuted, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onContinue, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue with remote signer")
+        Row(
+            Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+                Text("Remote signer ${session.remoteSignerPubkey.safePrefix()}", color = OtherNoteMuted, fontSize = 12.sp)
+                Text("${session.relays.size} relay(s)", color = OtherNoteMuted, fontSize = 12.sp)
             }
-            TextButton(onClick = onForget, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-                Text("Forget remote signer")
+            Column(horizontalAlignment = Alignment.End) {
+                Button(onClick = onContinue, enabled = enabled) {
+                    Text("Continue")
+                }
+                TextButton(onClick = onForget, enabled = enabled) {
+                    Text("Forget")
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SignInSectionTitle(text: String) {
-    Text(text, color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+private fun SignInSectionHeader(
+    text: String,
+    infoTopic: SignInInfoTopic,
+    onInfo: (SignInInfoTopic) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(text, color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        InfoButton(label = "About $text") { onInfo(infoTopic) }
+    }
+}
+
+@Composable
+private fun InfoButton(label: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = label },
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        Text("?")
+    }
 }
 
 @Composable
@@ -446,17 +490,18 @@ private fun SignInSupportingText(text: String) {
 }
 
 @Composable
-private fun RemoteSignerPermissionSummary() {
-    Column(
-        Modifier.fillMaxWidth()
-            .background(OtherNotePanel, RoundedCornerShape(8.dp))
-            .padding(10.dp),
-    ) {
-        Text("Other Note will ask the signer to:", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Text("Read your public key", color = OtherNoteMuted, fontSize = 12.sp)
-        Text("Encrypt and decrypt your notes", color = OtherNoteMuted, fontSize = 12.sp)
-        Text("Sign encrypted note and relay-list events", color = OtherNoteMuted, fontSize = 12.sp)
-    }
+private fun SignInInfoDialog(topic: SignInInfoTopic, onDismiss: () -> Unit) {
+    val copy = signInInfoCopy(topic)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(copy.title) },
+        text = { Text(copy.body) },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+    )
 }
 
 @Composable
