@@ -1483,7 +1483,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     var relayToAdd by remember { mutableStateOf("") }
     var relayError by remember { mutableStateOf<String?>(null) }
     var pendingPublishedRelays by remember { mutableStateOf<RelaySettingsRefreshResult.PublishedListAvailable?>(null) }
-    fun refreshPublishedRelayList() {
+    fun refreshPublishedRelayList(showNoChangeStatus: Boolean = false) {
         scope.launch {
             when (val result = appState.refreshPublishedRelayListForSettings()) {
                 is RelaySettingsRefreshResult.PublishedListAvailable -> {
@@ -1500,8 +1500,12 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                     }
                 }
                 is RelaySettingsRefreshResult.Failed -> relayError = result.safeReason
-                is RelaySettingsRefreshResult.NoChange -> Unit
-                is RelaySettingsRefreshResult.Skipped -> Unit
+                is RelaySettingsRefreshResult.NoChange -> if (showNoChangeStatus) {
+                    relayError = result.safeReason
+                }
+                is RelaySettingsRefreshResult.Skipped -> if (showNoChangeStatus) {
+                    relayError = result.safeReason
+                }
             }
         }
     }
@@ -1511,29 +1515,28 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Relays") },
+                title = { Text("Note relays") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
                 actions = {
                     TextButton(
-                        onClick = { refreshPublishedRelayList() },
+                        onClick = { refreshPublishedRelayList(showNoChangeStatus = true) },
                         enabled = !relayAddState.inProgress && !relayMigrationState.inProgress,
-                    ) { Text("Refresh") }
+                        modifier = Modifier.semantics { contentDescription = "Import published note relay list" },
+                    ) { Text("Import") }
                 },
             )
         },
         containerColor = OtherNoteBlack,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Text("App relays", color = OtherNoteText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Note relays", color = OtherNoteText, fontSize = 20.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text("These relays sync encrypted note events. They do not change NIP-46 remote-signer transport relays.", color = OtherNoteMuted)
+            Text("These relays store and fetch your encrypted notes.", color = OtherNoteMuted)
             Spacer(Modifier.height(6.dp))
-            Text("Other Note publishes encrypted kind 30078 note events only. At least one readable and writable relay is needed for relay sync and publishing.", color = OtherNoteMuted)
+            Text("Other Note uses them for encrypted note events and your public write-relay list.", color = OtherNoteMuted)
             Spacer(Modifier.height(6.dp))
-            Text("When signed in, relay changes publish public kind 10002 relay-list metadata for write relays while preserving other categories where possible.", color = OtherNoteMuted)
-            Spacer(Modifier.height(6.dp))
-            Text("Public relays may purge old events. Add a relay you control for stronger long-term retention.", color = OtherNoteMuted)
+            Text("At least one readable and writable relay is needed for note sync.", color = OtherNoteMuted)
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = relayToAdd,
@@ -1541,7 +1544,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                     relayToAdd = it
                     relayError = null
                 },
-                label = { Text("Add relay hostname or URL") },
+                label = { Text("Add note relay") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !relayAddState.inProgress,
@@ -1566,12 +1569,12 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                     },
                     enabled = !relayAddState.inProgress && !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (relayAddState.inProgress) "Testing relay..." else "Add relay") }
+                ) { Text(if (relayAddState.inProgress) "Testing relay..." else "Add note relay") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
                         draftRelays = appState.defaultRelayUrls
-                        relayError = "Default relays staged. Save to migrate and apply."
+                        relayError = "Default note relays staged. Save to migrate and apply."
                     },
                     enabled = !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
@@ -1593,20 +1596,32 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                         relayAddState.warning == null &&
                         !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (relayMigrationState.inProgress) "Migrating..." else "Sync/Migrate") }
+                ) { Text(if (relayMigrationState.inProgress) "Syncing..." else "Sync note relays") }
             }
             relayError?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(it, color = OtherNotePurple)
+                Text(it, color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.height(16.dp))
             if (draftRelays.isEmpty()) {
-                Text("No app relays configured. Relay sync and publishing require at least one valid wss:// relay.", color = OtherNotePurple)
+                Text("No note relays configured. Note sync requires at least one valid wss:// relay.", color = MaterialTheme.colorScheme.error)
             } else {
+                Text("Current note relays", color = OtherNoteText, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 draftRelays.forEachIndexed { index, relay ->
                     RelaySettingsRow(
                         relay = relay,
                         status = syncState.relayStatuses.firstOrNull { it.url == relay }?.message,
+                        testing = relayAddState.inProgress,
+                        onTest = {
+                            scope.launch {
+                                if (appState.testConfiguredRelay(relay)) {
+                                    relayError = null
+                                } else {
+                                    relayError = appState.message.value
+                                }
+                            }
+                        },
                         onRemove = {
                             draftRelays = draftRelays.toMutableList().also { it.removeAt(index) }
                             relayError = null
@@ -1732,6 +1747,8 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
 private fun RelaySettingsRow(
     relay: String,
     status: String?,
+    testing: Boolean,
+    onTest: () -> Unit,
     onRemove: () -> Unit,
 ) {
     Card(
@@ -1746,8 +1763,21 @@ private fun RelaySettingsRow(
                 Text(readableRelayStatusText(it), color = OtherNoteMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onRemove) {
-                Text("Remove")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = onTest,
+                    enabled = !testing,
+                    modifier = Modifier.semantics { contentDescription = "Test note relay $relay" },
+                ) {
+                    Text(if (testing) "Testing..." else "Test")
+                }
+                TextButton(
+                    onClick = onRemove,
+                    enabled = !testing,
+                    modifier = Modifier.semantics { contentDescription = "Remove note relay $relay" },
+                ) {
+                    Text("Remove")
+                }
             }
         }
     }

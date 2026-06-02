@@ -1591,6 +1591,45 @@ class AppModeTests {
     }
 
     @Test
+    fun relaySettingsUseOnlyNoteRelaysAndDoNotMutateNip46TransportRelays() = runBlocking {
+        val nip46Store = InMemoryNip46SessionStore()
+        val signerTransportRelays = listOf("wss://signer-transport.example")
+        nip46Store.saveSession(
+            SavedNip46Session(
+                userPubkey = "21".repeat(32),
+                userNpub = Nip19.encode("npub", ByteArray(32) { 0x21 }) ?: error("npub encode failed"),
+                clientPrivateKeyHex = "22".repeat(32),
+                clientPubkey = "23".repeat(32),
+                remoteSignerPubkey = "24".repeat(32),
+                relays = signerTransportRelays,
+            ),
+        )
+        val relayTester = RecordingRelayTester()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = MigrationRelayClient(),
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://note-one.example"))),
+                relayTester = relayTester,
+                nip46SessionStore = nip46Store,
+            ),
+        )
+
+        assertEquals(listOf("wss://note-one.example"), state.relaySettings.normalizedUrls())
+        assertFalse(state.relaySettings.normalizedUrls().any { it in signerTransportRelays })
+
+        assertFalse(state.saveRelays(listOf("wss://note-two.example")))
+        assertTrue(state.continueRelayMigration())
+        assertTrue(state.testConfiguredRelay("wss://note-two.example"))
+
+        assertEquals(listOf("wss://note-two.example"), state.relaySettings.normalizedUrls())
+        assertEquals(listOf("wss://note-two.example"), relayTester.testedRelays)
+        val savedSession = assertListedNip46Sessions(nip46Store).single()
+        assertEquals(signerTransportRelays, savedSession.relays)
+    }
+
+    @Test
     fun syncImportsPublishedWriteRelaysBeforeFetchingNotes() = runBlocking {
         val privateKey = "1".padStart(64, '0')
         val publicKey = privateKey.reversed()
@@ -2695,5 +2734,14 @@ private class BlockingRelayTester(
     override suspend fun testAppRelay(relayUrl: String, session: com.libertasprimordium.othernote.domain.UserSession?): RelayTestResult {
         gate.await()
         return RelayTestResult.Success(relayUrl, mode = "test")
+    }
+}
+
+private class RecordingRelayTester : RelayTester {
+    val testedRelays = mutableListOf<String>()
+
+    override suspend fun testAppRelay(relayUrl: String, session: com.libertasprimordium.othernote.domain.UserSession?): RelayTestResult {
+        testedRelays += relayUrl
+        return RelayTestResult.Success(relayUrl, mode = "signed_write_fetch")
     }
 }

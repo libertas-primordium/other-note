@@ -2243,7 +2243,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
         val currentRelays = relaySettings.normalizedUrls()
         if (currentRelays.isEmpty()) {
-            _message.value = "No app relays configured."
+            _message.value = "No note relays configured."
             return false
         }
         if (_relayMigrationState.value.inProgress) {
@@ -2263,7 +2263,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
         pendingRelayMigrationDecision = null
         _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
-        _message.value = "Syncing encrypted notes across relays..."
+        _message.value = "Syncing encrypted notes across note relays..."
         val result = withContext(Dispatchers.IO) {
             relayMigration.execute(session, planManualRelaySync(currentRelays))
         }
@@ -2274,7 +2274,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = if (result.latestEvents.isEmpty()) {
                 "No encrypted notes to migrate."
             } else {
-                "Relay sync/migration completed."
+                "Note relay sync completed."
             }
             return true
         }
@@ -2287,7 +2287,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             sessionPubkey = session.publicKeyHex,
             summary = userWarning.title,
             details = details,
-            successMessage = "Relay sync/migration continued; failed relay writes were queued where possible.",
+            successMessage = "Note relay sync continued; failed relay writes were queued where possible.",
         )
         _relayMigrationState.value = RelayMigrationUiState(
             warning = RelayMigrationWarning(userWarning.title, userWarning.body, details),
@@ -2494,7 +2494,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
 
         _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
-        _message.value = "Migrating encrypted relay state..."
+        _message.value = "Migrating encrypted notes across note relays..."
         val (relayListPublish, result) = withContext(Dispatchers.IO) {
             val relayListResult = publishRelayListForSettingsChange(session, old, configs.map { it.url })
             relayListResult to relayMigration.execute(session, plan)
@@ -2761,6 +2761,60 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                     ),
                 )
                 RelayAddResult.WaitingForUserChoice
+            }
+        }
+    }
+
+    suspend fun testConfiguredRelay(rawRelay: String): Boolean {
+        if (_relayAddTestState.value.inProgress) {
+            _message.value = "Relay test already in progress."
+            return false
+        }
+        val parsed = relaySettings.previewChange(listOf(rawRelay))
+        val normalized = parsed.getOrNull()?.singleOrNull()?.url
+        if (normalized == null) {
+            _message.value = parsed.exceptionOrNull()?.message ?: "Invalid relay URL."
+            return false
+        }
+        _relayAddTestState.value = RelayAddTestState(inProgress = true)
+        val result = withContext(Dispatchers.IO) {
+            services.relayTester.testAppRelay(normalized, _session.value)
+        }
+        _relayAddTestState.value = RelayAddTestState()
+        return when (result) {
+            is RelayTestResult.Success -> {
+                val writable = result.mode == "signed_write_fetch"
+                updateRelaySettingsStatuses(
+                    listOf(
+                        RelayStatus(
+                            url = normalized,
+                            readable = true,
+                            writable = writable,
+                            message = if (writable) {
+                                "Relay reachable for note reads and writes"
+                            } else {
+                                "Relay reachable for note reads"
+                            },
+                        ),
+                    ),
+                )
+                _message.value = "Relay test passed."
+                true
+            }
+            is RelayTestResult.Failure -> {
+                val safeMessage = result.userMessage.toRelayTestWarningMessage()
+                updateRelaySettingsStatuses(
+                    listOf(
+                        RelayStatus(
+                            url = normalized,
+                            readable = false,
+                            writable = false,
+                            message = safeMessage.toReadableRelayFailure("Could not test relay"),
+                        ),
+                    ),
+                )
+                _message.value = "Relay test failed. $safeMessage"
+                false
             }
         }
     }
