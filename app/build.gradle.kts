@@ -52,7 +52,7 @@ kotlin {
 
 android {
     namespace = "com.libertasprimordium.othernote"
-    compileSdkPreview = "CinnamonBun"
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.libertasprimordium.othernote"
