@@ -31,8 +31,15 @@ enum class AppRuntimeMode {
     DesktopDevRelay,
 }
 
+enum class AppPlatform {
+    Generic,
+    Android,
+    Desktop,
+}
+
 data class AppServices(
     val mode: AppRuntimeMode,
+    val platform: AppPlatform = AppPlatform.Generic,
     val crypto: NostrCrypto,
     val client: NostrClient,
     val showRelayDiagnostics: Boolean = false,
@@ -61,8 +68,9 @@ val DesktopDevRelayDefaults = listOf(
     RelayConfig("wss://relay.ditto.pub"),
 )
 
-fun defaultAppServices(): AppServices = AppServices(
+fun defaultAppServices(platform: AppPlatform = AppPlatform.Generic): AppServices = AppServices(
     mode = AppRuntimeMode.Offline,
+    platform = platform,
     crypto = NonProductionNostrCrypto(),
     client = OfflineNostrClient(),
     startupWarnings = listOf("Production relay runtime is disabled"),

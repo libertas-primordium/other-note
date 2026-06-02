@@ -75,7 +75,7 @@ Current direct `nsec` use is session-only. Other Note does not persist `nsec` va
 
 The sign-in screen can create a fresh Nostr identity. This generates a new private key, displays the `nsec` for the user to save in a secure password manager, OS credential store, or signer such as Amber, and requires explicit acknowledgement before the key is used for the current session. When production crypto and a relay client are available, the generated session can encrypt, sign, publish, decrypt, edit, and delete encrypted `kind: 30078` notes. Losing the generated `nsec` means losing access to encrypted notes for that identity. Other Note does not silently store or recover it.
 
-The key-management policy is documented in [docs/key-management.md](docs/key-management.md). Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side.
+The key-management policy is documented in [docs/key-management.md](docs/key-management.md). The sign-in screen prioritizes Android signer/NIP-55 first on Android, then NIP-46 remote signer/bunker when available, then session-only pasted `nsec`, with fresh identity generation as a lower-emphasis deliberate flow. Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side.
 
 ## Android External Signer Status
 
@@ -83,7 +83,7 @@ Android builds include NIP-55 discovery, public-key request, internal coverage f
 
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
 - Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
-- The login screen shows whether an Android signer is available and keeps the direct `nsec` field as a session-only fallback.
+- When a NIP-55 signer is detected, the login screen presents Android signer as the recommended Android path, shows remote signer/bunker as an advanced secondary option when available, and keeps the direct `nsec` field as a lower-emphasis session-only fallback.
 - Pressing "Use Android signer" explicitly launches a NIP-55 `get_public_key` intent. If the signer approves, Other Note creates an in-memory signer-backed session with public key, `npub`, and signer package metadata only.
 - Internal tests and helper code cover the NIP-55 `ContentResolver` `SIGN_EVENT` path using harmless unpublished events. These development test actions are no longer exposed in the normal app UI.
 - The initial `get_public_key` request asks for the optional kind `1` `sign_event` permission so Amber can allow the ContentResolver signing request.

@@ -11,6 +11,7 @@ import com.libertasprimordium.othernote.security.AndroidNip55EventSigner
 import com.libertasprimordium.othernote.security.AndroidNip55Nip44Operator
 import com.libertasprimordium.othernote.security.AndroidNip55PublicKeyRequester
 import com.libertasprimordium.othernote.security.nip46RemoteSigner
+import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.OtherNoteApp
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity() {
         val crypto = ProductionNostrCryptoFactory.createOrNull() ?: NonProductionNostrCrypto()
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
+            platform = AppPlatform.Android,
             crypto = crypto,
             client = nostrClient,
             externalSignerProvider = AndroidExternalSignerProvider(this),

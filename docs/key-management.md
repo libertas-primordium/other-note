@@ -18,15 +18,19 @@ Unavailable/no-op storage is intentional. It is safer to disable saved-key mode 
 Use this priority order:
 
 1. External signer or delegated signer where available.
-2. Session-only pasted `nsec`.
-3. Explicit saved-device `nsec` only through OS-backed credential storage.
-4. No plaintext persistence fallback.
+2. NIP-46 remote signer/bunker where available and appropriate.
+3. Session-only pasted `nsec`.
+4. Fresh generated `nsec` only through the deliberate "Create new identity" flow.
+5. Explicit saved-device `nsec` only through OS-backed credential storage.
+6. No plaintext persistence fallback.
 
 Session-only `nsec` means the key is held only in process memory for the active app session. The input field must be cleared after login and the full `nsec` must not be displayed after entry.
 
 Other Note may generate a fresh Nostr identity for a user-facing "Create new identity" flow. The generated `nsec` is the private key. It may be displayed only inside the deliberate generation flow so the user can save it outside Other Note or import it into a signer, and it must never be written to app preferences, DataStore, SQLite, files, JSON stores, durable relay caches, logs, analytics, crash reports, or relay events. The generated direct-key session remains session-only. When production crypto and a relay client are available, that session may use the in-memory private key for NIP-44 v2 encryption/decryption and NIP-01 signing, but durable storage must still contain only signed encrypted events and safe relay metadata. Losing the generated `nsec` means losing access to encrypted notes for that identity.
 
 Generated-identity UX must require explicit acknowledgement that the user saved the `nsec` and understands the recovery risk before using it for a session. Clipboard copy must never happen automatically. If a future platform-specific copy action is added, it must be explicit, warning-labeled, and clear the clipboard after a short delay where the platform API makes that reliable.
+
+Android sign-in UX should make the NIP-55 signer path the most prominent recommended option when a signer is detected, hide that option when no signer is detected, show NIP-46 remote signer/bunker as an advanced secondary option when available, keep pasted `nsec` lower emphasis and session-only, and present fresh identity generation as a text-only deliberate action.
 
 ## Android Plan
 
