@@ -11,9 +11,11 @@ import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
 import com.libertasprimordium.othernote.data.PendingWriteMaxRetryCount
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
+import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
 import com.libertasprimordium.othernote.security.SignerNip44Operation
@@ -61,6 +63,32 @@ data class EditorSaveState(
     val error: String? = null,
 )
 
+enum class GeneratedIdentityStep {
+    Idle,
+    Explanation,
+    Generated,
+}
+
+data class GeneratedIdentityState(
+    val step: GeneratedIdentityStep = GeneratedIdentityStep.Idle,
+    val npub: String = "",
+    val nsecRevealed: Boolean = false,
+    val savedAcknowledged: Boolean = false,
+    val lossAcknowledged: Boolean = false,
+    val error: String? = null,
+    internal val secret: GeneratedIdentitySecret? = null,
+) {
+    val canUseForSession: Boolean get() =
+        step == GeneratedIdentityStep.Generated && secret != null && savedAcknowledged && lossAcknowledged
+
+    fun nsecForDisplay(): String =
+        if (nsecRevealed) {
+            secret?.revealNsec().orEmpty()
+        } else {
+            "nsec hidden until you reveal it"
+        }
+}
+
 class AppState(private val services: AppServices = defaultAppServices()) {
     private val crypto = services.crypto
     private val signerVerifier = ProductionNostrCryptoFactory.createOrNull()
@@ -68,6 +96,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val nostr = NostrRepository(crypto, client)
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val runtimeMode: AppRuntimeMode = services.mode
+    val directRelayRuntimeAvailable: Boolean = crypto.productionReady && services.client !is OfflineNostrClient
     val notes = services.notes
     val relaySettings = services.relaySettings
     private val saveNote = SaveNoteUseCase(
@@ -142,6 +171,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val _editorSaveState = MutableStateFlow(EditorSaveState())
     val editorSaveState: StateFlow<EditorSaveState> = _editorSaveState
 
+    private val _generatedIdentityState = MutableStateFlow(GeneratedIdentityState())
+    val generatedIdentityState: StateFlow<GeneratedIdentityState> = _generatedIdentityState
+
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
     val externalSignerAvailable: Boolean = services.externalSignerProvider.isAvailable
@@ -187,8 +219,8 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                     authMethod = SessionAuthMethod.SessionOnlyNsec,
                 )
                 _mode.value = AppMode.Authenticated
-                _message.value = if (runtimeMode == AppRuntimeMode.DesktopDevRelay) {
-                    "Developer relay mode. nsec is session-only and not persisted."
+                _message.value = if (directRelayRuntimeAvailable) {
+                    "nsec active for this session only. Other Note did not store it."
                 } else {
                     "nsec validated. Relay sync is disabled in offline runtime."
                 }
@@ -200,6 +232,87 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             }
         }
     }
+
+    fun startGeneratedIdentityFlow() {
+        _generatedIdentityState.value = GeneratedIdentityState(step = GeneratedIdentityStep.Explanation)
+        _message.value = "Create a new identity only if you are ready to save the nsec outside Other Note."
+    }
+
+    fun generateFreshIdentity(): Boolean {
+        val generator = identityGenerationCrypto()
+        if (generator == null) {
+            _generatedIdentityState.value = GeneratedIdentityState(
+                step = GeneratedIdentityStep.Explanation,
+                error = ProductionNostrCryptoFactory.unavailableReason,
+            )
+            _message.value = "Fresh identity generation is unavailable in this runtime."
+            return false
+        }
+        val secret = GeneratedIdentitySecret.generate(generator).getOrElse {
+            _generatedIdentityState.value = GeneratedIdentityState(
+                step = GeneratedIdentityStep.Explanation,
+                error = "Could not generate a fresh identity.",
+            )
+            _message.value = "Could not generate a fresh identity."
+            return false
+        }
+        _generatedIdentityState.value = GeneratedIdentityState(
+            step = GeneratedIdentityStep.Generated,
+            npub = secret.npub,
+            secret = secret,
+        )
+        _message.value = "Fresh identity generated. Save the nsec before continuing."
+        return true
+    }
+
+    fun toggleGeneratedIdentityNsecReveal() {
+        val current = _generatedIdentityState.value
+        if (current.step == GeneratedIdentityStep.Generated) {
+            _generatedIdentityState.value = current.copy(nsecRevealed = !current.nsecRevealed)
+        }
+    }
+
+    fun acknowledgeGeneratedIdentitySaved(acknowledged: Boolean) {
+        val current = _generatedIdentityState.value
+        _generatedIdentityState.value = current.copy(savedAcknowledged = acknowledged)
+    }
+
+    fun acknowledgeGeneratedIdentityLossRisk(acknowledged: Boolean) {
+        val current = _generatedIdentityState.value
+        _generatedIdentityState.value = current.copy(lossAcknowledged = acknowledged)
+    }
+
+    fun cancelGeneratedIdentityFlow() {
+        _generatedIdentityState.value = GeneratedIdentityState()
+        _message.value = "Fresh identity generation cancelled."
+    }
+
+    fun useGeneratedIdentityForSession(): Boolean {
+        val current = _generatedIdentityState.value
+        val secret = current.secret
+        if (!current.canUseForSession || secret == null) {
+            _message.value = "Save the generated nsec and acknowledge the recovery warning before continuing."
+            return false
+        }
+        _session.value = UserSession(
+            nsec = "nsec-redacted",
+            privateKeyHex = secret.privateKeyHex,
+            npub = secret.npub,
+            publicKeyHex = secret.publicKeyHex,
+            authMethod = SessionAuthMethod.SessionOnlyNsec,
+        )
+        _mode.value = AppMode.Authenticated
+        _generatedIdentityState.value = GeneratedIdentityState()
+        _message.value = if (directRelayRuntimeAvailable) {
+            "New identity active for this session only. Other Note did not store the nsec."
+        } else {
+            "New identity active for this session only. Direct generated-key use remains local/offline in this runtime."
+        }
+        return true
+    }
+
+    private fun identityGenerationCrypto() =
+        if (crypto.productionReady) crypto else ProductionNostrCryptoFactory.createOrNull()
 
     fun requestExternalSignerPublicKey() {
         if (!externalSignerAvailable) {
@@ -503,7 +616,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = "Saving requires a session key or Android signer."
             return false
         }
-        val result = saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
+        val result = withContext(Dispatchers.IO) {
+            saveNote.save(existing, markdown, _session.value, relaySettings.normalizedUrls())
+        }
         _message.value = result.toCompactMessage()
         _diagnosticMessage.value = result.toDiagnosticMessage()
         return result !is SaveResult.Failed
@@ -609,7 +724,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = "Deleting requires a session key or Android signer."
             return false
         }
-        val result = deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
+        val result = withContext(Dispatchers.IO) {
+            deleteNote.delete(note, _session.value, relaySettings.normalizedUrls())
+        }
         _message.value = result.toCompactMessage()
         _diagnosticMessage.value = result.toDiagnosticMessage()
         return result !is SaveResult.Failed
@@ -690,17 +807,19 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             syncWithExternalSigner(session)
             return
         }
-        if (_session.value == null || runtimeMode != AppRuntimeMode.DesktopDevRelay || _session.value?.hasSessionPrivateKey() != true) {
+        if (_session.value == null || !directRelayRuntimeAvailable || _session.value?.hasSessionPrivateKey() != true) {
             _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
             _message.value = _syncState.value.summary
             return
         }
         _syncState.value = _syncState.value.copy(syncing = true)
         try {
-            _syncState.value = syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
-                _syncState.value = partial.copy(syncing = true)
-                _message.value = partial.toCompactMessage()
-                _diagnosticMessage.value = partial.toDiagnosticMessage()
+            _syncState.value = withContext(Dispatchers.IO) {
+                syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
+                    _syncState.value = partial.copy(syncing = true)
+                    _message.value = partial.toCompactMessage()
+                    _diagnosticMessage.value = partial.toDiagnosticMessage()
+                }
             }
         } finally {
             _syncState.value = _syncState.value.copy(syncing = false)

@@ -11,13 +11,14 @@ Important security status:
 - GPLv3 license is preserved in `LICENSE`.
 - Private keys and decrypted note bodies are not logged.
 - `nsec` input is only kept in memory. The UI redacts it immediately after validation.
+- "Create new identity" generates a fresh Nostr private key and shows the resulting `nsec` so the user can save or import it. Other Note does not persist the generated plaintext `nsec`.
 - The login field hides pasted `nsec` text and clears it after successful validation or local-only entry.
 - Local-only mode is explicit. Notes can be created, viewed, edited, and deleted without a Nostr session.
 - Secure private-key persistence is intentionally disabled until platform secure storage is implemented.
-- `ProductionNostrCryptoFactory` is enabled for offline desktop/JVM tests after upgrading Quartz and the Kotlin/Compose/AGP toolchain. Normal app usage still uses the safe `NonProductionNostrCrypto` fallback until relay sync and storage behavior are reviewed.
+- `ProductionNostrCryptoFactory` is enabled for direct session-only signing, NIP-44 v2 encryption/decryption, and relay-backed tests where a real relay client is wired. `NonProductionNostrCrypto` remains the safety fallback.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
-- Normal direct-`nsec` app runtime still uses an offline relay adapter unless desktop developer relay mode is explicitly enabled. Bounded desktop/JVM and Android WebSocket relay clients exist for explicit relay-backed testing paths, and publishing/fetching surface explicit per-relay status instead of fake success.
-- Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; Android relay-backed note runtime is available only after explicit Android external-signer login.
+- Direct `nsec` and generated-identity use remains session-only and unsaved, but can encrypt/sign/publish/fetch when production crypto and a real relay client are available. Bounded desktop/JVM and Android WebSocket relay clients surface explicit per-relay status instead of fake success.
+- Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; Android relay-backed note runtime is available for external signer, NIP-46, and production-crypto direct session-only identities.
 - Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
@@ -71,6 +72,8 @@ Relay changes are planned through a migration use case that identifies added and
 ## Key Management And nsec Safety
 
 Current direct `nsec` use is session-only. Other Note does not persist `nsec` values or private keys, and saved-key mode is disabled until platform secure storage or signer delegation is implemented and tested.
+
+The sign-in screen can create a fresh Nostr identity. This generates a new private key, displays the `nsec` for the user to save in a secure password manager, OS credential store, or signer such as Amber, and requires explicit acknowledgement before the key is used for the current session. When production crypto and a relay client are available, the generated session can encrypt, sign, publish, decrypt, edit, and delete encrypted `kind: 30078` notes. Losing the generated `nsec` means losing access to encrypted notes for that identity. Other Note does not silently store or recover it.
 
 The key-management policy is documented in [docs/key-management.md](docs/key-management.md). Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side.
 
@@ -209,7 +212,7 @@ Android external-signer relay runtime keeps the same durable encrypted event and
 - `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
 - `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, safe error strings, and timestamps.
 - The files are used only after Android signer login for the same public key. Loading the encrypted event cache does not require network or signer access, but decrypting cached events still requires signer-mediated NIP-44 decrypt for the active session.
-- Direct `nsec` fallback remains session-only and local/offline. Saved-device key storage remains future work and must use OS-backed secure storage when implemented.
+- Direct `nsec` fallback remains session-only and unsaved. When production crypto and a relay client are available it can publish/recover encrypted notes; otherwise it remains local/offline and must not emit plaintext. Saved-device key storage remains future work and must use OS-backed secure storage when implemented.
 
 Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
 
@@ -236,6 +239,21 @@ Manual relay checklist:
 5. Restart in developer relay mode, log in with the same throwaway `nsec`, and refresh/fetch the note.
 6. Edit the note and verify refresh keeps only the newest version.
 7. Delete the note and verify refresh/restart hides the tombstoned note.
+
+Manual generated-identity checklist:
+
+1. Open the sign-in screen.
+2. Tap "Create new identity."
+3. Confirm the warning screen explains that the generated `nsec` is a private key and cannot be recovered by Other Note.
+4. Generate the identity and confirm an `npub` appears.
+5. Reveal the `nsec` only when ready to save it.
+6. Confirm "Use for this session" stays disabled until both acknowledgements are checked.
+7. Save/import the `nsec` outside Other Note, then use it for the session.
+8. Create, edit, and delete a note. Confirm no "NIP-44 v2 encryption is not wired yet" warning appears when production crypto is available.
+9. Logout or force-stop/relaunch and confirm the generated key is not remembered automatically.
+10. Re-enter the saved `nsec` through the direct session-only path or import it into a signer, then sync and confirm encrypted notes can be recovered/decrypted.
+11. Inspect app-private durable stores and confirm the exact generated `nsec`, raw private key, plaintext note body, `body_markdown`, and token secrets are absent.
+12. Confirm Android NIP-55 and NIP-46 login paths still appear and work as before.
 
 Runtime troubleshooting:
 
@@ -311,7 +329,7 @@ The real crypto round-trip tests live under `desktopTest`. They generate throwaw
 - Sends `CLOSE` after bounded fetches.
 - Falls back to author/kind filtering if tag filtering does not return usable events.
 
-The desktop client is wired only into desktop developer relay runtime when `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` or `-Dothernote.devRelayRuntime=true` is set. The Android client is wired only for Android external-signer sessions and uses signer NIP-44/signing operations instead of importing a private key. Direct `nsec` fallback runtime remains session-only/offline.
+The desktop client is wired only into desktop developer relay runtime when `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` or `-Dothernote.devRelayRuntime=true` is set. The Android client is wired for Android external-signer, NIP-46, and production-crypto direct session-only identities. Direct `nsec` fallback remains session-only and unsaved; it falls back to local/offline only if production crypto is unavailable.
 
 ## Architecture
 

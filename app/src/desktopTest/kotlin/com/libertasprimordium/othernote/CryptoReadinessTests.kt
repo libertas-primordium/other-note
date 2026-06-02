@@ -13,6 +13,7 @@ import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.nostr.hexToBytes
 import com.libertasprimordium.othernote.nostr.noteEventTags
+import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.vitorpamplona.quartz.nip44Encryption.Nip44
@@ -99,6 +100,42 @@ class CryptoReadinessTests {
             crypto.decryptFromSelf(it.content, privateKey, publicKey)
         }
         assertTrue(reducedWithTombstone.notes.isEmpty())
+    }
+
+    @Test
+    fun generatedIdentitySecretRoundTripsAndRedactsDebugOutput() {
+        val crypto = ProductionNostrCryptoFactory.createOrNull()
+            ?: return
+
+        val first = GeneratedIdentitySecret.generate(crypto).getOrThrow()
+        val second = GeneratedIdentitySecret.generate(crypto).getOrThrow()
+        val decoded = crypto.decodeNsec(first.revealNsec())
+        assertTrue(decoded is KeyDecodeResult.Valid)
+        assertEquals(first.privateKeyHex, decoded.privateKey.hex)
+        val publicKey = crypto.derivePublicKey(decoded.privateKey).getOrThrow()
+        assertEquals(first.publicKeyHex, publicKey.hex)
+        assertEquals(first.npub, crypto.encodeNpub(publicKey).getOrThrow())
+        assertFalse(first.revealNsec() == second.revealNsec())
+        assertFalse(first.privateKeyHex == second.privateKeyHex)
+        assertFalse(first.toString().contains(first.revealNsec()))
+        assertFalse(first.toString().contains(first.privateKeyHex))
+    }
+
+    @Test
+    fun generatedIdentitySecretSupportsNip44SelfRoundTrip() {
+        val crypto = ProductionNostrCryptoFactory.createOrNull()
+            ?: return
+
+        val secret = GeneratedIdentitySecret.generate(crypto).getOrThrow()
+        val privateKey = NostrPrivateKey(secret.privateKeyHex)
+        val publicKey = NostrPublicKey(secret.publicKeyHex, secret.npub)
+        val plaintext = """{"body_markdown":"generated direct signer plaintext should not persist"}"""
+
+        val ciphertext = crypto.encryptToSelf(plaintext, privateKey, publicKey).getOrThrow()
+        assertFalse(ciphertext.contains(plaintext))
+        assertFalse(ciphertext.contains("generated direct signer plaintext"))
+        assertFalse(ciphertext.contains("body_markdown"))
+        assertEquals(plaintext, crypto.decryptFromSelf(ciphertext, privateKey, publicKey).getOrThrow())
     }
 
     @Test

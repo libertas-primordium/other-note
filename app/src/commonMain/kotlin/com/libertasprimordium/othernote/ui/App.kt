@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -83,6 +84,7 @@ fun OtherNoteApp(services: AppServices = defaultAppServices()) {
 fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val message by appState.message.collectAsState()
     val mode by appState.mode.collectAsState()
+    val generatedIdentity by appState.generatedIdentityState.collectAsState()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
     LaunchedEffect(mode) {
@@ -90,7 +92,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             AppMode.Authenticated -> {
                 onLoggedIn()
                 val authMethod = appState.session.value?.authMethod
-                if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay ||
+                if (appState.directRelayRuntimeAvailable ||
                     authMethod == SessionAuthMethod.ExternalSigner ||
                     authMethod == SessionAuthMethod.RemoteSigner
                 ) {
@@ -157,6 +159,12 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         ) {
             Text("Validate key")
         }
+        OutlinedButton(
+            onClick = { appState.startGeneratedIdentityFlow() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Create new identity")
+        }
         TextButton(onClick = {
             nsec = ""
             appState.continueLocalOnly()
@@ -165,6 +173,122 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         Text(message, color = OtherNoteMuted)
+    }
+    when (generatedIdentity.step) {
+        GeneratedIdentityStep.Idle -> Unit
+        GeneratedIdentityStep.Explanation -> GeneratedIdentityExplanationDialog(appState, generatedIdentity)
+        GeneratedIdentityStep.Generated -> GeneratedIdentityRevealDialog(appState, generatedIdentity)
+    }
+}
+
+@Composable
+private fun GeneratedIdentityExplanationDialog(
+    appState: AppState,
+    generatedIdentity: GeneratedIdentityState,
+) {
+    AlertDialog(
+        onDismissRequest = { appState.cancelGeneratedIdentityFlow() },
+        title = { Text("Create new identity") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("This creates a new Nostr private key.")
+                Spacer(Modifier.height(8.dp))
+                Text("Other Note cannot recover this key for you. If you lose the nsec, you lose access to encrypted notes for this identity.")
+                Spacer(Modifier.height(8.dp))
+                Text("Save the nsec in a secure password manager, OS credential store, or import it into a signer such as Amber. Other Note will not store the plaintext nsec.")
+                Spacer(Modifier.height(8.dp))
+                Text("Users who do not want to manage an nsec directly should use Android signer, remote signer, or future OS credential storage.")
+                generatedIdentity.error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = OtherNotePurple)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { appState.generateFreshIdentity() }) {
+                Text("Generate nsec")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = { appState.cancelGeneratedIdentityFlow() }) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun GeneratedIdentityRevealDialog(
+    appState: AppState,
+    generatedIdentity: GeneratedIdentityState,
+) {
+    AlertDialog(
+        onDismissRequest = { appState.cancelGeneratedIdentityFlow() },
+        title = { Text("Save this nsec") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("This nsec is your private key. Other Note will use it only for this session and will not store it.")
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = generatedIdentity.npub,
+                    onValueChange = {},
+                    label = { Text("Public key (npub)") },
+                    readOnly = true,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = generatedIdentity.nsecForDisplay(),
+                    onValueChange = {},
+                    label = { Text("Private key (nsec)") },
+                    readOnly = true,
+                    singleLine = true,
+                    visualTransformation = if (generatedIdentity.nsecRevealed) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(onClick = { appState.toggleGeneratedIdentityNsecReveal() }) {
+                    Text(if (generatedIdentity.nsecRevealed) "Hide nsec" else "Reveal nsec")
+                }
+                Text("Copy is not automatic. If you manually copy or screenshot this key, the OS or other apps may retain it.")
+                Spacer(Modifier.height(8.dp))
+                AcknowledgementRow(
+                    checked = generatedIdentity.savedAcknowledged,
+                    onCheckedChange = appState::acknowledgeGeneratedIdentitySaved,
+                    text = "I saved this nsec somewhere secure.",
+                )
+                AcknowledgementRow(
+                    checked = generatedIdentity.lossAcknowledged,
+                    onCheckedChange = appState::acknowledgeGeneratedIdentityLossRisk,
+                    text = "I understand losing this nsec means losing access to this identity's encrypted notes.",
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { appState.useGeneratedIdentityForSession() },
+                enabled = generatedIdentity.canUseForSession,
+            ) {
+                Text("Use for this session")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = { appState.cancelGeneratedIdentityFlow() }) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun AcknowledgementRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    text: String,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Text(text, color = OtherNoteMuted)
     }
 }
 
