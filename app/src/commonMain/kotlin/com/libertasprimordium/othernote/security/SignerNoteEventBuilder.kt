@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.toPayload
 import com.libertasprimordium.othernote.domain.UserSession
+import com.libertasprimordium.othernote.domain.nextNoteVersionUpdatedAtMs
 import com.libertasprimordium.othernote.domain.noteDTag
 import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrEvent
@@ -127,7 +128,7 @@ class SignerNoteEventBuilder(
             signerPackage = signerPackage,
             note = existing.copy(
                 bodyMarkdown = bodyMarkdown,
-                updatedAtMs = nowMs,
+                updatedAtMs = nextNoteVersionUpdatedAtMs(existing.updatedAtMs, nowMs),
                 deleted = false,
             ),
             successMessage = "Saved locally",
@@ -148,7 +149,7 @@ class SignerNoteEventBuilder(
             signerPackage = signerPackage,
             note = existing.copy(
                 bodyMarkdown = bodyMarkdown,
-                updatedAtMs = nowMs,
+                updatedAtMs = nextNoteVersionUpdatedAtMs(existing.updatedAtMs, nowMs),
                 deleted = false,
             ),
             successMessage = "Saved locally",
@@ -168,7 +169,7 @@ class SignerNoteEventBuilder(
             signerPackage = signerPackage,
             note = existing.copy(
                 bodyMarkdown = "",
-                updatedAtMs = nowMs,
+                updatedAtMs = nextNoteVersionUpdatedAtMs(existing.updatedAtMs, nowMs),
                 deleted = true,
             ),
             successMessage = "Deleted locally",
@@ -189,7 +190,7 @@ class SignerNoteEventBuilder(
             signerPackage = signerPackage,
             note = existing.copy(
                 bodyMarkdown = "",
-                updatedAtMs = nowMs,
+                updatedAtMs = nextNoteVersionUpdatedAtMs(existing.updatedAtMs, nowMs),
                 deleted = true,
             ),
             successMessage = "Deleted locally",

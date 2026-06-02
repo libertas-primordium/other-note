@@ -13,6 +13,7 @@ data class ReducedNoteState(
     val decryptRejectedCount: Int = 0,
     val payloadRejectedCount: Int = 0,
     val dTagRejectedCount: Int = 0,
+    val selectedNotes: List<Note> = notes,
 )
 
 fun reduceNoteEvents(events: List<NostrEvent>, decrypt: (NostrEvent) -> Result<String>): ReducedNoteState {
@@ -92,5 +93,27 @@ private fun List<Pair<NostrEvent, Note>>.toReducedState(
         decryptRejectedCount = decryptRejected,
         payloadRejectedCount = payloadRejected,
         dTagRejectedCount = dTagRejected,
+        selectedNotes = selected.map { it.second },
     )
+}
+
+fun mergeReducedNotesWithCurrent(currentNotes: List<Note>, reduced: ReducedNoteState): List<Note> {
+    val selectedById = reduced.selectedNotes.associateBy { it.id }
+    val currentById = currentNotes.associateBy { it.id }
+    val currentNotesToKeep = currentNotes.filter { current ->
+        val selected = selectedById[current.id] ?: return@filter true
+        current.isNewerMaterializationThan(selected)
+    }
+    val reducedNotesToApply = reduced.notes.filter { selected ->
+        val current = currentById[selected.id]
+        current == null || !current.isNewerMaterializationThan(selected)
+    }
+    return reducedNotesToApply + currentNotesToKeep
+}
+
+private fun Note.isNewerMaterializationThan(other: Note): Boolean {
+    if (updatedAtMs != other.updatedAtMs) return updatedAtMs > other.updatedAtMs
+    val thisSource = sourceEventId ?: return false
+    val otherSource = other.sourceEventId ?: return true
+    return thisSource < otherSource
 }

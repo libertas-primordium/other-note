@@ -92,6 +92,18 @@ class UtilityTests {
     }
 
     @Test
+    fun reducerSelectsNewestPerDTagIndependentOfInputOrder() {
+        val old = event("a", 10, "note-1", deleted = false, body = "old")
+        val edited = event("b", 20, "note-1", deleted = false, body = "edited")
+        val other = event("c", 15, "note-2", deleted = false, body = "other")
+
+        val reduced = reduceNoteEvents(listOf(edited, other, old)) { Result.success(it.content) }
+
+        assertEquals(setOf("edited", "other"), reduced.notes.map { it.bodyMarkdown }.toSet())
+        assertEquals("b", reduced.selectedEvents.first { it.dTag() == noteDTag("note-1") }.id)
+    }
+
+    @Test
     fun reducerUsesEventIdTieBreakerForSameCreatedAt() {
         val low = event("aaa", 20, "note-1", deleted = false, body = "low")
         val high = event("zzz", 20, "note-1", deleted = false, body = "high")

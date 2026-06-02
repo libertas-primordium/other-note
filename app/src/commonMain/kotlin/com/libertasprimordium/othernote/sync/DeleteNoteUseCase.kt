@@ -6,6 +6,7 @@ import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.UserSession
+import com.libertasprimordium.othernote.domain.nextNoteVersionUpdatedAtMs
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +25,11 @@ class DeleteNoteUseCase(
 ) {
     suspend fun delete(note: Note, session: UserSession?, relays: List<String>): SaveResult {
         val totalStart = TimeSource.Monotonic.markNow()
-        val tombstone = note.copy(bodyMarkdown = "", deleted = true, updatedAtMs = nowMs())
+        val tombstone = note.copy(
+            bodyMarkdown = "",
+            deleted = true,
+            updatedAtMs = nextNoteVersionUpdatedAtMs(note.updatedAtMs, nowMs()),
+        )
         if (session == null) {
             notes.upsertLocal(tombstone)
             return SaveResult.LocalOnly("Deleted locally. Relay tombstone requires a signed session.")

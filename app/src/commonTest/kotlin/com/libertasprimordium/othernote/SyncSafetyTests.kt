@@ -32,6 +32,7 @@ import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
+import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -209,6 +210,97 @@ class SyncSafetyTests {
 
         assertEquals("same-id", notes.notes.value.single().id)
         assertEquals(noteDTag("same-id"), client.published.single().dTag())
+    }
+
+    @Test
+    fun editGeneratesNewerEventVersionAndCachesEditedEvent() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val crypto = FakeCrypto(productionReady = true)
+        val client = FakeClient(publishStatuses = listOf(RelayStatus("wss://relay.example.com", writable = true, message = "accepted")))
+        val save = SaveNoteUseCase(notes, NostrRepository(crypto, client), localEventCache = cache)
+        val existingUpdatedAt = nowMs() + 5_000
+        val existing = note("same-id", "old", updatedAtMs = existingUpdatedAt)
+
+        val result = save.save(existing = existing, bodyMarkdown = "edited", session = session(), relays = listOf("wss://relay.example.com"))
+
+        assertIs<SaveResult.Published>(result)
+        val event = client.published.single()
+        val edited = notes.notes.value.single()
+        assertEquals("same-id", edited.id)
+        assertEquals("edited", edited.bodyMarkdown)
+        assertTrue(event.createdAt > existingUpdatedAt / 1_000)
+        assertEquals(noteDTag("same-id"), event.dTag())
+        assertEquals(listOf(event), cache.loadEvents(session().publicKeyHex))
+        assertFalse(event.content.contains("edited"))
+    }
+
+    @Test
+    fun syncDoesNotOverwriteNewerLocalEditWithOlderFetchedVersion() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val localEdit = note("same-id", "edited locally", updatedAtMs = 5_000).copy(sourceEventId = "local-new")
+        val olderFetched = signedEvent(crypto, note("same-id", "old fetched", updatedAtMs = 2_000), createdAt = 2)
+        notes.upsertLocal(localEdit)
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(
+                crypto,
+                FakeClient(
+                    events = listOf(olderFetched),
+                    statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+                ),
+            ),
+            crypto,
+        )
+
+        sync.sync(session(), listOf("wss://relay.example.com"))
+
+        assertEquals("edited locally", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
+    fun syncDoesNotLetOlderTombstoneHideNewerLocalEdit() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val localEdit = note("same-id", "edited locally", updatedAtMs = 5_000).copy(sourceEventId = "local-new")
+        val olderTombstone = signedEvent(crypto, note("same-id", "", updatedAtMs = 2_000).copy(deleted = true), createdAt = 2)
+        notes.upsertLocal(localEdit)
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(
+                crypto,
+                FakeClient(
+                    events = listOf(olderTombstone),
+                    statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+                ),
+            ),
+            crypto,
+        )
+
+        sync.sync(session(), listOf("wss://relay.example.com"))
+
+        assertEquals("edited locally", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
+    fun cacheReplaySelectsEditedVersionOverOlderVersion() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val cache = InMemoryLocalEventCache()
+        val crypto = FakeCrypto(productionReady = true)
+        val older = signedEvent(crypto, note("cached-edit", "old", updatedAtMs = 2_000), createdAt = 2)
+        val edited = signedEvent(crypto, note("cached-edit", "edited", updatedAtMs = 3_000), createdAt = 3)
+        cache.upsertEvents(session().publicKeyHex, listOf(older, edited))
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(crypto, FakeClient()),
+            crypto,
+            localEventCache = cache,
+        )
+
+        sync.sync(session(), emptyList())
+
+        assertEquals("edited", notes.notes.value.single().bodyMarkdown)
     }
 
     @Test

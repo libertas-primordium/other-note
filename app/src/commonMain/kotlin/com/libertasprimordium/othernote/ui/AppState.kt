@@ -32,6 +32,7 @@ import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
+import com.libertasprimordium.othernote.sync.mergeReducedNotesWithCurrent
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
 import kotlinx.coroutines.CoroutineScope
@@ -891,9 +892,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 }
             }
         }
-        val selectedNoteIds = reduced.selectedNoteIds
-        val preservedNotes = notes.notes.value.filter { it.id !in selectedNoteIds }
-        notes.replaceFromSync(reduced.notes + preservedNotes)
+        notes.replaceFromSync(mergeReducedNotesWithCurrent(notes.notes.value, reduced))
         val warnings = buildList {
             add("Signer sync fetched_events=${events.distinctBy { it.id }.size} candidate_events=${candidateEvents.size} selected_events=${reduced.selectedEvents.size} visible_notes=${reduced.notes.size} rejected_wrong_author=$wrongAuthor rejected_wrong_kind=$wrongKind rejected_missing_t=$missingT rejected_missing_d=$missingD rejected_validation=$invalidSignature rejected_decrypt=${reduced.decryptRejectedCount} rejected_payload=${reduced.payloadRejectedCount} rejected_dtag=${reduced.dTagRejectedCount}")
             if (reduced.selectedEvents.isNotEmpty() && reduced.notes.isEmpty()) add("Latest selected events are tombstones; matching notes are hidden")
