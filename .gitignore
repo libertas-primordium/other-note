@@ -25,6 +25,20 @@ out/
 *.exe
 *.ipa
 
+# Release signing material and local secret/config files
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+.env
+.env.local
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.bak
+
 .DS_Store
 Thumbs.db
 desktop.ini

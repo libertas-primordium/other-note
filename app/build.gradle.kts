@@ -75,7 +75,7 @@ compose.desktop {
             targetFormats(TargetFormat.Deb)
             packageName = "other-note"
             packageVersion = "0.1.0"
-            description = "GPLv3 Nostr-backed encrypted notes app foundation"
+            description = "GPLv3 Nostr-backed encrypted notes app"
             vendor = "Libertas Primordium"
             licenseFile.set(project.rootProject.file("LICENSE"))
         }
