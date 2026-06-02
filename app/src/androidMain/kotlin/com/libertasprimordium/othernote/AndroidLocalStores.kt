@@ -12,6 +12,10 @@ import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
 import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.security.Nip46SessionCodec
+import com.libertasprimordium.othernote.security.Nip46SessionStore
+import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
+import com.libertasprimordium.othernote.security.SavedNip46Session
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -186,6 +190,42 @@ class AndroidRelaySettingsPersistence(
     override suspend fun saveRelayUrls(urls: List<String>) {
         atomicWrite(file, RelaySettingsCodec.encode(urls))
     }
+}
+
+class AndroidNip46SessionStore(
+    context: Context,
+    private val file: File = File(context.applicationContext.noBackupFilesDir, "nip46-sessions.json"),
+) : Nip46SessionStore {
+    private val lock = Mutex()
+    override val isAvailable: Boolean = true
+    override val unavailableReason: String? = null
+
+    override suspend fun listSessions(): Nip46SessionStoreResult = lock.withLock {
+        Nip46SessionStoreResult.Listed(loadSessionsUnlocked().map { it.metadata() })
+    }
+
+    override suspend fun saveSession(session: SavedNip46Session): Nip46SessionStoreResult = lock.withLock {
+        val sessions = loadSessionsUnlocked()
+            .filterNot { it.userPubkey.equals(session.userPubkey, ignoreCase = true) } +
+            session.copy(userPubkey = session.userPubkey.lowercase())
+        atomicWrite(file, Nip46SessionCodec.encodeSessions(sessions.sortedBy { it.userPubkey }))
+        Nip46SessionStoreResult.Saved
+    }
+
+    override suspend fun loadSession(userPubkey: String): Nip46SessionStoreResult = lock.withLock {
+        loadSessionsUnlocked().firstOrNull { it.userPubkey.equals(userPubkey, ignoreCase = true) }
+            ?.let { Nip46SessionStoreResult.Loaded(it) }
+            ?: Nip46SessionStoreResult.Failed("Saved remote signer session could not be loaded.")
+    }
+
+    override suspend fun deleteSession(userPubkey: String): Nip46SessionStoreResult = lock.withLock {
+        val remaining = loadSessionsUnlocked().filterNot { it.userPubkey.equals(userPubkey, ignoreCase = true) }
+        atomicWrite(file, Nip46SessionCodec.encodeSessions(remaining))
+        Nip46SessionStoreResult.Deleted
+    }
+
+    private fun loadSessionsUnlocked(): List<SavedNip46Session> =
+        readFile(file)?.let { Nip46SessionCodec.decodeSessionsOrEmpty(it) }.orEmpty()
 }
 
 private fun readFile(file: File): String? =

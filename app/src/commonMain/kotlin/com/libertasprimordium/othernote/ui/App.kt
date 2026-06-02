@@ -61,6 +61,7 @@ import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
+import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
@@ -106,6 +107,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val generatedIdentity by appState.generatedIdentityState.collectAsState()
     val savedIdentities by appState.savedIdentityState.collectAsState()
     val keyringSaveConfirmation by appState.keyringSaveConfirmationState.collectAsState()
+    val remoteSignerPairing by appState.remoteSignerPairingState.collectAsState()
+    val savedRemoteSigners by appState.savedRemoteSignerState.collectAsState()
     val scope = rememberCoroutineScope()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
@@ -185,13 +188,48 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         remoteSignerOption?.let { option ->
             SignInSectionTitle("Remote signer")
             SignInSupportingText(option.supportingCopy)
+            SignInSupportingText("Your private key stays in the signer. Other Note sends encrypted requests through signer relays after you approve the connection.")
+            Spacer(Modifier.height(6.dp))
+            RemoteSignerPermissionSummary()
             Text(appState.remoteSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
+            if (appState.savedRemoteSignerAvailable) {
+                Spacer(Modifier.height(8.dp))
+                Text("Saved remote signers", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                when {
+                    savedRemoteSigners.loading -> SignInSupportingText("Checking saved remote signers...")
+                    savedRemoteSigners.error != null -> SignInSupportingText(savedRemoteSigners.error.orEmpty())
+                    savedRemoteSigners.sessions.isEmpty() -> SignInSupportingText("No saved remote signer sessions on this device yet.")
+                    else -> savedRemoteSigners.sessions.forEach { saved ->
+                        Spacer(Modifier.height(8.dp))
+                        SavedRemoteSignerRow(
+                            session = saved,
+                            onContinue = {
+                                scope.launch {
+                                    appState.loginWithSavedRemoteSigner(saved.userPubkey)
+                                }
+                            },
+                            onForget = {
+                                scope.launch {
+                                    appState.forgetSavedRemoteSigner(saved.userPubkey)
+                                }
+                            },
+                            enabled = !remoteSignerPairing.inProgress,
+                        )
+                    }
+                }
+                SignInSupportingText("Other Note stores a reusable remote-signer session so you do not have to pair every time. Forgetting it removes this app's remote-signer session from this device.")
+            } else {
+                Spacer(Modifier.height(6.dp))
+                SignInSupportingText(appState.savedRemoteSignerStatus)
+            }
             Spacer(Modifier.height(8.dp))
+            Text("Pair a new remote signer", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             OutlinedTextField(
                 value = bunkerToken,
                 onValueChange = { bunkerToken = it },
                 label = { Text("Paste bunker:// remote signer token") },
                 singleLine = true,
+                enabled = !remoteSignerPairing.inProgress,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -202,11 +240,12 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                         bunkerToken = ""
                     }
                 },
-                enabled = option.enabled,
+                enabled = option.enabled && !remoteSignerPairing.inProgress,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(option.label)
+                Text(if (remoteSignerPairing.inProgress) "Waiting for signer..." else option.label)
             }
+            RemoteSignerPairingStatus(remoteSignerPairing)
             Spacer(Modifier.height(18.dp))
         }
 
@@ -316,6 +355,32 @@ private fun SavedIdentityRow(
 }
 
 @Composable
+private fun SavedRemoteSignerRow(
+    session: SavedNip46SessionMetadata,
+    onContinue: () -> Unit,
+    onForget: () -> Unit,
+    enabled: Boolean,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+            Text("Remote signer ${session.remoteSignerPubkey.safePrefix()}", color = OtherNoteMuted, fontSize = 12.sp)
+            Text("${session.relays.size} signer relay(s)", color = OtherNoteMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onContinue, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue with remote signer")
+            }
+            TextButton(onClick = onForget, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+                Text("Forget remote signer")
+            }
+        }
+    }
+}
+
+@Composable
 private fun SignInSectionTitle(text: String) {
     Text(text, color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
 }
@@ -323,6 +388,41 @@ private fun SignInSectionTitle(text: String) {
 @Composable
 private fun SignInSupportingText(text: String) {
     Text(text, color = OtherNoteMuted, fontSize = 13.sp)
+}
+
+@Composable
+private fun RemoteSignerPermissionSummary() {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(OtherNotePanel, RoundedCornerShape(8.dp))
+            .padding(10.dp),
+    ) {
+        Text("Other Note will ask the signer to:", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text("Read your public key", color = OtherNoteMuted, fontSize = 12.sp)
+        Text("Encrypt and decrypt your notes", color = OtherNoteMuted, fontSize = 12.sp)
+        Text("Sign encrypted note and relay-list events", color = OtherNoteMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun RemoteSignerPairingStatus(state: RemoteSignerPairingState) {
+    if (state.stage == RemoteSignerPairingStage.Idle) {
+        return
+    }
+    Spacer(Modifier.height(8.dp))
+    Column(
+        Modifier.fillMaxWidth()
+            .background(OtherNotePanel, RoundedCornerShape(8.dp))
+            .padding(10.dp),
+    ) {
+        Text(state.title, color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(state.message, color = OtherNoteMuted, fontSize = 12.sp)
+        if (state.authUrlAvailable) {
+            Spacer(Modifier.height(4.dp))
+            Text("Some signers require an approval page. Other Note will not open it automatically.", color = OtherNoteMuted, fontSize = 12.sp)
+        }
+    }
 }
 
 @Composable
@@ -477,6 +577,13 @@ private fun SavedNsecIdentity.safeDisplayName(): String =
         npub.isNotBlank() -> npub.safePrefix()
         accountPubkey.isNotBlank() -> "pubkey ${accountPubkey.safePrefix()}"
         else -> "Saved identity"
+    }
+
+private fun SavedNip46SessionMetadata.safeDisplayName(): String =
+    when {
+        userNpub.isNotBlank() -> userNpub.safePrefix()
+        userPubkey.isNotBlank() -> "pubkey ${userPubkey.safePrefix()}"
+        else -> "Saved remote signer"
     }
 
 private fun String.safePrefix(): String =

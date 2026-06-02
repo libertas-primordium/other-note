@@ -229,6 +229,32 @@ class Nip46RemoteSigner(
     override val canNip44EncryptDecrypt: Boolean get() = transportSession != null && userPubkey != null
     override val safeDiagnostics: List<String> get() = listOf("state=$lastState", "message=${lastSafeMessage.take(120)}")
 
+    fun exportSession(createdAtMs: Long = nowMs(), lastUsedAtMs: Long = createdAtMs): SavedNip46Session? {
+        val session = transportSession ?: return null
+        val accountPubkey = userPubkey ?: return null
+        val accountNpub = userNpub ?: return null
+        return SavedNip46Session(
+            userPubkey = accountPubkey,
+            userNpub = accountNpub,
+            clientPrivateKeyHex = session.clientPrivateKey.hex,
+            clientPubkey = session.clientPubkey,
+            remoteSignerPubkey = session.remoteSignerPubkey,
+            relays = session.relays.distinct(),
+            label = "Remote signer",
+            createdAtMs = createdAtMs,
+            lastUsedAtMs = lastUsedAtMs,
+        )
+    }
+
+    fun disconnect() {
+        transportSession = null
+        userPubkey = null
+        userNpub = null
+        activeTokenSecret = null
+        lastState = Nip46ConnectionState.Disconnected
+        lastSafeMessage = "Remote signer disconnected"
+    }
+
     suspend fun connectAsync(rawToken: String): Nip46ConnectResult = withContext(Dispatchers.Default) {
         val crypto = crypto ?: return@withContext Nip46ConnectResult.Unavailable
         val token = Nip46ConnectionTokenParser.parse(rawToken).getOrElse {
@@ -291,6 +317,65 @@ class Nip46RemoteSigner(
                     SignerPublicKeyRequestResult.Cancelled -> fail("Remote signer public-key request was cancelled")
                 }
             }
+        }
+    }
+
+    suspend fun resumeAsync(savedSession: SavedNip46Session): Nip46ConnectResult = withContext(Dispatchers.Default) {
+        val crypto = crypto ?: return@withContext Nip46ConnectResult.Unavailable
+        activeTokenSecret = null
+        lastState = Nip46ConnectionState.Connecting
+        lastSafeMessage = "Resuming remote signer session"
+        val normalizedRelays = savedSession.relays.map { relay ->
+            normalizeRelayUrl(relay).getOrElse {
+                return@withContext fail("Saved remote signer session is corrupted.")
+            }
+        }.distinct()
+        if (normalizedRelays.isEmpty()) return@withContext fail("Saved remote signer session is corrupted.")
+        if (!savedSession.userPubkey.isValidHexPubkey() ||
+            !savedSession.clientPubkey.isValidHexPubkey() ||
+            !savedSession.remoteSignerPubkey.isValidHexPubkey() ||
+            !savedSession.clientPrivateKeyHex.matches(Regex("^[0-9a-fA-F]{64}$"))
+        ) {
+            return@withContext fail("Saved remote signer session is corrupted.")
+        }
+        val clientPrivateKey = NostrPrivateKey(savedSession.clientPrivateKeyHex.lowercase())
+        val derivedClientPubkey = crypto.derivePublicKey(clientPrivateKey).getOrElse {
+            return@withContext fail("Saved remote signer session is corrupted.")
+        }
+        if (!derivedClientPubkey.hex.equals(savedSession.clientPubkey, ignoreCase = true)) {
+            return@withContext fail("Saved remote signer session is corrupted.")
+        }
+        transportSession = Nip46TransportSession(
+            clientPrivateKey = clientPrivateKey,
+            clientPubkey = derivedClientPubkey.hex,
+            remoteSignerPubkey = savedSession.remoteSignerPubkey.lowercase(),
+            relays = normalizedRelays,
+            relaySource = "saved_session",
+            relaySources = normalizedRelays.associateWith { "saved_session" },
+        )
+        userPubkey = null
+        userNpub = null
+        val publicKey = getPublicKeyInternal(useCache = false)
+        if (lastState == Nip46ConnectionState.TimedOut) return@withContext Nip46ConnectResult.TimedOut
+        return@withContext when (publicKey) {
+            is SignerPublicKeyRequestResult.Success -> {
+                if (!publicKey.pubkeyHex.equals(savedSession.userPubkey, ignoreCase = true)) {
+                    fail("Saved remote signer session pubkey mismatch.")
+                } else {
+                    userPubkey = publicKey.pubkeyHex
+                    userNpub = publicKey.npub
+                    runCatching { requestAsync(Nip46Method.Ping) }
+                    runCatching { applySwitchRelays(requestAsync(Nip46Method.SwitchRelays)) }
+                    val activeRelays = transportSession?.relays ?: normalizedRelays
+                    lastState = Nip46ConnectionState.Connected
+                    lastSafeMessage = "Remote signer session resumed"
+                    Nip46ConnectResult.Connected(publicKey.pubkeyHex, publicKey.npub, savedSession.remoteSignerPubkey.lowercase(), activeRelays)
+                }
+            }
+            is SignerPublicKeyRequestResult.InvalidResponse -> fail(publicKey.safeReason)
+            is SignerPublicKeyRequestResult.Failed -> fail(publicKey.safeReason)
+            is SignerPublicKeyRequestResult.Unavailable -> fail(publicKey.safeReason)
+            SignerPublicKeyRequestResult.Cancelled -> fail("Remote signer public-key request was cancelled")
         }
     }
 
@@ -382,10 +467,10 @@ class Nip46RemoteSigner(
         }
     }
 
-    private suspend fun getPublicKeyInternal(): SignerPublicKeyRequestResult {
+    private suspend fun getPublicKeyInternal(useCache: Boolean = true): SignerPublicKeyRequestResult {
         val cached = userPubkey
         val cachedNpub = userNpub
-        if (cached != null && cachedNpub != null) {
+        if (useCache && cached != null && cachedNpub != null) {
             return SignerPublicKeyRequestResult.Success(cached, cachedNpub, "nip46")
         }
         return when (val response = requestAsync(Nip46Method.GetPublicKey)) {

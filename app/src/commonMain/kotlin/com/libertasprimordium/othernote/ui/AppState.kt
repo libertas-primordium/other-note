@@ -24,7 +24,9 @@ import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.nostr.RelayTestResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
+import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
+import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
@@ -112,6 +114,33 @@ data class GeneratedIdentityState(
 data class SavedIdentityState(
     val loading: Boolean = false,
     val identities: List<SavedNsecIdentity> = emptyList(),
+    val error: String? = null,
+)
+
+enum class RemoteSignerPairingStage {
+    Idle,
+    CheckingToken,
+    WaitingForSigner,
+    FetchingAccount,
+    AwaitingApproval,
+    Connected,
+    Failed,
+}
+
+data class RemoteSignerPairingState(
+    val stage: RemoteSignerPairingStage = RemoteSignerPairingStage.Idle,
+    val title: String = "Remote signer pairing",
+    val message: String = "Paste a bunker link from your signer to begin.",
+    val inProgress: Boolean = false,
+    val authUrlAvailable: Boolean = false,
+) {
+    override fun toString(): String =
+        "RemoteSignerPairingState(stage=$stage, title=$title, message=$message, inProgress=$inProgress, authUrlAvailable=$authUrlAvailable)"
+}
+
+data class SavedRemoteSignerState(
+    val loading: Boolean = false,
+    val sessions: List<SavedNip46SessionMetadata> = emptyList(),
     val error: String? = null,
 )
 
@@ -303,6 +332,19 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val savedIdentityState: StateFlow<SavedIdentityState> = _savedIdentityState
     private val savedIdentityRefreshMutex = Mutex()
 
+    private val _remoteSignerPairingState = MutableStateFlow(RemoteSignerPairingState())
+    val remoteSignerPairingState: StateFlow<RemoteSignerPairingState> = _remoteSignerPairingState
+
+    private val _savedRemoteSignerState = MutableStateFlow(
+        if (services.nip46SessionStore.isAvailable) {
+            SavedRemoteSignerState(loading = true)
+        } else {
+            SavedRemoteSignerState(error = services.nip46SessionStore.unavailableReason)
+        },
+    )
+    val savedRemoteSignerState: StateFlow<SavedRemoteSignerState> = _savedRemoteSignerState
+    private val savedRemoteSignerRefreshMutex = Mutex()
+
     private val _profileState = MutableStateFlow(ProfileUiState())
     val profileState: StateFlow<ProfileUiState> = _profileState
 
@@ -324,6 +366,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val externalSignerCanSignEvent: Boolean = services.externalSignerProvider.canSignEvent
     val externalSignerCanNip44RoundTrip: Boolean = services.externalSignerProvider.canNip44RoundTrip
     val remoteSignerAvailable: Boolean = services.remoteSigner?.isAvailable == true
+    val savedRemoteSignerAvailable: Boolean = services.nip46SessionStore.isAvailable
+    val savedRemoteSignerStatus: String =
+        services.nip46SessionStore.unavailableReason ?: "Saved remote signer sessions available"
     val secureSecretStoreAvailable: Boolean = services.secureSecretStore.isAvailable
     val secureSecretStoreStatus: String =
         services.secureSecretStore.unavailableReason ?: "Desktop keyring available"
@@ -352,6 +397,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
         appScope.launch {
             refreshSavedIdentities()
+        }
+        appScope.launch {
+            refreshSavedRemoteSigners()
         }
     }
 
@@ -432,6 +480,44 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     fun startRefreshSavedIdentities(): Job = appScope.launch {
         refreshSavedIdentities()
+    }
+
+    suspend fun refreshSavedRemoteSigners(): Boolean {
+        if (!services.nip46SessionStore.isAvailable) {
+            _savedRemoteSignerState.value = SavedRemoteSignerState(error = services.nip46SessionStore.unavailableReason)
+            return false
+        }
+        return savedRemoteSignerRefreshMutex.withLock {
+            _savedRemoteSignerState.value = _savedRemoteSignerState.value.copy(loading = true, error = null)
+            val result = withContext(Dispatchers.IO) {
+                services.nip46SessionStore.listSessions()
+            }
+            when (result) {
+                is Nip46SessionStoreResult.Listed -> {
+                    _savedRemoteSignerState.value = SavedRemoteSignerState(sessions = result.sessions.map { it.withDerivedNpub() })
+                    true
+                }
+                Nip46SessionStoreResult.Unavailable -> {
+                    _savedRemoteSignerState.value = SavedRemoteSignerState(error = services.nip46SessionStore.unavailableReason)
+                    false
+                }
+                is Nip46SessionStoreResult.Failed -> {
+                    _savedRemoteSignerState.value = SavedRemoteSignerState(error = result.safeMessage.toUserFacingMessage())
+                    false
+                }
+                Nip46SessionStoreResult.Deleted,
+                is Nip46SessionStoreResult.Loaded,
+                Nip46SessionStoreResult.Saved,
+                -> {
+                    _savedRemoteSignerState.value = SavedRemoteSignerState(error = "Saved remote signer sessions could not be loaded.")
+                    false
+                }
+            }
+        }
+    }
+
+    fun startRefreshSavedRemoteSigners(): Job = appScope.launch {
+        refreshSavedRemoteSigners()
     }
 
     fun requestExistingNsecKeyringSaveConfirmation() {
@@ -777,6 +863,16 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         return copy(npub = derived.orEmpty())
     }
 
+    private fun SavedNip46SessionMetadata.withDerivedNpub(): SavedNip46SessionMetadata {
+        if (userNpub.isNotBlank()) return this
+        val derived = if (userPubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+            crypto.encodeNpub(NostrPublicKey(userPubkey.lowercase(), "")).getOrNull()
+        } else {
+            null
+        }
+        return copy(userNpub = derived.orEmpty())
+    }
+
     private fun ensureSavedIdentityVisible(publicKey: NostrPublicKey) {
         val current = _savedIdentityState.value
         if (current.identities.any { it.accountPubkey.equals(publicKey.hex, ignoreCase = true) }) return
@@ -799,6 +895,24 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         )
     }
 
+    private fun ensureSavedRemoteSignerVisible(session: SavedNip46SessionMetadata) {
+        val current = _savedRemoteSignerState.value
+        if (current.sessions.any { it.userPubkey.equals(session.userPubkey, ignoreCase = true) }) return
+        _savedRemoteSignerState.value = current.copy(
+            loading = false,
+            error = null,
+            sessions = current.sessions + session.withDerivedNpub(),
+        )
+    }
+
+    private fun removeSavedRemoteSignerFromState(userPubkey: String) {
+        val current = _savedRemoteSignerState.value
+        _savedRemoteSignerState.value = current.copy(
+            loading = false,
+            sessions = current.sessions.filterNot { it.userPubkey.equals(userPubkey, ignoreCase = true) },
+        )
+    }
+
     fun requestExternalSignerPublicKey() {
         if (!externalSignerAvailable) {
             "No Android signer found. Install a NIP-55 signer such as Amber, or paste an nsec for this session."
@@ -810,8 +924,24 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     fun startRemoteSignerConnection(rawToken: String): Boolean {
+        if (_remoteSignerPairingState.value.inProgress) {
+            _message.value = "Remote signer pairing is already in progress."
+            return false
+        }
+        _remoteSignerPairingState.value = RemoteSignerPairingState(
+            stage = RemoteSignerPairingStage.CheckingToken,
+            title = "Checking bunker link",
+            message = "Other Note is checking the remote signer link before sending a pairing request.",
+            inProgress = true,
+        )
         if (!validateRemoteSignerConnectionInput(rawToken)) return false
-        _message.value = "Connecting to remote signer..."
+        _remoteSignerPairingState.value = RemoteSignerPairingState(
+            stage = RemoteSignerPairingStage.WaitingForSigner,
+            title = "Waiting for signer approval",
+            message = "Approve the connection in your signer. Your private key stays there; Other Note asks to read your public key, encrypt/decrypt notes, and sign note events.",
+            inProgress = true,
+        )
+        _message.value = "Waiting for remote signer approval..."
         appScope.launch {
             connectRemoteSigner(rawToken)
         }
@@ -819,10 +949,32 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun connectRemoteSigner(rawToken: String): Boolean {
+        if (!_remoteSignerPairingState.value.inProgress) {
+            _remoteSignerPairingState.value = RemoteSignerPairingState(
+                stage = RemoteSignerPairingStage.CheckingToken,
+                title = "Checking bunker link",
+                message = "Other Note is checking the remote signer link before sending a pairing request.",
+                inProgress = true,
+            )
+        }
         if (!validateRemoteSignerConnectionInput(rawToken)) return false
-        _message.value = "Connecting to remote signer..."
+        _remoteSignerPairingState.value = RemoteSignerPairingState(
+            stage = RemoteSignerPairingStage.WaitingForSigner,
+            title = "Waiting for signer approval",
+            message = "Approve the connection in your signer. Your private key stays there; Other Note is sending the request through the signer relays in your bunker link.",
+            inProgress = true,
+        )
+        _message.value = "Waiting for remote signer approval..."
         val result = withContext(Dispatchers.IO) {
             services.remoteSigner?.connectAsync(rawToken) ?: Nip46ConnectResult.Unavailable
+        }
+        if (result is Nip46ConnectResult.Connected) {
+            _remoteSignerPairingState.value = RemoteSignerPairingState(
+                stage = RemoteSignerPairingStage.FetchingAccount,
+                title = "Reading account public key",
+                message = "The signer approved the connection. Other Note is reading your account public key from the signer.",
+                inProgress = true,
+            )
         }
         return handleRemoteSignerConnectResult(result)
     }
@@ -830,18 +982,145 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private fun validateRemoteSignerConnectionInput(rawToken: String): Boolean {
         val remoteSigner = services.remoteSigner
         if (remoteSigner == null || !remoteSigner.isAvailable) {
-            _message.value = "NIP-46 remote signer is unavailable in this runtime."
+            val message = "NIP-46 remote signer is unavailable in this runtime."
+            _message.value = message
+            _remoteSignerPairingState.value = RemoteSignerPairingState(
+                stage = RemoteSignerPairingStage.Failed,
+                title = "Remote signer unavailable",
+                message = message.toUserFacingMessage(),
+            )
             return false
         }
         val parsed = Nip46ConnectionTokenParser.parse(rawToken)
         if (parsed.isFailure) {
-            _message.value = parsed.exceptionOrNull()?.message ?: "Remote signer token is invalid"
+            val rawMessage = parsed.exceptionOrNull()?.message ?: "Remote signer token is invalid"
+            val userMessage = rawMessage.toUserFacingMessage()
+            _message.value = userMessage
+            _remoteSignerPairingState.value = RemoteSignerPairingState(
+                stage = RemoteSignerPairingStage.Failed,
+                title = "Bunker link is invalid",
+                message = userMessage,
+            )
             return false
         }
         return true
     }
 
-    private fun handleRemoteSignerConnectResult(result: Nip46ConnectResult): Boolean =
+    suspend fun loginWithSavedRemoteSigner(userPubkey: String): Boolean {
+        if (_remoteSignerPairingState.value.inProgress) {
+            _message.value = "Remote signer pairing is already in progress."
+            return false
+        }
+        val remoteSigner = services.remoteSigner
+        if (remoteSigner == null || !remoteSigner.isAvailable) {
+            val message = "NIP-46 remote signer is unavailable in this runtime."
+            _message.value = message
+            _remoteSignerPairingState.value = RemoteSignerPairingState(
+                stage = RemoteSignerPairingStage.Failed,
+                title = "Remote signer unavailable",
+                message = message.toUserFacingMessage(),
+            )
+            return false
+        }
+        if (!services.nip46SessionStore.isAvailable) {
+            _message.value = "Saved remote signer session could not be loaded."
+            return false
+        }
+        _remoteSignerPairingState.value = RemoteSignerPairingState(
+            stage = RemoteSignerPairingStage.FetchingAccount,
+            title = "Resuming remote signer",
+            message = "Other Note is using the saved remote-signer session and checking the account public key.",
+            inProgress = true,
+        )
+        val loaded = withContext(Dispatchers.IO) {
+            services.nip46SessionStore.loadSession(userPubkey)
+        }
+        val session = when (loaded) {
+            is Nip46SessionStoreResult.Loaded -> loaded.session
+            Nip46SessionStoreResult.Unavailable -> {
+                _message.value = "Saved remote signer session could not be loaded."
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = "Saved remote signer unavailable",
+                    message = "Saved remote signer session could not be loaded.",
+                )
+                return false
+            }
+            is Nip46SessionStoreResult.Failed -> {
+                val userMessage = loaded.safeMessage.toUserFacingMessage()
+                _message.value = userMessage
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = "Could not load saved remote signer",
+                    message = userMessage,
+                )
+                return false
+            }
+            Nip46SessionStoreResult.Deleted,
+            is Nip46SessionStoreResult.Listed,
+            Nip46SessionStoreResult.Saved,
+            -> {
+                _message.value = "Saved remote signer session could not be loaded."
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = "Could not load saved remote signer",
+                    message = "Saved remote signer session could not be loaded.",
+                )
+                return false
+            }
+        }
+        val result = withContext(Dispatchers.IO) {
+            remoteSigner.resumeAsync(session)
+        }
+        return handleRemoteSignerConnectResult(result, resumed = true)
+    }
+
+    suspend fun forgetSavedRemoteSigner(userPubkey: String): Boolean {
+        if (!services.nip46SessionStore.isAvailable) {
+            _message.value = "Saved remote signer session could not be forgotten."
+            return false
+        }
+        val result = withContext(Dispatchers.IO) {
+            services.nip46SessionStore.deleteSession(userPubkey)
+        }
+        return when (result) {
+            Nip46SessionStoreResult.Deleted -> {
+                removeSavedRemoteSignerFromState(userPubkey)
+                val active = _session.value
+                if (active?.authMethod == SessionAuthMethod.RemoteSigner &&
+                    active.publicKeyHex.equals(userPubkey, ignoreCase = true)
+                ) {
+                    services.remoteSigner?.disconnect()
+                    _session.value = null
+                    _mode.value = AppMode.SignedOut
+                    _profileState.value = ProfileUiState()
+                    _remoteSignerPairingState.value = RemoteSignerPairingState()
+                    notes.clear()
+                    _message.value = "Saved remote signer forgotten. Current remote-signer session was cleared."
+                } else {
+                    _message.value = "Saved remote signer forgotten."
+                }
+                true
+            }
+            Nip46SessionStoreResult.Unavailable -> {
+                _message.value = "Saved remote signer session could not be forgotten."
+                false
+            }
+            is Nip46SessionStoreResult.Failed -> {
+                _message.value = result.safeMessage.toUserFacingMessage()
+                false
+            }
+            is Nip46SessionStoreResult.Listed,
+            is Nip46SessionStoreResult.Loaded,
+            Nip46SessionStoreResult.Saved,
+            -> {
+                _message.value = "Saved remote signer session could not be forgotten."
+                false
+            }
+        }
+    }
+
+    private suspend fun handleRemoteSignerConnectResult(result: Nip46ConnectResult, resumed: Boolean = false): Boolean =
         when (result) {
             is Nip46ConnectResult.Connected -> {
                 _session.value = UserSession(
@@ -853,29 +1132,94 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                     signerPackage = "nip46:${result.remoteSignerPubkey.take(12)}",
                 )
                 _mode.value = AppMode.Authenticated
-                _message.value = "Remote signer connected; relay sync can run with signer approval."
+                val sessionSaved = if (resumed) true else persistActiveRemoteSignerSession()
+                _message.value = if (resumed) {
+                    "Remote signer session resumed; relay sync can run with signer approval."
+                } else if (sessionSaved) {
+                    "Remote signer connected; relay sync can run with signer approval."
+                } else {
+                    "Remote signer connected for this app session, but the reusable session could not be saved."
+                }
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Connected,
+                    title = if (resumed) "Remote signer resumed" else "Remote signer connected",
+                    message = when {
+                        resumed -> "Other Note will ask the signer to encrypt/decrypt notes and sign events when needed."
+                        sessionSaved -> "Other Note will ask the signer to encrypt/decrypt notes and sign events when needed. The reusable remote-signer session is stored on this device."
+                        else -> "Other Note will ask the signer to encrypt/decrypt notes and sign events when needed. The reusable remote-signer session could not be saved, so you may need to pair again after restart."
+                    },
+                )
                 startProfileLoad()
                 true
             }
             is Nip46ConnectResult.AwaitingApproval -> {
+                val message = "Open the signer approval page if your signer requires it, then retry pairing after approving."
                 _message.value = "Remote signer approval required."
                 _diagnosticMessage.value = "auth_url_present=${result.safeUrl.isNotBlank()}"
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.AwaitingApproval,
+                    title = "Signer approval required",
+                    message = message,
+                    authUrlAvailable = result.safeUrl.isNotBlank(),
+                )
                 false
             }
             is Nip46ConnectResult.Failed -> {
-                _message.value = result.safeReason.toUserFacingMessage()
+                val userMessage = result.safeReason.toUserFacingMessage()
+                _message.value = userMessage
                 _diagnosticMessage.value = result.safeReason
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = userFacingErrorFor(result.safeReason).title,
+                    message = userMessage,
+                )
                 false
             }
             Nip46ConnectResult.TimedOut -> {
-                _message.value = "Remote signer connection timed out"
+                val raw = "Remote signer did not respond method=connect"
+                _message.value = raw.toUserFacingMessage()
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = "Remote signer did not respond",
+                    message = raw.toUserFacingMessage(),
+                )
                 false
             }
             Nip46ConnectResult.Unavailable -> {
-                _message.value = "NIP-46 remote signer is unavailable in this runtime."
+                val message = "NIP-46 remote signer is unavailable in this runtime."
+                _message.value = message
+                _remoteSignerPairingState.value = RemoteSignerPairingState(
+                    stage = RemoteSignerPairingStage.Failed,
+                    title = "Remote signer unavailable",
+                    message = message.toUserFacingMessage(),
+                )
                 false
             }
         }
+
+    private suspend fun persistActiveRemoteSignerSession(): Boolean {
+        val store = services.nip46SessionStore
+        val remoteSigner = services.remoteSigner ?: return false
+        if (!store.isAvailable) return false
+        val now = com.libertasprimordium.othernote.util.nowMs()
+        val exported = remoteSigner.exportSession(createdAtMs = now, lastUsedAtMs = now) ?: return false
+        when (val result = withContext(Dispatchers.IO) { store.saveSession(exported) }) {
+            Nip46SessionStoreResult.Saved -> {
+                refreshSavedRemoteSigners()
+                ensureSavedRemoteSignerVisible(exported.metadata())
+                return true
+            }
+            is Nip46SessionStoreResult.Failed -> {
+                _diagnosticMessage.value = result.safeMessage
+            }
+            Nip46SessionStoreResult.Unavailable,
+            Nip46SessionStoreResult.Deleted,
+            is Nip46SessionStoreResult.Listed,
+            is Nip46SessionStoreResult.Loaded,
+            -> Unit
+        }
+        return false
+    }
 
     private fun handleSignerPublicKeyResult(result: SignerPublicKeyRequestResult) {
         when (result) {
@@ -1090,11 +1434,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun logout() {
+        services.remoteSigner?.disconnect()
         _session.value = null
         _mode.value = AppMode.SignedOut
         _profileState.value = ProfileUiState()
+        _remoteSignerPairingState.value = RemoteSignerPairingState()
         notes.clear()
-        _message.value = "Session cleared. Local in-memory notes were removed."
+        _message.value = "Session cleared. Local in-memory notes were removed. Saved remote signers remain available."
     }
 
     suspend fun save(existing: Note?, markdown: String): Boolean {

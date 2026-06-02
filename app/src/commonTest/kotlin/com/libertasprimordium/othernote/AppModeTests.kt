@@ -117,6 +117,7 @@ class AppModeTests {
         assertEquals(SignInOptionEmphasis.Low, options[2].emphasis)
         assertEquals(SignInOptionEmphasis.Text, options[3].emphasis)
         assertTrue(options[0].supportingCopy.contains("Recommended on Android"))
+        assertTrue(options[1].supportingCopy.contains("private key stays"))
     }
 
     @Test

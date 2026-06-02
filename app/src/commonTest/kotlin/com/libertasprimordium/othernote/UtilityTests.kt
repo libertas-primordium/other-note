@@ -191,6 +191,17 @@ class UtilityTests {
     }
 
     @Test
+    fun malformedBunkerLinkMapsToReadableGuidance() {
+        val raw = "Unsupported remote signer token scheme secret=must-not-appear"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Bunker link is invalid", error.title)
+        assertTrue(error.message.contains("bunker://"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("must-not-appear"))
+    }
+
+    @Test
     fun relayTestFailureMapsToReadableWarning() {
         val raw = "Relay rejected the test event. stage=relay_test_publish outcome=rejected secret=must-not-appear nsec1leak privateKey=leak body_markdown"
         val error = userFacingErrorFor(raw)
