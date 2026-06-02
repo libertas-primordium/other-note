@@ -2,6 +2,8 @@ package com.libertasprimordium.othernote.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,8 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
+import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
+import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -324,7 +327,7 @@ private fun AcknowledgementRow(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Unit, onSettings: () -> Unit) {
     val notes by appState.notes.notes.collectAsState()
@@ -359,13 +362,21 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
             Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
             Spacer(Modifier.height(12.dp))
             if (notes.isEmpty()) {
-                Box(Modifier.fillMaxSize().padding(24.dp)) {
+                Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
                     Text("No notes yet", color = OtherNoteMuted)
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(notes, key = { it.id }) { note ->
-                        NoteCard(note, onOpen)
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val columns = noteGridColumnCount(maxWidth.value.toInt())
+                    LazyVerticalStaggeredGrid(
+                        columns = StaggeredGridCells.Fixed(columns),
+                        modifier = Modifier.fillMaxSize(),
+                        verticalItemSpacing = 8.dp,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(notes, key = { it.id }) { note ->
+                            NoteCard(note, onOpen)
+                        }
                     }
                 }
             }
