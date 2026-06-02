@@ -528,6 +528,7 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     val relays by appState.relaySettings.relays.collectAsState()
     val syncState by appState.syncState.collectAsState()
     val relayAddState by appState.relayAddTestState.collectAsState()
+    val relayMigrationState by appState.relayMigrationState.collectAsState()
     val scope = rememberCoroutineScope()
     var draftRelays by remember(relays) { mutableStateOf(relays.map { it.url }) }
     var relayToAdd by remember { mutableStateOf("") }
@@ -580,18 +581,16 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                             }
                         }
                     },
-                    enabled = !relayAddState.inProgress,
+                    enabled = !relayAddState.inProgress && !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (relayAddState.inProgress) "Testing relay..." else "Add relay") }
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
-                        scope.launch {
-                            if (appState.restoreDefaultRelays()) {
-                                relayError = null
-                            }
-                        }
+                        draftRelays = appState.defaultRelayUrls
+                        relayError = "Default relays staged. Save to migrate and apply."
                     },
+                    enabled = !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Restore defaults") }
             }
@@ -628,10 +627,10 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                             }
                         }
                     },
-                    enabled = draftRelays.isNotEmpty(),
-                ) { Text("Save") }
+                    enabled = draftRelays.isNotEmpty() && !relayMigrationState.inProgress,
+                ) { Text(if (relayMigrationState.inProgress) "Migrating..." else "Save") }
                 Spacer(Modifier.width(8.dp))
-                OutlinedButton(onClick = onBack) { Text("Cancel") }
+                OutlinedButton(onClick = onBack, enabled = !relayMigrationState.inProgress) { Text("Cancel") }
             }
         }
     }
@@ -660,6 +659,38 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             },
             dismissButton = {
                 OutlinedButton(onClick = { appState.cancelFailedRelayAdd() }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+    relayMigrationState.warning?.let { warning ->
+        AlertDialog(
+            onDismissRequest = { appState.cancelRelayMigrationWarning() },
+            title = { Text("Relay migration needs review") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(warning.summary)
+                    Spacer(Modifier.height(8.dp))
+                    Text(warning.details)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (appState.continueRelayMigration()) {
+                                relayError = null
+                                onBack()
+                            } else {
+                                relayError = appState.message.value
+                            }
+                        }
+                    },
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { appState.cancelRelayMigrationWarning() }) {
                     Text("Cancel")
                 }
             },

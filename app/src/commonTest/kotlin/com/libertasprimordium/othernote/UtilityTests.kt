@@ -7,11 +7,16 @@ import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
 import com.libertasprimordium.othernote.data.RelaySettingsStore
 import com.libertasprimordium.othernote.nostr.NostrEventSerialization
+import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.NostrCrypto
+import com.libertasprimordium.othernote.nostr.NostrPrivateKey
+import com.libertasprimordium.othernote.nostr.NostrPublicKey
 import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.sync.planRelayMigration
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
+import com.libertasprimordium.othernote.sync.selectLatestSignedEncryptedNoteEvents
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.MediaType
@@ -180,8 +185,55 @@ class UtilityTests {
         val plan = planRelayMigration(listOf("wss://a.test", "wss://b.test"), listOf("wss://b.test", "wss://c.test"))
         assertEquals(listOf("wss://c.test"), plan.addedRelays)
         assertEquals(listOf("wss://a.test"), plan.removedRelays)
+        assertEquals(listOf("wss://b.test"), plan.unchangedRelays)
+        assertTrue(plan.migrationRequired)
         assertTrue(plan.shouldFetchBeforeRemoval)
         assertTrue(plan.shouldRepublishCurrentEvents)
+    }
+
+    @Test
+    fun relayMigrationPlansNoOpAndEmptyRequestedLists() {
+        val noOp = planRelayMigration(listOf("wss://a.test"), listOf("wss://a.test"))
+        assertFalse(noOp.migrationRequired)
+        assertFalse(noOp.shouldFetchBeforeRemoval)
+        assertFalse(noOp.shouldRepublishCurrentEvents)
+
+        val empty = planRelayMigration(listOf("wss://a.test"), emptyList())
+        assertEquals(listOf("wss://a.test"), empty.removedRelays)
+        assertTrue(empty.shouldFetchBeforeRemoval)
+        assertFalse(empty.shouldRepublishCurrentEvents)
+    }
+
+    @Test
+    fun relayMigrationLatestSelectionUsesReplaceableEventOrderingWithoutDecrypting() {
+        val old = event("b-old", 10, "note-1", deleted = false, body = "cipher-old").copy(content = "cipher-old", sig = "valid")
+        val edited = event("c-edited", 20, "note-1", deleted = false, body = "cipher-edited").copy(content = "cipher-edited", sig = "valid")
+        val tombstone = event("a-tombstone", 20, "note-1", deleted = true, body = "").copy(content = "cipher-tombstone", sig = "valid")
+        val other = event("d-other", 15, "note-2", deleted = false, body = "cipher-other").copy(content = "cipher-other", sig = "valid")
+
+        val selected = selectLatestSignedEncryptedNoteEvents(
+            events = listOf(old, edited, other, tombstone),
+            accountPubkey = "pub",
+            crypto = AcceptingValidationCrypto,
+        )
+
+        assertEquals(listOf("a-tombstone", "d-other"), selected.map { it.id })
+        assertEquals("cipher-tombstone", selected.first().content)
+    }
+
+    @Test
+    fun relayMigrationLatestSelectionRejectsInvalidOrWrongAccountEvents() {
+        val valid = event("valid", 10, "note-1", deleted = false, body = "cipher").copy(content = "cipher", sig = "valid")
+        val invalid = event("invalid", 20, "note-1", deleted = false, body = "cipher-new").copy(content = "cipher-new", sig = "invalid")
+        val wrongAccount = valid.copy(id = "wrong", pubkey = "other-pub", createdAt = 30, sig = "valid")
+
+        val selected = selectLatestSignedEncryptedNoteEvents(
+            events = listOf(valid, invalid, wrongAccount),
+            accountPubkey = "pub",
+            crypto = AcceptingValidationCrypto,
+        )
+
+        assertEquals(listOf("valid"), selected.map { it.id })
     }
 
     @Test
@@ -217,6 +269,20 @@ class UtilityTests {
             sig = "sig",
         )
     }
+}
+
+private object AcceptingValidationCrypto : NostrCrypto {
+    override val productionReady: Boolean = true
+    override fun generatePrivateKey(): Result<NostrPrivateKey> = Result.failure(UnsupportedOperationException())
+    override fun encodeNsec(privateKey: NostrPrivateKey): Result<String> = Result.failure(UnsupportedOperationException())
+    override fun encodeNpub(publicKey: NostrPublicKey): Result<String> = Result.failure(UnsupportedOperationException())
+    override fun decodeNsec(nsec: String): KeyDecodeResult = KeyDecodeResult.Invalid("unused")
+    override fun derivePublicKey(privateKey: NostrPrivateKey): Result<NostrPublicKey> = Result.failure(UnsupportedOperationException())
+    override fun encryptToSelf(plaintext: String, privateKey: NostrPrivateKey, publicKey: NostrPublicKey): Result<String> = Result.failure(UnsupportedOperationException())
+    override fun decryptFromSelf(ciphertext: String, privateKey: NostrPrivateKey, publicKey: NostrPublicKey): Result<String> = Result.failure(UnsupportedOperationException())
+    override fun computeEventId(unsigned: UnsignedNostrEvent): Result<String> = Result.failure(UnsupportedOperationException())
+    override fun sign(unsigned: UnsignedNostrEvent, privateKey: NostrPrivateKey): Result<NostrEvent> = Result.failure(UnsupportedOperationException())
+    override fun validate(event: NostrEvent): Result<Boolean> = Result.success(event.sig == "valid")
 }
 
 private class MemoryRelaySettingsPersistence : RelaySettingsPersistence {

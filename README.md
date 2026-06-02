@@ -73,7 +73,7 @@ New relays are tested before being added. Direct/session-only key sessions publi
 
 Public relays may purge old events. Add a relay you control for stronger long-term retention.
 
-Relay changes are planned through a migration use case that identifies added and removed relays. The intended production behavior is to fetch from old/removing relays, reduce to current note state, republish current signed events to added relays, and only then finalize settings. The current settings flow stores the plan and surfaces limitations; full relay migration execution remains future work even though normal relay fetch/publish is available.
+Relay changes execute a local migration plan before settings are finalized. Other Note fetches signed encrypted note history from the current relays before removal, keeps the encrypted event cache, selects the latest signed encrypted event for each note address, and republishes those already-signed encrypted events to newly added relays. If removed relays cannot be fetched or added relays reject writes, the settings screen shows a safe warning and lets the user cancel or continue. Migration never decrypts and republishes plaintext, and it does not touch NIP-46 signer-transport relays.
 
 ## Key Management And nsec Safety
 
@@ -346,7 +346,7 @@ Shared `commonMain` code is organized into:
 - `domain`: notes, relay config, session, sync state.
 - `nostr`: NIP-19 decoding, NIP-44 status, event model, crypto/client/repository interfaces.
 - `data`: note store, relay settings, profile cache, secure key-store abstraction, encrypted event cache, and pending write queue interfaces.
-- `sync`: save, delete/tombstone, sync reduction, and relay migration planning.
+- `sync`: save, delete/tombstone, sync reduction, and local relay migration execution.
 - `ui`: shared Compose screens for login, list, display, edit, and relay settings.
 - `util`: URL detection, npub detection, markdown helpers, relay URL validation, payload JSON codec.
 
@@ -358,12 +358,10 @@ Platform code:
 ## Known Limitations And TODOs
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
-- Add user-editable relay migration execution now that desktop and Android relay read/write paths are available.
 - Implement Android encrypted key storage and Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
 - Add inline image/video loading with size limits and timeouts.
-- Add real relay migration execution after relay read/write support exists.
 
 ## License
 
