@@ -293,7 +293,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current desktop and Android relay recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-Saved-device Android key storage, non-Linux desktop keyring backends, durable NIP-46 session metadata, richer client-initiated NIP-46 pairing UI, profile rendering, and inline media rendering are intentionally future work.
+Saved-device Android key storage, non-Linux desktop keyring backends, richer client-initiated NIP-46 pairing UI, remote profile image rendering, and inline media rendering are intentionally future work.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 

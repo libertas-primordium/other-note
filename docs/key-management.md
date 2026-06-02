@@ -154,7 +154,6 @@ This policy currently does not cover completed implementations for:
 
 - Saved-device Android `nsec` storage.
 - Windows/macOS saved-device key storage.
-- Durable NIP-46 session metadata persistence.
 - NIP-07 web signer support.
 - A web app.
 - Custom password-vault or password-derived encrypted file storage.
