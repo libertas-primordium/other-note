@@ -2,6 +2,7 @@ package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.security.KeyManagementPolicy
 import com.libertasprimordium.othernote.security.NostrSignerProvider
+import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
 import com.libertasprimordium.othernote.security.SignerNip44Operation
@@ -49,6 +50,14 @@ class KeyManagementPolicyTests {
 
         assertFalse(save.safeText().contains(suppliedNsec))
         assertFalse(store.unavailableReason.orEmpty().contains(suppliedNsec))
+    }
+
+    @Test
+    fun loadedSecretResultToStringRedactsNsec() {
+        val loaded = SecureSecretStoreResult.Loaded(suppliedNsec)
+
+        assertFalse(loaded.toString().contains(suppliedNsec))
+        assertTrue(loaded.toString().contains("redacted"))
     }
 
     @Test
@@ -389,6 +398,7 @@ private fun testSignEvent(pubkey: String): NostrEvent = NostrEvent(
 private fun SecureSecretStoreResult.safeText(): String = when (this) {
     SecureSecretStoreResult.Deleted -> "Deleted"
     is SecureSecretStoreResult.Failed -> safeMessage
+    is SecureSecretStoreResult.Listed -> "Listed ${identities.size}"
     is SecureSecretStoreResult.Loaded -> "Loaded"
     SecureSecretStoreResult.Saved -> "Saved"
     SecureSecretStoreResult.Unavailable -> "Unavailable"
@@ -404,6 +414,13 @@ private class TestOnlySecureSecretStore : SecureSecretStore {
         stored = nsec
         safeDiagnostics += "saved account"
         return SecureSecretStoreResult.Saved
+    }
+
+    override suspend fun listSavedNsecs(): SecureSecretStoreResult {
+        safeDiagnostics += "listed account"
+        return stored?.let {
+            SecureSecretStoreResult.Listed(listOf(SavedNsecIdentity("00".repeat(32), "npub-test")))
+        } ?: SecureSecretStoreResult.Listed(emptyList())
     }
 
     override suspend fun loadNsec(accountId: String): SecureSecretStoreResult {

@@ -26,7 +26,7 @@ Use this priority order:
 
 Session-only `nsec` means the key is held only in process memory for the active app session. The input field must be cleared after login and the full `nsec` must not be displayed after entry.
 
-Other Note may generate a fresh Nostr identity for a user-facing "Create new identity" flow. The generated `nsec` is the private key. It may be displayed only inside the deliberate generation flow so the user can save it outside Other Note or import it into a signer, and it must never be written to app preferences, DataStore, SQLite, files, JSON stores, durable relay caches, logs, analytics, crash reports, or relay events. The generated direct-key session remains session-only. When production crypto and a relay client are available, that session may use the in-memory private key for NIP-44 v2 encryption/decryption and NIP-01 signing, but durable storage must still contain only signed encrypted events and safe relay metadata. Losing the generated `nsec` means losing access to encrypted notes for that identity.
+Other Note may generate a fresh Nostr identity for a user-facing "Create new identity" flow. The generated `nsec` is the private key. It may be displayed only inside the deliberate generation flow so the user can save it outside Other Note, save it explicitly to the Linux desktop keyring where supported, or import it into a signer, and it must never be written to app preferences, DataStore, SQLite, files, JSON stores, durable relay caches, logs, analytics, crash reports, or relay events. The generated direct-key session remains session-only unless the desktop user explicitly saves the key to the OS keyring. When production crypto and a relay client are available, that session may use the in-memory private key for NIP-44 v2 encryption/decryption and NIP-01 signing, but durable storage must still contain only signed encrypted events and safe relay metadata. Losing the generated `nsec` means losing access to encrypted notes for that identity if no signer/keyring/password-manager copy exists.
 
 Generated-identity UX must require explicit acknowledgement that the user saved the `nsec` and understands the recovery risk before using it for a session. Clipboard copy must never happen automatically. If a future platform-specific copy action is added, it must be explicit, warning-labeled, and clear the clipboard after a short delay where the platform API makes that reliable.
 
@@ -55,7 +55,7 @@ Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use 
 
 The "Create new identity" flow can be used to generate an `nsec`, but the recommended Android path remains importing or saving that key in Amber or another NIP-55 signer and then using Android signer login in Other Note. Users who do not want to manage a raw `nsec` should prefer Android signer, NIP-46 remote signer/bunker, or future OS-backed credential storage.
 
-Saved-device `nsec` support must require Android secure credential or keystore-backed storage when implemented. Until that exists, saved-key mode stays disabled and session-only mode is used.
+Saved-device `nsec` support on Android must require Android secure credential or keystore-backed storage when implemented. Until that exists, Android saved-key mode stays disabled and session-only or signer-mediated modes are used.
 
 ## Local App Relay Settings
 
@@ -102,13 +102,13 @@ Allowed safe NIP-46 metadata for future persistence is limited to remote signer 
 
 Saved-device key storage may be enabled only through OS credential stores:
 
-- Debian/Linux: Secret Service/libsecret or an equivalent OS keyring.
+- Debian/Linux: Secret Service/libsecret or an equivalent OS keyring. Other Note's desktop implementation uses the libsecret-compatible `secret-tool` path when available and stores one app-scoped secret per account pubkey.
 - Windows: Windows Credential Manager, optionally gated by Windows Hello or user presence where feasible.
 - macOS: macOS Keychain.
 
-If an OS keyring is unavailable, locked, unsupported, or not implemented, saved-key mode must be disabled and session-only mode used. There must be no plaintext file fallback.
+If an OS keyring is unavailable, locked, unsupported, or not implemented, saved-key mode must be disabled and session-only mode used. There must be no plaintext file fallback. Keyring storage is device-local convenience storage, not hardware-isolated signing and not a backup. It protects the key at rest and behind the desktop/keyring unlock boundary, but authorized local apps or keyring tools may be able to retrieve the saved `nsec` after the keyring is unlocked. Users still need another copy of the `nsec` or a signer-managed identity if they need recovery.
 
-The desktop relay runtime may cache signed encrypted Nostr events and pending relay-write metadata under the user's local app data directory. That cache is not key storage: it must not contain `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. It may contain encrypted event content because that is the same signed ciphertext intended for public relays. Desktop direct-key sessions remain session-only: production crypto can use the in-memory key to encrypt, decrypt, sign, fetch, publish, edit, and tombstone notes, but Other Note still does not persist the plaintext key.
+The desktop relay runtime may cache signed encrypted Nostr events and pending relay-write metadata under the user's local app data directory. That cache is not key storage: it must not contain `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. It may contain encrypted event content because that is the same signed ciphertext intended for public relays. Desktop direct-key sessions remain session-only unless explicitly saved to the OS keyring: production crypto can use the in-memory key to encrypt, decrypt, sign, fetch, publish, edit, and tombstone notes, but Other Note still does not persist the plaintext key in app files.
 
 ## iOS Plan
 
@@ -148,14 +148,14 @@ This policy is designed to prevent accidental plaintext private-key persistence,
 
 This policy currently does not cover completed implementations for:
 
-- OS keyring storage.
 - Saved-device Android `nsec` storage.
+- Windows/macOS saved-device key storage.
 - Durable NIP-46 session metadata persistence.
 - NIP-07 web signer support.
 - A web app.
-- Production OS keyring-backed saved-key mode.
+- Custom password-vault or password-derived encrypted file storage.
 
-Secure storage implementations must be added platform by platform and tested before saved-key mode is enabled. A test fake may exist only in tests and must be clearly marked as a test fake.
+Secure storage implementations must be added platform by platform and tested before saved-key mode is enabled on that platform. A test fake may exist only in tests and must be clearly marked as a test fake.
 
 ## References And Planned Targets
 

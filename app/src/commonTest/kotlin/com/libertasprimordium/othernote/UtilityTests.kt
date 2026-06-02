@@ -205,6 +205,19 @@ class UtilityTests {
     }
 
     @Test
+    fun keyringFailuresMapToReadableUserFacingCopy() {
+        val raw = "Could not save this identity to the desktop keyring. secret=must-not-appear nsec1leak privateKey=leak"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Could not save identity", error.title)
+        assertEquals("Could not save this identity to the desktop keyring.", error.message)
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("must-not-appear"))
+        assertFalse(error.message.contains("nsec1leak"))
+        assertFalse(error.message.contains("privateKey"))
+    }
+
+    @Test
     fun persistenceFailureDoesNotExposeExceptionClassOrFilePath() {
         val raw = "Save failed: pending write persistence failed. NoSuchFileException: /home/spencer/.local/share/other-note/pending-writes/test.pending.json.tmp"
         val error = userFacingErrorFor(raw)

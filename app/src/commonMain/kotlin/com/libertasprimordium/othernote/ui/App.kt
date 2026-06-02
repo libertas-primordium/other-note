@@ -59,6 +59,7 @@ import androidx.compose.ui.window.Dialog
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
+import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
@@ -102,6 +103,9 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val message by appState.message.collectAsState()
     val mode by appState.mode.collectAsState()
     val generatedIdentity by appState.generatedIdentityState.collectAsState()
+    val savedIdentities by appState.savedIdentityState.collectAsState()
+    val keyringSaveConfirmation by appState.keyringSaveConfirmationState.collectAsState()
+    val scope = rememberCoroutineScope()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
     val signInOptions = appState.signInOptions
@@ -132,6 +136,35 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         Text("Other Note", color = OtherNoteText, fontSize = 34.sp, fontWeight = FontWeight.Bold)
         Text("Private Nostr-backed notes", color = OtherNoteMuted)
         Spacer(Modifier.height(24.dp))
+
+        if (appState.platform == AppPlatform.Desktop) {
+            SignInSectionTitle("Saved identities")
+            SignInSupportingText("Stored in your desktop keyring. This is device-local and not a backup.")
+            Spacer(Modifier.height(8.dp))
+            when {
+                !appState.secureSecretStoreAvailable -> SignInSupportingText(appState.secureSecretStoreStatus)
+                savedIdentities.loading -> SignInSupportingText("Checking desktop keyring...")
+                savedIdentities.error != null -> SignInSupportingText(savedIdentities.error.orEmpty())
+                savedIdentities.identities.isEmpty() -> SignInSupportingText("No saved identities on this device yet.")
+                else -> savedIdentities.identities.forEach { identity ->
+                    SavedIdentityRow(
+                        identity = identity,
+                        onContinue = {
+                            scope.launch {
+                                appState.loginWithSavedIdentity(identity.accountPubkey)
+                            }
+                        },
+                        onForget = {
+                            scope.launch {
+                                appState.forgetSavedIdentity(identity.accountPubkey)
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
 
         androidSignerOption?.let { option ->
             SignInSectionTitle("Recommended")
@@ -198,6 +231,25 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         ) {
             Text(nsecOption.label)
         }
+        if (appState.platform == AppPlatform.Desktop) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    appState.requestExistingNsecKeyringSaveConfirmation()
+                },
+                enabled = nsec.isNotBlank() && appState.secureSecretStoreAvailable,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save to this device's keyring")
+            }
+            SignInSupportingText(
+                if (appState.secureSecretStoreAvailable) {
+                    KeyringSaveWarningCopy.description
+                } else {
+                    appState.secureSecretStoreStatus
+                },
+            )
+        }
         Spacer(Modifier.height(12.dp))
         SignInSupportingText(generatedIdentityOption.supportingCopy)
         TextButton(onClick = { appState.startGeneratedIdentityFlow() }) {
@@ -217,6 +269,48 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         GeneratedIdentityStep.Idle -> Unit
         GeneratedIdentityStep.Explanation -> GeneratedIdentityExplanationDialog(appState, generatedIdentity)
         GeneratedIdentityStep.Generated -> GeneratedIdentityRevealDialog(appState, generatedIdentity)
+    }
+    keyringSaveConfirmation.source?.let { source ->
+        KeyringSaveConfirmationDialog(
+            onCancel = { appState.cancelKeyringSaveConfirmation() },
+            onConfirm = {
+                scope.launch {
+                    val saved = when (source) {
+                        KeyringSaveConfirmationSource.ExistingNsec ->
+                            appState.confirmExistingNsecKeyringSave(nsec)
+                        KeyringSaveConfirmationSource.GeneratedIdentity ->
+                            appState.confirmGeneratedIdentityKeyringSave()
+                    }
+                    if (saved && source == KeyringSaveConfirmationSource.ExistingNsec) {
+                        nsec = ""
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SavedIdentityRow(
+    identity: SavedNsecIdentity,
+    onContinue: () -> Unit,
+    onForget: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(identity.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+            Text("Saved in desktop keyring", color = OtherNoteMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue with saved key")
+            }
+            TextButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Forget from this device")
+            }
+        }
     }
 }
 
@@ -271,6 +365,7 @@ private fun GeneratedIdentityRevealDialog(
     appState: AppState,
     generatedIdentity: GeneratedIdentityState,
 ) {
+    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = { appState.cancelGeneratedIdentityFlow() },
         title = { Text("Save this nsec") },
@@ -311,6 +406,27 @@ private fun GeneratedIdentityRevealDialog(
                     onCheckedChange = appState::acknowledgeGeneratedIdentityLossRisk,
                     text = "I understand losing this nsec means losing access to this identity's encrypted notes.",
                 )
+                if (appState.platform == AppPlatform.Desktop) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            appState.requestGeneratedIdentityKeyringSaveConfirmation()
+                        },
+                        enabled = generatedIdentity.canUseForSession && appState.secureSecretStoreAvailable,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Save to desktop keyring")
+                    }
+                    Text(
+                        if (appState.secureSecretStoreAvailable) {
+                            KeyringSaveWarningCopy.description
+                        } else {
+                            appState.secureSecretStoreStatus
+                        },
+                        color = OtherNoteMuted,
+                        fontSize = 12.sp,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -328,6 +444,42 @@ private fun GeneratedIdentityRevealDialog(
         },
     )
 }
+
+@Composable
+private fun KeyringSaveConfirmationDialog(
+    onCancel: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(KeyringSaveWarningCopy.title) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(KeyringSaveWarningCopy.body)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm) {
+                Text("Save to keyring")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onCancel) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+private fun SavedNsecIdentity.safeDisplayName(): String =
+    when {
+        npub.isNotBlank() -> npub.safePrefix()
+        accountPubkey.isNotBlank() -> "pubkey ${accountPubkey.safePrefix()}"
+        else -> "Saved identity"
+    }
+
+private fun String.safePrefix(): String =
+    if (length <= 16) this else "${take(12)}..."
 
 @Composable
 private fun AcknowledgementRow(
