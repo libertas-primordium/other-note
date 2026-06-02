@@ -73,6 +73,7 @@ compose.desktop {
         mainClass = "com.libertasprimordium.othernote.DesktopMainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb)
+            modules("java.net.http")
             packageName = "Other Note"
             packageVersion = "0.1.0"
             description = "GPLv3 Nostr-backed encrypted notes app"
