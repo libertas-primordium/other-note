@@ -466,7 +466,8 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 false
             }
             is Nip46ConnectResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
             Nip46ConnectResult.TimedOut -> {
@@ -497,13 +498,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = "Signer request cancelled"
             }
             is SignerPublicKeyRequestResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerPublicKeyRequestResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerPublicKeyRequestResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
         }
     }
@@ -548,13 +549,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = "Signer signing cancelled"
             }
             is SignEventRequestResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignEventRequestResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignEventRequestResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
         }
     }
@@ -601,13 +602,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = "Signer encryption cancelled"
             }
             is SignerNip44OperationResult.Unavailable -> {
-                _message.value = encrypted.safeReason
+                _message.value = encrypted.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.Failed -> {
-                _message.value = encrypted.safeReason
+                _message.value = encrypted.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.InvalidResponse -> {
-                _message.value = encrypted.safeReason
+                _message.value = encrypted.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.Decrypted -> {
                 _message.value = "Signer returned invalid encryption result"
@@ -624,13 +625,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = "Signer decryption cancelled"
             }
             is SignerNip44OperationResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerNip44OperationResult.Encrypted -> {
                 _message.value = "Signer decryption failed"
@@ -672,13 +673,13 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = "Signer note event build cancelled"
             }
             is SignerNoteEventBuildResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerNoteEventBuildResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
             is SignerNoteEventBuildResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
             }
         }
     }
@@ -771,15 +772,18 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 false
             }
             is SignerNoteEventBuildResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
             is SignerNoteEventBuildResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
             is SignerNoteEventBuildResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
         }
@@ -864,15 +868,18 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 false
             }
             is SignerNoteEventBuildResult.Unavailable -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
             is SignerNoteEventBuildResult.Failed -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
             is SignerNoteEventBuildResult.InvalidResponse -> {
-                _message.value = result.safeReason
+                _message.value = result.safeReason.toUserFacingMessage()
+                _diagnosticMessage.value = result.safeReason
                 false
             }
         }
@@ -1277,14 +1284,14 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             return if (relayStatuses.isNotEmpty() && relayStatuses.none { it.readable }) {
                 "Sync failed: no relays reachable"
             } else {
-                errors.first()
+                errors.first().toUserFacingMessage()
             }
         }
         val total = relayStatuses.size
         val reachable = relayStatuses.count { it.readable }
         return when {
             total == 0 && warnings.isEmpty() -> "Not synced"
-            total == 0 -> warnings.first().compactStatus()
+            total == 0 -> warnings.first().compactStatus().toUserFacingMessage()
             reachable == total -> "Synced"
             reachable > 0 -> "Sync partial: $reachable/$total relays reachable"
             else -> "Sync failed: no relays reachable"
@@ -1626,7 +1633,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _relayAddTestState.value = RelayAddTestState(
                     warning = RelayAddWarning(
                         relayUrl = normalized,
-                        safeReason = result.userMessage,
+                        safeReason = result.userMessage.toRelayTestWarningMessage(),
                     ),
                 )
                 RelayAddResult.WaitingForUserChoice
@@ -1690,9 +1697,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     private fun SaveResult.toCompactMessage(): String = when (this) {
-        is SaveResult.LocalOnly -> reason
+        is SaveResult.LocalOnly -> reason.toUserFacingMessage()
         is SaveResult.Published -> relayMessages.firstOrNull()?.compactStatus() ?: "Saved"
-        is SaveResult.Failed -> reason
+        is SaveResult.Failed -> reason.toUserFacingMessage()
     }
 
     private fun SaveResult.toDiagnosticMessage(): String = when (this) {
@@ -1709,7 +1716,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private fun String.abbreviatedId(): String = take(12)
 
     private fun Throwable.safePersistenceMessage(): String =
-        "${this::class.simpleName}: ${message?.take(160).orEmpty()}"
+        toUserFacingPersistenceMessage()
 
     private fun startupMessage(): String =
         when (services.mode) {
