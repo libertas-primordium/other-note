@@ -15,6 +15,10 @@ import com.libertasprimordium.othernote.nostr.NostrPublicKey
 import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.sync.planRelayMigration
+import com.libertasprimordium.othernote.sync.RelayListKind
+import com.libertasprimordium.othernote.sync.latestRelayListEvent
+import com.libertasprimordium.othernote.sync.mergeRelayListTags
+import com.libertasprimordium.othernote.sync.parseRelayListEvent
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.selectLatestSignedEncryptedNoteEvents
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
@@ -237,6 +241,66 @@ class UtilityTests {
     }
 
     @Test
+    fun relayListParsesWriteReadAndUnmarkedRelays() {
+        val parsed = parseRelayListEvent(
+            relayListEvent(
+                id = "relay-list",
+                createdAt = 10,
+                tags = listOf(
+                    listOf("r", "relay.write.example", "write"),
+                    listOf("r", "relay.read.example", "read"),
+                    listOf("r", "relay.both.example"),
+                    listOf("r", "https://bad.example", "write"),
+                    listOf("client", "other-app"),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf("wss://relay.write.example", "wss://relay.both.example"),
+            parsed.writeRelayUrls,
+        )
+        assertEquals(1, parsed.malformedRelayTagCount)
+        assertEquals(listOf(listOf("client", "other-app")), parsed.preservedTags)
+    }
+
+    @Test
+    fun relayListLatestUsesReplaceableOrdering() {
+        val old = relayListEvent("b-old", 10, listOf(listOf("r", "wss://old.example", "write")))
+        val newest = relayListEvent("a-new", 20, listOf(listOf("r", "wss://new.example", "write")))
+        val sameTimeLowerId = relayListEvent("a-lower", 20, listOf(listOf("r", "wss://tie.example", "write")))
+        val selected = latestRelayListEvent(listOf(old, newest, sameTimeLowerId), "pub", AcceptingValidationCrypto)
+
+        assertEquals("a-lower", selected?.id)
+    }
+
+    @Test
+    fun relayListMergeReplacesWriteRelaysAndPreservesOtherCategories() {
+        val existing = parseRelayListEvent(
+            relayListEvent(
+                id = "existing",
+                createdAt = 10,
+                tags = listOf(
+                    listOf("r", "wss://old-write.example", "write"),
+                    listOf("r", "wss://read.example", "read"),
+                    listOf("r", "wss://both.example"),
+                    listOf("r", "wss://custom.example", "search", "extra"),
+                    listOf("p", "some-public-metadata"),
+                ),
+            ),
+        )
+
+        val tags = mergeRelayListTags(existing, listOf("both.example", "new.example"))
+
+        assertFalse(tags.contains(listOf("r", "wss://old-write.example", "write")))
+        assertTrue(tags.contains(listOf("r", "wss://read.example", "read")))
+        assertTrue(tags.contains(listOf("r", "wss://both.example")))
+        assertTrue(tags.contains(listOf("r", "wss://custom.example", "search", "extra")))
+        assertTrue(tags.contains(listOf("p", "some-public-metadata")))
+        assertTrue(tags.contains(listOf("r", "wss://new.example", "write")))
+    }
+
+    @Test
     fun markdownTruncationStripsCommonMarkup() {
         val truncated = truncateMarkdown("# Heading\n\n**bold** text", maxChars = 20)
         assertFalse(truncated.contains("#"))
@@ -269,6 +333,17 @@ class UtilityTests {
             sig = "sig",
         )
     }
+
+    private fun relayListEvent(id: String, createdAt: Long, tags: List<List<String>>): NostrEvent =
+        NostrEvent(
+            id = id,
+            pubkey = "pub",
+            createdAt = createdAt,
+            kind = RelayListKind,
+            tags = tags,
+            content = "",
+            sig = "valid",
+        )
 }
 
 private object AcceptingValidationCrypto : NostrCrypto {

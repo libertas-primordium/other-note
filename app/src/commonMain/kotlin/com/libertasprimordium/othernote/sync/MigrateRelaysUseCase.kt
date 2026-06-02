@@ -20,6 +20,7 @@ data class RelayMigrationPlan(
     val migrationRequired: Boolean get() = addedRelays.isNotEmpty() || removedRelays.isNotEmpty()
     val shouldFetchBeforeRemoval: Boolean get() = removedRelays.isNotEmpty()
     val shouldRepublishCurrentEvents: Boolean get() = addedRelays.isNotEmpty()
+    val isManualRelaySync: Boolean get() = oldRelays == newRelays && addedRelays == newRelays && removedRelays.isEmpty()
 }
 
 fun planRelayMigration(oldRelays: List<String>, newRelays: List<String>): RelayMigrationPlan {
@@ -30,6 +31,16 @@ fun planRelayMigration(oldRelays: List<String>, newRelays: List<String>): RelayM
         newRelays = newDistinct,
         addedRelays = newDistinct.filterNot { it in oldDistinct },
         removedRelays = oldDistinct.filterNot { it in newDistinct },
+    )
+}
+
+fun planManualRelaySync(relays: List<String>): RelayMigrationPlan {
+    val distinct = relays.distinct()
+    return RelayMigrationPlan(
+        oldRelays = distinct,
+        newRelays = distinct,
+        addedRelays = distinct,
+        removedRelays = emptyList(),
     )
 }
 
@@ -58,10 +69,11 @@ data class RelayMigrationExecutionResult(
 
     fun safeSummary(): String =
         buildString {
-            append("Relay migration ")
+            append(if (plan.isManualRelaySync) "Relay sync/migration " else "Relay migration ")
             append(if (fullSuccess) "completed" else "needs review")
             append(". fetched_events=$fetchedEventCount cached_events=$cacheEventCount selected_events=$selectedEventCount")
-            if (plan.addedRelays.isNotEmpty()) append(" added=${plan.addedRelays.joinToString()}")
+            if (plan.isManualRelaySync) append(" target=${plan.addedRelays.joinToString()}")
+            else if (plan.addedRelays.isNotEmpty()) append(" added=${plan.addedRelays.joinToString()}")
             if (plan.removedRelays.isNotEmpty()) append(" removed=${plan.removedRelays.joinToString()}")
         }
 
@@ -114,7 +126,8 @@ class RelayMigrationUseCase(
             }
             val failedPublishes = publishStatuses.values.flatten().filter { !it.writable }
             if (failedPublishes.isNotEmpty()) {
-                add("Some added relays did not accept republished encrypted events: ${failedPublishes.toSafeMigrationSummary()}")
+                val label = if (plan.isManualRelaySync) "target" else "added"
+                add("Some $label relays did not accept republished encrypted events: ${failedPublishes.toSafeMigrationSummary()}")
             }
         }
         return RelayMigrationExecutionResult(

@@ -49,7 +49,7 @@ class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
                 putExtra("type", "get_public_key")
                 putExtra(
                     "permissions",
-                    """[{"type":"sign_event","kind":1},{"type":"nip44_encrypt"},{"type":"nip44_decrypt"}]""",
+                    """[{"type":"sign_event","kind":1},{"type":"sign_event","kind":30078},{"type":"sign_event","kind":10002},{"type":"nip44_encrypt"},{"type":"nip44_decrypt"}]""",
                 )
             }
 

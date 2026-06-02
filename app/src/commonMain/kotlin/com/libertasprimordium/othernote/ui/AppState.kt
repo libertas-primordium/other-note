@@ -14,10 +14,12 @@ import com.libertasprimordium.othernote.data.PendingWriteMaxRetryCount
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
+import com.libertasprimordium.othernote.nostr.NostrPrivateKey
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.nostr.RelayTestResult
+import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
@@ -36,13 +38,17 @@ import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.RelayMigrationExecutionResult
 import com.libertasprimordium.othernote.sync.RelayMigrationUseCase
+import com.libertasprimordium.othernote.sync.RelayListPublishResult
+import com.libertasprimordium.othernote.sync.RelayListSyncUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import com.libertasprimordium.othernote.sync.mergeReducedNotesWithCurrent
+import com.libertasprimordium.othernote.sync.planManualRelaySync
 import com.libertasprimordium.othernote.sync.queueRelayMigrationPendingWrites
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +57,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class AppMode {
     SignedOut,
@@ -111,8 +118,15 @@ data class RelayMigrationUiState(
 )
 
 data class RelayMigrationWarning(
-    val summary: String,
+    val title: String,
+    val body: String,
     val details: String,
+    val summary: String = title,
+)
+
+data class RelayMigrationUserWarningText(
+    val title: String,
+    val body: String,
 )
 
 private data class PendingRelayMigrationDecision(
@@ -121,6 +135,7 @@ private data class PendingRelayMigrationDecision(
     val sessionPubkey: String?,
     val summary: String,
     val details: String,
+    val successMessage: String = "Relay settings saved after migration warning.",
 )
 
 sealed interface RelayAddResult {
@@ -129,6 +144,13 @@ sealed interface RelayAddResult {
     data class Duplicate(val relayUrl: String) : RelayAddResult
     data object WaitingForUserChoice : RelayAddResult
     data object InProgress : RelayAddResult
+}
+
+sealed interface RelaySettingsRefreshResult {
+    data class PublishedListAvailable(val relays: List<String>, val safeSummary: String) : RelaySettingsRefreshResult
+    data class Skipped(val safeReason: String) : RelaySettingsRefreshResult
+    data class NoChange(val safeReason: String) : RelaySettingsRefreshResult
+    data class Failed(val safeReason: String) : RelaySettingsRefreshResult
 }
 
 class AppState(private val services: AppServices = defaultAppServices()) {
@@ -168,6 +190,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     )
     private val migrateRelays = MigrateRelaysUseCase()
     private val relayMigration = RelayMigrationUseCase(nostr, crypto, services.localEventCache)
+    private val relayListSync = RelayListSyncUseCase(nostr, crypto)
     private val signerNoteEventBuilder = SignerNoteEventBuilder(
         nip44 = services.externalSignerNip44Operator,
         eventSigner = services.externalSignerEventSigner,
@@ -224,6 +247,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val _relayMigrationState = MutableStateFlow(RelayMigrationUiState())
     val relayMigrationState: StateFlow<RelayMigrationUiState> = _relayMigrationState
     private var pendingRelayMigrationDecision: PendingRelayMigrationDecision? = null
+    private var relayListImportedForPubkey: String? = null
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
@@ -880,7 +904,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _syncState.value = _syncState.value.copy(syncing = true)
         try {
             _syncState.value = withContext(Dispatchers.IO) {
-                syncNotes.sync(_session.value, relaySettings.normalizedUrls()) { partial ->
+                val activeSession = _session.value
+                val relays = activeSession?.let { importPublishedRelayListIfNeeded(it) } ?: relaySettings.normalizedUrls()
+                syncNotes.sync(activeSession, relays) { partial ->
                     _syncState.value = partial.copy(syncing = true)
                     _message.value = partial.toCompactMessage()
                     _diagnosticMessage.value = partial.toDiagnosticMessage()
@@ -975,7 +1001,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = _syncState.value.summary
             return
         }
-        val relays = relaySettings.normalizedUrls()
+        val relays = withContext(Dispatchers.IO) { importPublishedRelayListIfNeeded(session) }
         _syncState.value = _syncState.value.copy(syncing = true)
         _message.value = "Syncing..."
         val aggregateEvents = mutableListOf<NostrEvent>()
@@ -1004,6 +1030,139 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _syncState.value = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = true).copy(syncing = false)
         _message.value = _syncState.value.toCompactMessage()
         _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+    }
+
+    private suspend fun importPublishedRelayListIfNeeded(session: UserSession): List<String> {
+        val currentRelays = relaySettings.normalizedUrls()
+        if (relayListImportedForPubkey == session.publicKeyHex) return currentRelays
+        relayListImportedForPubkey = session.publicKeyHex
+        val imported = relayListSync.importPublishedWriteRelays(session, currentRelays)
+        if (imported.importedRelays.isEmpty()) {
+            if (imported.warning != null) {
+                _syncState.value = _syncState.value.copy(warnings = _syncState.value.warnings + imported.warning)
+            }
+            return currentRelays
+        }
+        val configs = relaySettings.previewChange(imported.importedRelays).getOrNull() ?: return currentRelays
+        if (configs.map { it.url } == currentRelays) return currentRelays
+        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
+        return if (persisted.isSuccess) {
+            _message.value = imported.safeSummary()
+            configs.map { it.url }
+        } else {
+            _syncState.value = _syncState.value.copy(
+                warnings = _syncState.value.warnings +
+                    "Published relay list was found, but local relay settings could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}",
+            )
+            currentRelays
+        }
+    }
+
+    suspend fun refreshPublishedRelayListForSettings(): RelaySettingsRefreshResult {
+        val session = _session.value ?: return RelaySettingsRefreshResult.Skipped("Relay-list refresh requires sign-in.")
+        if (_relayMigrationState.value.inProgress) {
+            return RelaySettingsRefreshResult.Skipped("Relay migration is already in progress.")
+        }
+        val addState = _relayAddTestState.value
+        if (addState.inProgress || addState.warning != null) {
+            return RelaySettingsRefreshResult.Skipped("Relay add/test is already in progress.")
+        }
+        val currentRelays = relaySettings.normalizedUrls()
+        val imported = withContext(Dispatchers.IO) {
+            withTimeoutOrNull(10_000) {
+                relayListSync.importPublishedWriteRelays(session, currentRelays)
+            }
+        } ?: return RelaySettingsRefreshResult.Failed("Published relay-list refresh timed out; keeping local relay settings.")
+        if (imported.importedRelays.isEmpty()) {
+            return RelaySettingsRefreshResult.NoChange(imported.warning ?: "No published relay list found; keeping local relay settings.")
+        }
+        val configs = relaySettings.previewChange(imported.importedRelays).getOrNull()
+            ?: return RelaySettingsRefreshResult.Failed("Published relay list had no usable write relays; keeping local relay settings.")
+        val relays = configs.map { it.url }
+        if (relays == currentRelays) {
+            relayListImportedForPubkey = session.publicKeyHex
+            return RelaySettingsRefreshResult.NoChange("Published relay list already matches local settings.")
+        }
+        return RelaySettingsRefreshResult.PublishedListAvailable(relays, imported.safeSummary())
+    }
+
+    suspend fun applyPublishedRelayListFromSettings(relays: List<String>): Boolean {
+        val session = _session.value
+        val configs = relaySettings.previewChange(relays).getOrNull()
+        if (configs == null) {
+            _message.value = "Published relay list had invalid relay settings."
+            return false
+        }
+        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
+        return if (persisted.isSuccess) {
+            relayListImportedForPubkey = session?.publicKeyHex
+            _message.value = "Using your published relay list."
+            true
+        } else {
+            _message.value = "Published relay list could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            false
+        }
+    }
+
+    suspend fun syncCurrentRelays(): Boolean {
+        val session = _session.value
+        if (session == null) {
+            _message.value = "Sign in before syncing relays."
+            return false
+        }
+        val currentRelays = relaySettings.normalizedUrls()
+        if (currentRelays.isEmpty()) {
+            _message.value = "No app relays configured."
+            return false
+        }
+        if (_relayMigrationState.value.inProgress) {
+            _message.value = "Relay migration is already in progress."
+            return false
+        }
+        val addState = _relayAddTestState.value
+        if (addState.inProgress || addState.warning != null) {
+            _message.value = "Finish the relay add/test dialog before syncing relays."
+            return false
+        }
+        val configs = relaySettings.previewChange(currentRelays).getOrNull()
+        if (configs == null) {
+            _message.value = "Current relay settings are invalid."
+            return false
+        }
+
+        pendingRelayMigrationDecision = null
+        _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
+        _message.value = "Syncing encrypted notes across relays..."
+        val result = withContext(Dispatchers.IO) {
+            relayMigration.execute(session, planManualRelaySync(currentRelays))
+        }
+        _relayMigrationState.value = RelayMigrationUiState()
+        _diagnosticMessage.value = result.safeDetails()
+        updateRelaySettingsStatusesFromMigration(result, null)
+        if (result.fullSuccess) {
+            _message.value = if (result.latestEvents.isEmpty()) {
+                "No encrypted notes to migrate."
+            } else {
+                "Relay sync/migration completed."
+            }
+            return true
+        }
+
+        val userWarning = relayMigrationUserWarning(null, result)
+        val details = result.safeDetails()
+        pendingRelayMigrationDecision = PendingRelayMigrationDecision(
+            requestedConfigs = configs,
+            result = result,
+            sessionPubkey = session.publicKeyHex,
+            summary = userWarning.title,
+            details = details,
+            successMessage = "Relay sync/migration continued; failed relay writes were queued where possible.",
+        )
+        _relayMigrationState.value = RelayMigrationUiState(
+            warning = RelayMigrationWarning(userWarning.title, userWarning.body, details),
+        )
+        _message.value = userWarning.title
+        return false
     }
 
     private fun retrySignerPendingWrites(session: UserSession) {
@@ -1156,6 +1315,34 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         val old = relaySettings.normalizedUrls()
         val plan = migrateRelays.migrate(old, configs.map { it.url })
         if (!plan.migrationRequired) {
+            val requested = configs.map { it.url }
+            val session = _session.value
+            if (old != requested && session != null) {
+                _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
+                _message.value = "Publishing updated relay list..."
+                val relayListPublish = withContext(Dispatchers.IO) {
+                    publishRelayListForSettingsChange(session, old, requested)
+                }
+                _relayMigrationState.value = RelayMigrationUiState()
+                _diagnosticMessage.value = relayListPublish.safeDetails()
+                updateRelaySettingsStatusesFromRelayListPublish(relayListPublish, requested)
+                if (!relayListPublish.fullSuccess) {
+                    val userWarning = relayMigrationUserWarning(relayListPublish, null)
+                    val details = relayListPublish.safeDetails()
+                    pendingRelayMigrationDecision = PendingRelayMigrationDecision(
+                        requestedConfigs = configs,
+                        result = null,
+                        sessionPubkey = session.publicKeyHex,
+                        summary = userWarning.title,
+                        details = details,
+                    )
+                    _relayMigrationState.value = RelayMigrationUiState(
+                        warning = RelayMigrationWarning(userWarning.title, userWarning.body, details),
+                    )
+                    _message.value = userWarning.title
+                    return false
+                }
+            }
             return persistRelaySettings(configs, "Relay settings saved.")
         }
 
@@ -1170,33 +1357,250 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 summary = summary,
                 details = details,
             )
-            _relayMigrationState.value = RelayMigrationUiState(warning = RelayMigrationWarning(summary, details))
+            _relayMigrationState.value = RelayMigrationUiState(warning = RelayMigrationWarning(summary, details, details))
             _message.value = summary
             return false
         }
 
         _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
         _message.value = "Migrating encrypted relay state..."
-        val result = withContext(Dispatchers.IO) {
-            relayMigration.execute(session, plan)
+        val (relayListPublish, result) = withContext(Dispatchers.IO) {
+            val relayListResult = publishRelayListForSettingsChange(session, old, configs.map { it.url })
+            relayListResult to relayMigration.execute(session, plan)
         }
         _relayMigrationState.value = RelayMigrationUiState()
-        _diagnosticMessage.value = result.safeDetails()
-        if (result.fullSuccess) {
-            return persistRelaySettings(configs, result.safeSummary())
+        val combinedSummary = relaySettingsMigrationSummary(relayListPublish, result)
+        val combinedDetails = relaySettingsMigrationDetails(relayListPublish, result)
+        _diagnosticMessage.value = combinedDetails
+        updateRelaySettingsStatusesFromMigration(result, relayListPublish)
+        if (result.fullSuccess && relayListPublish.fullSuccess) {
+            return persistRelaySettings(configs, combinedSummary)
         }
+        val userWarning = relayMigrationUserWarning(relayListPublish, result)
         pendingRelayMigrationDecision = PendingRelayMigrationDecision(
             requestedConfigs = configs,
             result = result,
             sessionPubkey = session.publicKeyHex,
-            summary = result.safeSummary(),
-            details = result.safeDetails(),
+            summary = userWarning.title,
+            details = combinedDetails,
         )
         _relayMigrationState.value = RelayMigrationUiState(
-            warning = RelayMigrationWarning(result.safeSummary(), result.safeDetails()),
+            warning = RelayMigrationWarning(userWarning.title, userWarning.body, combinedDetails),
         )
-        _message.value = result.safeSummary()
+        _message.value = userWarning.title
         return false
+    }
+
+    private suspend fun publishRelayListForSettingsChange(
+        session: UserSession,
+        oldRelays: List<String>,
+        requestedRelays: List<String>,
+    ): RelayListPublishResult {
+        val targetRelays = (oldRelays + requestedRelays).distinct()
+        return relayListSync.publishUpdatedRelayList(
+            session = session,
+            discoveryRelays = oldRelays.ifEmpty { requestedRelays },
+            targetRelays = targetRelays,
+            appWriteRelays = requestedRelays,
+            signEvent = { event -> signRelayListEvent(session, event) },
+        )
+    }
+
+    private suspend fun signRelayListEvent(session: UserSession, event: NostrEvent): SignEventRequestResult =
+        when (session.authMethod) {
+            SessionAuthMethod.SessionOnlyNsec -> {
+                if (!session.hasSessionPrivateKey()) {
+                    SignEventRequestResult.Unavailable("Relay-list publish requires a session key or signer.")
+                } else {
+                    runCatching {
+                        val signed = crypto.sign(
+                            UnsignedNostrEvent(
+                                pubkey = event.pubkey,
+                                createdAt = event.createdAt,
+                                kind = event.kind,
+                                tags = event.tags,
+                                content = event.content,
+                            ),
+                            NostrPrivateKey(session.privateKeyHex),
+                        ).getOrThrow()
+                        SignEventRequestResult.Success(signed, null)
+                    }.getOrElse { error ->
+                        SignEventRequestResult.Failed("Relay-list signing failed: ${error::class.simpleName}")
+                    }
+                }
+            }
+            SessionAuthMethod.RemoteSigner -> {
+                services.remoteSigner?.signEventAsync(event, session.publicKeyHex, session.signerPackage)
+                    ?: SignEventRequestResult.Unavailable("Remote signer is unavailable for relay-list publish.")
+            }
+            SessionAuthMethod.ExternalSigner -> {
+                val deferred = CompletableDeferred<SignEventRequestResult>()
+                services.externalSignerEventSigner.signEvent(
+                    unsignedEvent = event,
+                    currentUserPubkey = session.publicKeyHex,
+                    signerPackage = session.signerPackage,
+                ) { result -> deferred.complete(result) }
+                deferred.await()
+            }
+        }
+
+    private fun relaySettingsMigrationSummary(
+        relayListPublish: RelayListPublishResult,
+        migration: RelayMigrationExecutionResult,
+    ): String =
+        if (relayListPublish.fullSuccess && migration.fullSuccess) {
+            "Relay settings saved. Published relay list and migrated encrypted notes."
+        } else {
+            "Relay settings need review before saving."
+        }
+
+    private fun relaySettingsMigrationDetails(
+        relayListPublish: RelayListPublishResult,
+        migration: RelayMigrationExecutionResult,
+    ): String =
+        buildList {
+            add("relay_list=${relayListPublish.safeSummary()}")
+            add(relayListPublish.safeDetails())
+            add("content_migration=${migration.safeSummary()}")
+            add(migration.safeDetails())
+        }.filter { it.isNotBlank() }.joinToString("\n").take(2_000)
+
+    private fun relayMigrationUserWarning(
+        relayListPublish: RelayListPublishResult?,
+        migration: RelayMigrationExecutionResult?,
+    ): RelayMigrationUserWarningText {
+        val relayListFailed = relayListPublish != null && !relayListPublish.fullSuccess
+        val contentFailed = migration != null && !migration.fullSuccess
+        val statuses = buildList {
+            relayListPublish?.statuses?.let(::addAll)
+            migration?.fetchStatuses?.let(::addAll)
+            migration?.publishStatusesByEventId?.values?.flatten()?.let(::addAll)
+        }
+        val failedMessages = statuses
+            .filter { !it.readable || !it.writable }
+            .map { it.message.lowercase() }
+        val hasTimeout = failedMessages.any { message ->
+            message.contains("timeout") ||
+                message.contains("timed out") ||
+                message.contains("connect") ||
+                message.contains("unreachable") ||
+                message.contains("offline")
+        }
+        val hasRejection = failedMessages.any { message ->
+            message.contains("reject") ||
+                message.contains("denied") ||
+                message.contains("blocked") ||
+                message.contains("policy")
+        }
+        return when {
+            relayListFailed && migration?.fullSuccess == true -> RelayMigrationUserWarningText(
+                title = if (hasTimeout) "Some relays did not respond" else "Some relays rejected the update",
+                body = "Your encrypted notes were migrated, but Other Note could not publish the updated relay list to every relay.",
+            )
+            relayListPublish?.fullSuccess == true && contentFailed -> RelayMigrationUserWarningText(
+                title = if (hasTimeout) "Some relays did not respond" else "Relay migration partially completed",
+                body = "Your relay list was updated, but Other Note could not copy all encrypted note events to every relay.",
+            )
+            hasRejection -> RelayMigrationUserWarningText(
+                title = "Some relays rejected the update",
+                body = "Other Note could not publish your relay list or encrypted notes to every relay. The relays that accepted the update will still work. You can continue with these settings or go back and remove the failed relays.",
+            )
+            hasTimeout -> RelayMigrationUserWarningText(
+                title = "Some relays did not respond",
+                body = "One or more relays could not be reached. Your notes are still safe in local encrypted storage and on relays that accepted the update. You can continue or try different relays.",
+            )
+            else -> RelayMigrationUserWarningText(
+                title = "Relay migration partially completed",
+                body = "Your relay settings were updated on some relays, but not all. This usually means a relay is offline, rejects your key, or has a write policy. You can continue anyway or adjust your relay list.",
+            )
+        }
+    }
+
+    private fun updateRelaySettingsStatusesFromRelayListPublish(
+        relayListPublish: RelayListPublishResult,
+        displayRelays: List<String>,
+    ) {
+        val statusesByRelay = relayListPublish.statuses.associateBy { it.url }
+        val statuses = displayRelays.distinct().map { relay ->
+            val status = statusesByRelay[relay]
+            when {
+                status == null -> RelayStatus(relay, message = "Not checked yet")
+                status.writable -> RelayStatus(relay, writable = true, message = "Published relay list")
+                else -> RelayStatus(relay, writable = false, message = status.message.toReadableRelayFailure("Could not publish"))
+            }
+        }
+        updateRelaySettingsStatuses(statuses)
+    }
+
+    private fun updateRelaySettingsStatusesFromMigration(
+        migration: RelayMigrationExecutionResult,
+        relayListPublish: RelayListPublishResult?,
+    ) {
+        val relays = (migration.plan.newRelays + migration.plan.oldRelays).distinct()
+        val fetchByRelay = migration.fetchStatuses.associateBy { it.url }
+        val publishStatusesByRelay = migration.publishStatusesByEventId.values
+            .flatten()
+            .groupBy { it.url }
+        val relayListStatusesByRelay = relayListPublish?.statuses.orEmpty().groupBy { it.url }
+        val eventCount = migration.latestEvents.size
+        val statuses = relays.map { relay ->
+            val relayListStatuses = relayListStatusesByRelay[relay].orEmpty()
+            val publishStatuses = publishStatusesByRelay[relay].orEmpty()
+            val failures = (relayListStatuses + publishStatuses).filter { !it.writable }
+            val fetchStatus = fetchByRelay[relay]
+            when {
+                failures.isNotEmpty() -> {
+                    val message = failures.first().message
+                    val accepted = publishStatuses.count { it.writable }
+                    val readable = if (accepted in 1 until eventCount) {
+                        "Published $accepted of $eventCount events"
+                    } else {
+                        message.toReadableRelayFailure("Could not publish")
+                    }
+                    RelayStatus(relay, readable = fetchStatus?.readable ?: false, writable = false, message = readable)
+                }
+                eventCount > 0 && publishStatuses.isNotEmpty() -> {
+                    val accepted = publishStatuses.count { it.writable }
+                    val message = if (accepted == eventCount) {
+                        "Published all events"
+                    } else {
+                        "Published $accepted of $eventCount events"
+                    }
+                    RelayStatus(relay, readable = fetchStatus?.readable ?: false, writable = accepted == eventCount, message = message)
+                }
+                fetchStatus != null && !fetchStatus.readable -> {
+                    RelayStatus(relay, readable = false, message = fetchStatus.message.toReadableRelayFailure("Could not fetch"))
+                }
+                migration.fetchedEventCount > 0 -> {
+                    RelayStatus(relay, readable = fetchStatus?.readable ?: true, message = "Fetched ${migration.fetchedEventCount} events")
+                }
+                else -> RelayStatus(relay, readable = fetchStatus?.readable ?: true, message = "No encrypted notes to migrate")
+            }
+        }
+        updateRelaySettingsStatuses(statuses)
+    }
+
+    private fun updateRelaySettingsStatuses(statuses: List<RelayStatus>) {
+        if (statuses.isEmpty()) return
+        val existing = _syncState.value.relayStatuses.associateBy { it.url }
+        val merged = existing.toMutableMap()
+        statuses.forEach { status -> merged[status.url] = status }
+        val relayOrder = relaySettings.normalizedUrls()
+        _syncState.value = _syncState.value.copy(
+            relayStatuses = relayOrder.mapNotNull { merged[it] } +
+                merged.values.filterNot { it.url in relayOrder },
+        )
+    }
+
+    private fun String.toReadableRelayFailure(defaultMessage: String): String {
+        val lower = lowercase()
+        return when {
+            lower.contains("reject") || lower.contains("denied") || lower.contains("blocked") || lower.contains("policy") -> "Rejected writes"
+            lower.contains("timeout") || lower.contains("timed out") -> "Timed out"
+            lower.contains("fetch") -> "Could not fetch"
+            lower.contains("connect") || lower.contains("offline") || lower.contains("unreachable") -> "Could not reach relay"
+            else -> defaultMessage
+        }
     }
 
     suspend fun testRelayBeforeAdd(rawRelay: String, existingRelays: List<String>): RelayAddResult {
@@ -1267,7 +1671,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = "Relay migration pending writes could not be saved. ${queuedPendingWrites.exceptionOrNull()?.safePersistenceMessage()}"
             return false
         }
-        val persisted = persistRelaySettings(pending.requestedConfigs, "Relay settings saved after migration warning.")
+        val persisted = persistRelaySettings(pending.requestedConfigs, pending.successMessage)
         if (persisted) {
             pendingRelayMigrationDecision = null
             _relayMigrationState.value = RelayMigrationUiState()

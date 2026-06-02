@@ -2,6 +2,7 @@ package com.libertasprimordium.othernote.security
 
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.sync.RelayListKind
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
 import com.libertasprimordium.othernote.util.stableRandomId
 import kotlinx.serialization.SerialName
@@ -51,6 +52,7 @@ data class Nip46Permissions(
         fun otherNoteConnectPermissions(): String = listOf(
             Nip46Method.GetPublicKey.wireName,
             "${Nip46Method.SignEvent.wireName}:$NoteKind",
+            "${Nip46Method.SignEvent.wireName}:$RelayListKind",
             Nip46Method.Nip44Encrypt.wireName,
             Nip46Method.Nip44Decrypt.wireName,
             Nip46Method.Ping.wireName,

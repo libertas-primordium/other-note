@@ -527,18 +527,51 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
 fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     val relays by appState.relaySettings.relays.collectAsState()
     val syncState by appState.syncState.collectAsState()
+    val session by appState.session.collectAsState()
     val relayAddState by appState.relayAddTestState.collectAsState()
     val relayMigrationState by appState.relayMigrationState.collectAsState()
     val scope = rememberCoroutineScope()
     var draftRelays by remember(relays) { mutableStateOf(relays.map { it.url }) }
     var relayToAdd by remember { mutableStateOf("") }
     var relayError by remember { mutableStateOf<String?>(null) }
+    var pendingPublishedRelays by remember { mutableStateOf<RelaySettingsRefreshResult.PublishedListAvailable?>(null) }
+    fun refreshPublishedRelayList() {
+        scope.launch {
+            when (val result = appState.refreshPublishedRelayListForSettings()) {
+                is RelaySettingsRefreshResult.PublishedListAvailable -> {
+                    val savedRelays = appState.relaySettings.normalizedUrls()
+                    if (draftRelays == savedRelays) {
+                        if (appState.applyPublishedRelayListFromSettings(result.relays)) {
+                            draftRelays = result.relays
+                            relayError = null
+                        } else {
+                            relayError = appState.message.value
+                        }
+                    } else {
+                        pendingPublishedRelays = result
+                    }
+                }
+                is RelaySettingsRefreshResult.Failed -> relayError = result.safeReason
+                is RelaySettingsRefreshResult.NoChange -> Unit
+                is RelaySettingsRefreshResult.Skipped -> Unit
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        refreshPublishedRelayList()
+    }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Relays") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = {
+                    TextButton(
+                        onClick = { refreshPublishedRelayList() },
+                        enabled = !relayAddState.inProgress && !relayMigrationState.inProgress,
+                    ) { Text("Refresh") }
+                },
             )
         },
         containerColor = OtherNoteBlack,
@@ -549,6 +582,8 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             Text("These relays sync encrypted note events. They do not change NIP-46 remote-signer transport relays.", color = OtherNoteMuted)
             Spacer(Modifier.height(6.dp))
             Text("Other Note publishes encrypted kind 30078 note events only. At least one readable and writable relay is needed for relay sync and publishing.", color = OtherNoteMuted)
+            Spacer(Modifier.height(6.dp))
+            Text("When signed in, relay changes publish public kind 10002 relay-list metadata for write relays while preserving other categories where possible.", color = OtherNoteMuted)
             Spacer(Modifier.height(6.dp))
             Text("Public relays may purge old events. Add a relay you control for stronger long-term retention.", color = OtherNoteMuted)
             Spacer(Modifier.height(12.dp))
@@ -593,6 +628,24 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
                     enabled = !relayMigrationState.inProgress,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Restore defaults") }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            if (appState.syncCurrentRelays()) {
+                                relayError = null
+                            } else {
+                                relayError = appState.message.value
+                            }
+                        }
+                    },
+                    enabled = session != null &&
+                        draftRelays == appState.relaySettings.normalizedUrls() &&
+                        !relayAddState.inProgress &&
+                        relayAddState.warning == null &&
+                        !relayMigrationState.inProgress,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (relayMigrationState.inProgress) "Migrating..." else "Sync/Migrate") }
             }
             relayError?.let {
                 Spacer(Modifier.height(8.dp))
@@ -667,13 +720,9 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
     relayMigrationState.warning?.let { warning ->
         AlertDialog(
             onDismissRequest = { appState.cancelRelayMigrationWarning() },
-            title = { Text("Relay migration needs review") },
+            title = { Text(warning.title) },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text(warning.summary)
-                    Spacer(Modifier.height(8.dp))
-                    Text(warning.details)
-                }
+                Text(warning.body)
             },
             confirmButton = {
                 Button(
@@ -696,6 +745,39 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             },
         )
     }
+    pendingPublishedRelays?.let { published ->
+        AlertDialog(
+            onDismissRequest = { pendingPublishedRelays = null },
+            title = { Text("Reload published relays?") },
+            text = {
+                Column {
+                    Text("A published relay list was found, but you have unsaved local relay edits.")
+                    Spacer(Modifier.height(8.dp))
+                    Text(published.safeSummary)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            if (appState.applyPublishedRelayListFromSettings(published.relays)) {
+                                draftRelays = published.relays
+                                relayError = null
+                                pendingPublishedRelays = null
+                            } else {
+                                relayError = appState.message.value
+                            }
+                        }
+                    },
+                ) { Text("Reload published list") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { pendingPublishedRelays = null }) {
+                    Text("Keep my edits")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -713,12 +795,30 @@ private fun RelaySettingsRow(
             Text(relay, color = OtherNoteText)
             status?.takeIf { it.isNotBlank() }?.let {
                 Spacer(Modifier.height(4.dp))
-                Text(it.take(160), color = OtherNoteMuted, fontSize = 12.sp)
+                Text(readableRelayStatusText(it), color = OtherNoteMuted, fontSize = 12.sp)
             }
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onRemove) {
                 Text("Remove")
             }
         }
+    }
+}
+
+private fun readableRelayStatusText(raw: String): String {
+    val lower = raw.lowercase()
+    val fetchedCount = Regex("""with (\d+) event""").find(raw)?.groupValues?.getOrNull(1)
+    return when {
+        raw.contains("stage=") || raw.contains("outcome=") -> when {
+            lower.contains("rejected") -> "Rejected writes"
+            lower.contains("timeout") -> "Timed out"
+            lower.contains("fetch") && lower.contains("complete") && fetchedCount != null -> "Fetched $fetchedCount events"
+            lower.contains("fetch") && lower.contains("complete") -> "Fetch completed"
+            lower.contains("publish") && lower.contains("accepted") -> "Published all events"
+            lower.contains("fetch") -> "Could not fetch"
+            else -> "Checked"
+        }
+        raw.contains("publish_accepted_count") || raw.contains("candidate_events") -> "Checked"
+        else -> raw.take(160)
     }
 }
