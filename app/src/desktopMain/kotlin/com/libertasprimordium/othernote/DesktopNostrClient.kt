@@ -10,7 +10,6 @@ import com.libertasprimordium.othernote.nostr.Nip46LiveRelayOutcome
 import com.libertasprimordium.othernote.nostr.Nip46LiveRelayResult
 import com.libertasprimordium.othernote.nostr.NostrRelayMessage
 import com.libertasprimordium.othernote.nostr.NostrWireJson
-import com.libertasprimordium.othernote.nostr.ProfileMetadata
 import com.libertasprimordium.othernote.nostr.PublishBestEffortHandle
 import com.libertasprimordium.othernote.nostr.RelayFetchResult
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
@@ -150,8 +149,6 @@ class DesktopNostrClient(
         }
         return PublishBestEffortHandle(firstAccepted = firstAccepted, complete = complete)
     }
-
-    override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
 
     override suspend fun requestNip46Response(
         relays: List<String>,

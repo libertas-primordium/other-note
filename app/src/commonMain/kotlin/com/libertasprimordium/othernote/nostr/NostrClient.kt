@@ -12,7 +12,8 @@ interface NostrClient {
             statuses = relays.map { RelayStatus(it, readable = false, message = "Generic event fetch not wired for this runtime") },
         )
     suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult
-    suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata?
+    suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? =
+        selectLatestProfileMetadata(fetchEvents(relays, profileMetadataFilter(pubkey)).events, pubkey)
 }
 
 interface IncrementalNostrClient : NostrClient {
@@ -83,6 +84,10 @@ data class ProfileMetadata(
     val name: String?,
     val displayName: String?,
     val pictureUrl: String?,
+    val about: String? = null,
+    val nip05: String? = null,
+    val website: String? = null,
+    val createdAt: Long? = null,
 ) {
     val bestName: String? get() = displayName?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() }
 }

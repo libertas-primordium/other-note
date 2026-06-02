@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -504,6 +505,7 @@ fun NotesListScreen(
 ) {
     val notes by appState.notes.notes.collectAsState()
     val session by appState.session.collectAsState()
+    val profileState by appState.profileState.collectAsState()
     val message by appState.message.collectAsState()
     val diagnostics by appState.diagnosticMessage.collectAsState()
     val scope = rememberCoroutineScope()
@@ -523,7 +525,7 @@ fun NotesListScreen(
         containerColor = OtherNoteBlack,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
-            Text(session?.abbreviatedNpub() ?: "Local-only session", color = OtherNoteMuted)
+            AccountIdentityHeader(session = session, profileState = profileState)
             if (appState.runtimeMode == AppRuntimeMode.DesktopRelay || appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
                 Text("Desktop relay runtime", color = OtherNotePurple)
             }
@@ -571,6 +573,37 @@ fun NotesListScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun AccountIdentityHeader(
+    session: com.libertasprimordium.othernote.domain.UserSession?,
+    profileState: ProfileUiState,
+) {
+    if (session == null) {
+        Text("Local-only session", color = OtherNoteMuted)
+        return
+    }
+    val profile = profileState.metadata?.takeIf { it.pubkey == session.publicKeyHex }
+    val fallback = session.abbreviatedNpub()
+    val primary = profile?.bestName?.takeIf { it.isNotBlank() } ?: fallback
+    Text(
+        primary,
+        color = OtherNoteText,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+    Text(fallback, color = OtherNoteMuted, fontSize = 12.sp)
+    when {
+        profile?.nip05?.isNotBlank() == true -> Text(profile.nip05, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        profile?.website?.isNotBlank() == true -> Text(profile.website, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        profileState.loading && profile == null -> Text("Loading profile...", color = OtherNoteMuted, fontSize = 12.sp)
+    }
+    profile?.about?.takeIf { it.isNotBlank() }?.let {
+        Text(it, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 

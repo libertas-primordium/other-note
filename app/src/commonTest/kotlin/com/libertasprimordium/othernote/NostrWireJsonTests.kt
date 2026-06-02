@@ -6,6 +6,7 @@ import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.NostrFilter
 import com.libertasprimordium.othernote.nostr.NostrRelayMessage
 import com.libertasprimordium.othernote.nostr.NostrWireJson
+import com.libertasprimordium.othernote.nostr.profileMetadataFilter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -51,6 +52,19 @@ class NostrWireJsonTests {
         )
         assertEquals(
             """["REQ","sub1",{"authors":["pub123"],"kinds":[30078],"limit":1000}]""",
+            message,
+        )
+    }
+
+    @Test
+    fun profileRequestFilterUsesKindZeroWithoutOtherNoteTag() {
+        val message = NostrWireJson.requestMessage(
+            subscriptionId = "sub1",
+            filter = profileMetadataFilter("pub123", limit = 20),
+        )
+
+        assertEquals(
+            """["REQ","sub1",{"authors":["pub123"],"kinds":[0],"limit":20}]""",
             message,
         )
     }

@@ -11,12 +11,14 @@ import com.libertasprimordium.othernote.domain.SyncState
 import com.libertasprimordium.othernote.domain.UserSession
 import com.libertasprimordium.othernote.domain.hasSessionPrivateKey
 import com.libertasprimordium.othernote.data.PendingWriteMaxRetryCount
+import com.libertasprimordium.othernote.data.ProfileRepository
 import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.NostrPrivateKey
 import com.libertasprimordium.othernote.nostr.NostrPublicKey
 import com.libertasprimordium.othernote.nostr.NostrRepository
+import com.libertasprimordium.othernote.nostr.ProfileMetadata
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.nostr.RelayPublishResult
 import com.libertasprimordium.othernote.nostr.RelayTestResult
@@ -113,6 +115,12 @@ data class SavedIdentityState(
     val error: String? = null,
 )
 
+data class ProfileUiState(
+    val loading: Boolean = false,
+    val pubkey: String? = null,
+    val metadata: ProfileMetadata? = null,
+)
+
 enum class KeyringSaveConfirmationSource {
     ExistingNsec,
     GeneratedIdentity,
@@ -201,6 +209,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val signerVerifier = ProductionNostrCryptoFactory.createOrNull()
     private val client = services.client
     private val nostr = NostrRepository(crypto, client)
+    private val profiles = ProfileRepository(client)
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val runtimeMode: AppRuntimeMode = services.mode
     val platform: AppPlatform = services.platform
@@ -293,6 +302,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     )
     val savedIdentityState: StateFlow<SavedIdentityState> = _savedIdentityState
     private val savedIdentityRefreshMutex = Mutex()
+
+    private val _profileState = MutableStateFlow(ProfileUiState())
+    val profileState: StateFlow<ProfileUiState> = _profileState
 
     private val _keyringSaveConfirmationState = MutableStateFlow(KeyringSaveConfirmationState())
     val keyringSaveConfirmationState: StateFlow<KeyringSaveConfirmationState> = _keyringSaveConfirmationState
@@ -600,6 +612,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         )
         _mode.value = AppMode.Authenticated
         _message.value = "Signed in with a saved desktop key."
+        startProfileLoad()
         return true
     }
 
@@ -709,6 +722,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             authMethod = SessionAuthMethod.SessionOnlyNsec,
         )
         _mode.value = AppMode.Authenticated
+        startProfileLoad()
         _generatedIdentityState.value = GeneratedIdentityState()
         _message.value = if (directRelayRuntimeAvailable) {
             "New identity active for this session only. Other Note did not store the nsec."
@@ -747,6 +761,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             )
             _mode.value = AppMode.Authenticated
             _message.value = successMessage
+            startProfileLoad()
             true
         }.getOrElse {
             false
@@ -839,6 +854,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 )
                 _mode.value = AppMode.Authenticated
                 _message.value = "Remote signer connected; relay sync can run with signer approval."
+                startProfileLoad()
                 true
             }
             is Nip46ConnectResult.AwaitingApproval -> {
@@ -874,6 +890,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 )
                 _mode.value = AppMode.Authenticated
                 _message.value = "Signer login ready; relay sync can run with signer prompts."
+                startProfileLoad()
             }
             SignerPublicKeyRequestResult.Cancelled -> {
                 _message.value = "Signer request cancelled"
@@ -1067,6 +1084,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     fun continueLocalOnly() {
         _session.value = null
+        _profileState.value = ProfileUiState()
         _mode.value = AppMode.LocalOnly
         _message.value = "Local-only mode. Notes stay on this device and relay sync is disabled."
     }
@@ -1074,6 +1092,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     suspend fun logout() {
         _session.value = null
         _mode.value = AppMode.SignedOut
+        _profileState.value = ProfileUiState()
         notes.clear()
         _message.value = "Session cleared. Local in-memory notes were removed."
     }
@@ -1304,10 +1323,41 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _syncState.value = _syncState.value.copy(syncing = false)
             _message.value = _syncState.value.toCompactMessage()
             _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+            runCatching { loadProfile() }
         }
     }
 
     fun startSync(): Job = appScope.launch { sync() }
+
+    fun startProfileLoad(): Job = appScope.launch {
+        loadProfile()
+    }
+
+    suspend fun loadProfile(): Boolean {
+        val session = _session.value ?: return false
+        val relays = relaySettings.normalizedUrls()
+        if (relays.isEmpty()) {
+            _profileState.value = ProfileUiState(pubkey = session.publicKeyHex)
+            return false
+        }
+        val existing = _profileState.value.metadata?.takeIf { it.pubkey == session.publicKeyHex }
+        _profileState.value = ProfileUiState(
+            loading = existing == null,
+            pubkey = session.publicKeyHex,
+            metadata = existing,
+        )
+        val profile = runCatching {
+            withContext(Dispatchers.IO) {
+                profiles.loadProfile(relays, session.publicKeyHex)
+            }
+        }.getOrNull()
+        _profileState.value = ProfileUiState(
+            loading = false,
+            pubkey = session.publicKeyHex,
+            metadata = profile ?: existing,
+        )
+        return profile != null
+    }
 
     private suspend fun publishSignerEvent(
         session: UserSession,
@@ -1418,6 +1468,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _syncState.value = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = true).copy(syncing = false)
         _message.value = _syncState.value.toCompactMessage()
         _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+        runCatching { loadProfile() }
     }
 
     private suspend fun importPublishedRelayListIfNeeded(session: UserSession): List<String> {
