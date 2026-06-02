@@ -87,6 +87,11 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val generatedIdentity by appState.generatedIdentityState.collectAsState()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
+    val signInOptions = appState.signInOptions
+    val androidSignerOption = signInOptions.firstOrNull { it.kind == SignInOptionKind.AndroidSigner }
+    val remoteSignerOption = signInOptions.firstOrNull { it.kind == SignInOptionKind.RemoteSigner }
+    val nsecOption = signInOptions.first { it.kind == SignInOptionKind.ExistingNsec }
+    val generatedIdentityOption = signInOptions.first { it.kind == SignInOptionKind.CreateIdentity }
     LaunchedEffect(mode) {
         when (mode) {
             AppMode.Authenticated -> {
@@ -104,41 +109,58 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         }
     }
     Column(
-        modifier = Modifier.fillMaxSize().background(OtherNoteBlack).padding(20.dp),
-        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxSize().background(OtherNoteBlack).verticalScroll(rememberScrollState()).padding(20.dp),
     ) {
+        Spacer(Modifier.height(28.dp))
         Text("Other Note", color = OtherNoteText, fontSize = 34.sp, fontWeight = FontWeight.Bold)
         Text("Private Nostr-backed notes", color = OtherNoteMuted)
         Spacer(Modifier.height(24.dp))
-        Text(appState.externalSignerStatus, color = OtherNoteMuted)
-        TextButton(
-            onClick = { appState.requestExternalSignerPublicKey() },
-            enabled = appState.externalSignerAvailable,
-        ) {
-            Text(if (appState.externalSignerAvailable) "Use Android signer" else "Install a NIP-55 signer such as Amber")
+
+        androidSignerOption?.let { option ->
+            SignInSectionTitle("Recommended")
+            SignInSupportingText(option.supportingCopy)
+            Text(appState.externalSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { appState.requestExternalSignerPublicKey() },
+                enabled = option.enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(option.label)
+            }
+            Spacer(Modifier.height(18.dp))
         }
-        Spacer(Modifier.height(8.dp))
-        Text(appState.remoteSignerStatus, color = OtherNoteMuted)
-        OutlinedTextField(
-            value = bunkerToken,
-            onValueChange = { bunkerToken = it },
-            label = { Text("Paste bunker:// remote signer token") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = {
-                if (appState.startRemoteSignerConnection(bunkerToken)) {
-                    bunkerToken = ""
-                }
-            },
-            enabled = appState.remoteSignerAvailable,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Connect remote signer")
+
+        remoteSignerOption?.let { option ->
+            SignInSectionTitle("Remote signer")
+            SignInSupportingText(option.supportingCopy)
+            Text(appState.remoteSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = bunkerToken,
+                onValueChange = { bunkerToken = it },
+                label = { Text("Paste bunker:// remote signer token") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    if (appState.startRemoteSignerConnection(bunkerToken)) {
+                        bunkerToken = ""
+                    }
+                },
+                enabled = option.enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(option.label)
+            }
+            Spacer(Modifier.height(18.dp))
         }
+
+        SignInSectionTitle("Use existing nsec")
+        SignInSupportingText(nsecOption.supportingCopy)
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = nsec,
@@ -148,8 +170,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(12.dp))
-        Button(
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
             onClick = {
                 if (appState.login(nsec)) {
                     nsec = ""
@@ -157,14 +179,14 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Validate key")
+            Text(nsecOption.label)
         }
-        OutlinedButton(
-            onClick = { appState.startGeneratedIdentityFlow() },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Create new identity")
+        Spacer(Modifier.height(12.dp))
+        SignInSupportingText(generatedIdentityOption.supportingCopy)
+        TextButton(onClick = { appState.startGeneratedIdentityFlow() }) {
+            Text(generatedIdentityOption.label)
         }
+        Spacer(Modifier.height(8.dp))
         TextButton(onClick = {
             nsec = ""
             appState.continueLocalOnly()
@@ -179,6 +201,16 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         GeneratedIdentityStep.Explanation -> GeneratedIdentityExplanationDialog(appState, generatedIdentity)
         GeneratedIdentityStep.Generated -> GeneratedIdentityRevealDialog(appState, generatedIdentity)
     }
+}
+
+@Composable
+private fun SignInSectionTitle(text: String) {
+    Text(text, color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun SignInSupportingText(text: String) {
+    Text(text, color = OtherNoteMuted, fontSize = 13.sp)
 }
 
 @Composable

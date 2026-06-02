@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
+import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
@@ -11,11 +12,12 @@ import com.libertasprimordium.othernote.ui.defaultAppServices
 
 object DesktopAppServicesFactory {
     fun create(): AppServices {
-        if (!isDevRelayRuntimeEnabled()) return defaultAppServices()
+        if (!isDevRelayRuntimeEnabled()) return defaultAppServices(platform = AppPlatform.Desktop)
         val crypto = ProductionNostrCryptoFactory.createOrNull()
         return if (crypto == null) {
             AppServices(
                 mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Desktop,
                 crypto = NonProductionNostrCrypto(),
                 client = OfflineNostrClient(),
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),
@@ -28,6 +30,7 @@ object DesktopAppServicesFactory {
             val relayClient = DesktopNostrClient()
             AppServices(
                 mode = AppRuntimeMode.DesktopDevRelay,
+                platform = AppPlatform.Desktop,
                 crypto = crypto,
                 client = relayClient,
                 showRelayDiagnostics = isRelayDiagnosticsEnabled(),

@@ -96,6 +96,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private val nostr = NostrRepository(crypto, client)
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val runtimeMode: AppRuntimeMode = services.mode
+    val platform: AppPlatform = services.platform
     val directRelayRuntimeAvailable: Boolean = crypto.productionReady && services.client !is OfflineNostrClient
     val notes = services.notes
     val relaySettings = services.relaySettings
@@ -191,6 +192,12 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     } else {
         services.externalSignerProvider.unavailableReason ?: "External signer unavailable"
     }
+    val signInOptions: List<SignInOptionUi>
+        get() = buildSignInOptions(
+            platform = platform,
+            externalSignerAvailable = externalSignerAvailable,
+            remoteSignerAvailable = remoteSignerAvailable,
+        )
 
     fun login(rawNsec: String): Boolean {
         return when (val decoded = crypto.decodeNsec(rawNsec)) {

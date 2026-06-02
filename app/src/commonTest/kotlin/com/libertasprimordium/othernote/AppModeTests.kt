@@ -1,10 +1,14 @@
 package com.libertasprimordium.othernote
 
 import com.libertasprimordium.othernote.ui.AppMode
+import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
 import com.libertasprimordium.othernote.ui.GeneratedIdentityStep
+import com.libertasprimordium.othernote.ui.SignInOptionEmphasis
+import com.libertasprimordium.othernote.ui.SignInOptionKind
+import com.libertasprimordium.othernote.ui.buildSignInOptions
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.NostrClient
@@ -71,6 +75,57 @@ class AppModeTests {
         state.sync()
 
         assertTrue(state.syncState.value.errors.single().contains("requires a validated nsec"))
+    }
+
+    @Test
+    fun androidSignInOptionsPrioritizeAndroidSignerThenRemoteThenSessionOnlyNsec() {
+        val options = buildSignInOptions(
+            platform = AppPlatform.Android,
+            externalSignerAvailable = true,
+            remoteSignerAvailable = true,
+        )
+
+        assertEquals(
+            listOf(
+                SignInOptionKind.AndroidSigner,
+                SignInOptionKind.RemoteSigner,
+                SignInOptionKind.ExistingNsec,
+                SignInOptionKind.CreateIdentity,
+            ),
+            options.map { it.kind },
+        )
+        assertEquals(SignInOptionEmphasis.Primary, options[0].emphasis)
+        assertEquals(SignInOptionEmphasis.Secondary, options[1].emphasis)
+        assertEquals(SignInOptionEmphasis.Low, options[2].emphasis)
+        assertEquals(SignInOptionEmphasis.Text, options[3].emphasis)
+        assertTrue(options[0].supportingCopy.contains("Recommended on Android"))
+    }
+
+    @Test
+    fun androidSignerOptionIsHiddenWhenUnavailableOnUnsupportedPlatform() {
+        val options = buildSignInOptions(
+            platform = AppPlatform.Desktop,
+            externalSignerAvailable = false,
+            remoteSignerAvailable = true,
+        )
+
+        assertFalse(options.any { it.kind == SignInOptionKind.AndroidSigner })
+        assertEquals(SignInOptionKind.RemoteSigner, options.first().kind)
+        assertEquals(SignInOptionKind.CreateIdentity, options.last().kind)
+        assertEquals(SignInOptionEmphasis.Text, options.last().emphasis)
+    }
+
+    @Test
+    fun androidSignerOptionIsHiddenWhenUnavailableOnAndroid() {
+        val options = buildSignInOptions(
+            platform = AppPlatform.Android,
+            externalSignerAvailable = false,
+            remoteSignerAvailable = true,
+        )
+
+        assertFalse(options.any { it.kind == SignInOptionKind.AndroidSigner })
+        assertEquals(SignInOptionKind.RemoteSigner, options.first().kind)
+        assertEquals(SignInOptionKind.CreateIdentity, options.last().kind)
     }
 
     @Test
