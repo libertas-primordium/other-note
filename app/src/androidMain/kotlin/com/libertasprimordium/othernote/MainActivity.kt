@@ -20,7 +20,8 @@ import com.libertasprimordium.othernote.ui.OtherNoteApp
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val publicKeyRequester = AndroidNip55PublicKeyRequester()
+        val externalSignerProvider = AndroidExternalSignerProvider(this)
+        val publicKeyRequester = AndroidNip55PublicKeyRequester(externalSignerProvider.signerPackage)
         val eventSigner = AndroidNip55EventSigner(this)
         val nip44Operator = AndroidNip55Nip44Operator(this)
         val publicKeyLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -38,10 +39,11 @@ class MainActivity : ComponentActivity() {
             platform = AppPlatform.Android,
             crypto = crypto,
             client = nostrClient,
-            externalSignerProvider = AndroidExternalSignerProvider(this),
+            externalSignerProvider = externalSignerProvider,
             externalSignerPublicKeyRequester = publicKeyRequester,
             externalSignerEventSigner = eventSigner,
             externalSignerNip44Operator = nip44Operator,
+            nip55SessionStore = AndroidNip55SessionStore(this),
             remoteSigner = nostrClient.nip46RemoteSigner(),
             nip46SessionStore = AndroidNip46SessionStore(this),
             localEventCache = AndroidLocalEventCache(this),

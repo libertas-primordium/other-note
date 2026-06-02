@@ -21,6 +21,14 @@ interface NostrSignerPublicKeyRequester {
     fun requestPublicKey(onResult: (SignerPublicKeyRequestResult) -> Unit)
 }
 
+interface TargetedNostrSignerPublicKeyRequester : NostrSignerPublicKeyRequester {
+    fun requestPublicKeyForSigner(signerPackage: String, onResult: (SignerPublicKeyRequestResult) -> Unit)
+}
+
+interface TargetedNostrSignerAvailability {
+    fun isSignerPackageAvailable(signerPackage: String): Boolean
+}
+
 class UnavailableSignerPublicKeyRequester(
     private val safeReason: String = "External signer public-key request is not implemented for this runtime.",
 ) : NostrSignerPublicKeyRequester {

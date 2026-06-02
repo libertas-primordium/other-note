@@ -31,7 +31,7 @@ fun buildSignInOptions(
         add(
             SignInOptionUi(
                 kind = SignInOptionKind.AndroidSigner,
-                label = "Continue with Android signer",
+                label = "Use Android signer",
                 supportingCopy = "Recommended on Android. Use Amber or another signer so Other Note never stores your nsec.",
                 emphasis = SignInOptionEmphasis.Primary,
             ),

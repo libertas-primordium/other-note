@@ -62,6 +62,7 @@ import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.abbreviatedNpub
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
+import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
@@ -109,6 +110,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val keyringSaveConfirmation by appState.keyringSaveConfirmationState.collectAsState()
     val remoteSignerPairing by appState.remoteSignerPairingState.collectAsState()
     val savedRemoteSigners by appState.savedRemoteSignerState.collectAsState()
+    val savedAndroidSigners by appState.savedAndroidSignerState.collectAsState()
     val scope = rememberCoroutineScope()
     var nsec by remember { mutableStateOf("") }
     var bunkerToken by remember { mutableStateOf("") }
@@ -170,17 +172,46 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
             Spacer(Modifier.height(10.dp))
         }
 
-        androidSignerOption?.let { option ->
+        if (appState.platform == AppPlatform.Android && (androidSignerOption != null || appState.savedAndroidSignerAvailable)) {
             SignInSectionTitle("Recommended")
-            SignInSupportingText(option.supportingCopy)
+            SignInSupportingText(androidSignerOption?.supportingCopy ?: "Use an Android signer so Other Note never stores your nsec.")
+            SignInSupportingText("Your private key stays in your signer app. Other Note can remember this signer so you can continue without selecting it every time.")
             Text(appState.externalSignerStatus, color = OtherNoteMuted, fontSize = 12.sp)
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { appState.requestExternalSignerPublicKey() },
-                enabled = option.enabled,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(option.label)
+            if (appState.savedAndroidSignerAvailable) {
+                Spacer(Modifier.height(8.dp))
+                Text("Saved Android signers", color = OtherNoteText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                when {
+                    savedAndroidSigners.loading -> SignInSupportingText("Checking saved Android signers...")
+                    savedAndroidSigners.error != null -> SignInSupportingText(savedAndroidSigners.error.orEmpty())
+                    savedAndroidSigners.sessions.isEmpty() -> SignInSupportingText("No saved Android signer on this device yet.")
+                    else -> savedAndroidSigners.sessions.forEach { saved ->
+                        Spacer(Modifier.height(8.dp))
+                        SavedAndroidSignerRow(
+                            session = saved,
+                            onContinue = {
+                                scope.launch {
+                                    appState.loginWithSavedAndroidSigner(saved.userPubkey)
+                                }
+                            },
+                            onForget = {
+                                scope.launch {
+                                    appState.forgetSavedAndroidSigner(saved.userPubkey)
+                                }
+                            },
+                        )
+                    }
+                }
+                SignInSupportingText("Forgetting the signer removes only this app's saved Android signer connection from this device.")
+            }
+            androidSignerOption?.let { option ->
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { appState.requestExternalSignerPublicKey() },
+                    enabled = option.enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (savedAndroidSigners.sessions.isEmpty()) option.label else "Choose Android signer")
+                }
             }
             Spacer(Modifier.height(18.dp))
         }
@@ -349,6 +380,30 @@ private fun SavedIdentityRow(
             }
             TextButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
                 Text("Forget from this device")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SavedAndroidSignerRow(
+    session: SavedNip55SessionMetadata,
+    onContinue: () -> Unit,
+    onForget: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(session.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
+            Text(session.signerLabel?.takeIf { it.isNotBlank() } ?: session.signerPackage.safePrefix(), color = OtherNoteMuted, fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onContinue, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue with Android signer")
+            }
+            TextButton(onClick = onForget, modifier = Modifier.fillMaxWidth()) {
+                Text("Forget Android signer")
             }
         }
     }
@@ -584,6 +639,13 @@ private fun SavedNip46SessionMetadata.safeDisplayName(): String =
         userNpub.isNotBlank() -> userNpub.safePrefix()
         userPubkey.isNotBlank() -> "pubkey ${userPubkey.safePrefix()}"
         else -> "Saved remote signer"
+    }
+
+private fun SavedNip55SessionMetadata.safeDisplayName(): String =
+    when {
+        userNpub.isNotBlank() -> userNpub.safePrefix()
+        userPubkey.isNotBlank() -> "pubkey ${userPubkey.safePrefix()}"
+        else -> "Saved Android signer"
     }
 
 private fun String.safePrefix(): String =

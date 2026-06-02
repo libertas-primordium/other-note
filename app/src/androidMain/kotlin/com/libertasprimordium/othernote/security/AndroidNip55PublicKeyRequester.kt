@@ -5,15 +5,31 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.result.ActivityResultLauncher
 
-class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
+class AndroidNip55PublicKeyRequester(
+    private val defaultSignerPackage: String? = null,
+) : TargetedNostrSignerPublicKeyRequester {
     private var launcher: ActivityResultLauncher<Intent>? = null
     private var pendingCallback: ((SignerPublicKeyRequestResult) -> Unit)? = null
+    private var pendingSignerPackage: String? = null
 
     fun attachLauncher(launcher: ActivityResultLauncher<Intent>) {
         this.launcher = launcher
     }
 
     override fun requestPublicKey(onResult: (SignerPublicKeyRequestResult) -> Unit) {
+        requestPublicKeyInternal(defaultSignerPackage, onResult)
+    }
+
+    override fun requestPublicKeyForSigner(signerPackage: String, onResult: (SignerPublicKeyRequestResult) -> Unit) {
+        val target = signerPackage.takeIf { it.isNotBlank() }
+        if (target == null) {
+            onResult(SignerPublicKeyRequestResult.Unavailable("Saved Android signer session is corrupted."))
+            return
+        }
+        requestPublicKeyInternal(target, onResult)
+    }
+
+    private fun requestPublicKeyInternal(signerPackage: String?, onResult: (SignerPublicKeyRequestResult) -> Unit) {
         val currentLauncher = launcher
         if (currentLauncher == null) {
             onResult(SignerPublicKeyRequestResult.Unavailable("Android signer launcher is not available."))
@@ -24,28 +40,38 @@ class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
             return
         }
         pendingCallback = onResult
+        pendingSignerPackage = signerPackage
         runCatching {
-            currentLauncher.launch(publicKeyRequestIntent())
+            currentLauncher.launch(publicKeyRequestIntent(signerPackage))
         }.onFailure {
             pendingCallback = null
-            onResult(SignerPublicKeyRequestResult.Failed("Could not open Android signer."))
+            pendingSignerPackage = null
+            val message = if (signerPackage.isNullOrBlank()) {
+                "Could not open Android signer."
+            } else {
+                "The saved Android signer is not installed or is no longer available."
+            }
+            onResult(SignerPublicKeyRequestResult.Failed(message))
         }
     }
 
     fun handleActivityResult(resultCode: Int, data: Intent?) {
         val callback = pendingCallback ?: return
+        val targetPackage = pendingSignerPackage
         pendingCallback = null
+        pendingSignerPackage = null
         if (resultCode != Activity.RESULT_OK) {
             callback(SignerPublicKeyRequestResult.Cancelled)
             return
         }
-        callback(parsePublicKeyResult(data))
+        callback(parsePublicKeyResult(data, targetPackage))
     }
 
     companion object {
-        fun publicKeyRequestIntent(): Intent =
+        fun publicKeyRequestIntent(signerPackage: String? = null): Intent =
             Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
                 addCategory(Intent.CATEGORY_BROWSABLE)
+                signerPackage?.takeIf { it.isNotBlank() }?.let { setPackage(it) }
                 putExtra("type", "get_public_key")
                 putExtra(
                     "permissions",
@@ -53,7 +79,7 @@ class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
                 )
             }
 
-        fun parsePublicKeyResult(data: Intent?): SignerPublicKeyRequestResult {
+        fun parsePublicKeyResult(data: Intent?, fallbackSignerPackage: String? = null): SignerPublicKeyRequestResult {
             if (data == null) {
                 return SignerPublicKeyRequestResult.InvalidResponse("Signer returned no response")
             }
@@ -65,6 +91,7 @@ class AndroidNip55PublicKeyRequester : NostrSignerPublicKeyRequester {
                 ?: data.`package`
                 ?: data.data?.getQueryParameter("package")
                 ?: data.data?.getQueryParameter("packageName")
+                ?: fallbackSignerPackage
             return SignerPublicKeyResponseParser.parse(
                 result = result,
                 pubkey = pubkey,

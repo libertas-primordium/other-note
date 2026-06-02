@@ -25,8 +25,11 @@ import com.libertasprimordium.othernote.nostr.RelayTestResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.security.GeneratedIdentitySecret
 import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
+import com.libertasprimordium.othernote.security.Nip55SessionStoreResult
+import com.libertasprimordium.othernote.security.SavedNip55Session
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
+import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
 import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignEventRequestResult
@@ -41,6 +44,7 @@ import com.libertasprimordium.othernote.security.Nip46ConnectResult
 import com.libertasprimordium.othernote.security.Nip46ConnectionTokenParser
 import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
+import com.libertasprimordium.othernote.security.TargetedNostrSignerAvailability
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
 import com.libertasprimordium.othernote.sync.RelayMigrationExecutionResult
@@ -141,6 +145,12 @@ data class RemoteSignerPairingState(
 data class SavedRemoteSignerState(
     val loading: Boolean = false,
     val sessions: List<SavedNip46SessionMetadata> = emptyList(),
+    val error: String? = null,
+)
+
+data class SavedAndroidSignerState(
+    val loading: Boolean = false,
+    val sessions: List<SavedNip55SessionMetadata> = emptyList(),
     val error: String? = null,
 )
 
@@ -345,6 +355,16 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val savedRemoteSignerState: StateFlow<SavedRemoteSignerState> = _savedRemoteSignerState
     private val savedRemoteSignerRefreshMutex = Mutex()
 
+    private val _savedAndroidSignerState = MutableStateFlow(
+        if (services.nip55SessionStore.isAvailable) {
+            SavedAndroidSignerState(loading = true)
+        } else {
+            SavedAndroidSignerState(error = services.nip55SessionStore.unavailableReason)
+        },
+    )
+    val savedAndroidSignerState: StateFlow<SavedAndroidSignerState> = _savedAndroidSignerState
+    private val savedAndroidSignerRefreshMutex = Mutex()
+
     private val _profileState = MutableStateFlow(ProfileUiState())
     val profileState: StateFlow<ProfileUiState> = _profileState
 
@@ -369,6 +389,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val savedRemoteSignerAvailable: Boolean = services.nip46SessionStore.isAvailable
     val savedRemoteSignerStatus: String =
         services.nip46SessionStore.unavailableReason ?: "Saved remote signer sessions available"
+    val savedAndroidSignerAvailable: Boolean = platform == AppPlatform.Android && services.nip55SessionStore.isAvailable
+    val savedAndroidSignerStatus: String =
+        services.nip55SessionStore.unavailableReason ?: "Saved Android signer sessions available"
     val secureSecretStoreAvailable: Boolean = services.secureSecretStore.isAvailable
     val secureSecretStoreStatus: String =
         services.secureSecretStore.unavailableReason ?: "Desktop keyring available"
@@ -400,6 +423,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
         appScope.launch {
             refreshSavedRemoteSigners()
+        }
+        appScope.launch {
+            refreshSavedAndroidSigners()
+            restoreActiveSavedAndroidSigner()
         }
     }
 
@@ -518,6 +545,58 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     fun startRefreshSavedRemoteSigners(): Job = appScope.launch {
         refreshSavedRemoteSigners()
+    }
+
+    suspend fun refreshSavedAndroidSigners(): Boolean {
+        if (!services.nip55SessionStore.isAvailable) {
+            _savedAndroidSignerState.value = SavedAndroidSignerState(error = services.nip55SessionStore.unavailableReason)
+            return false
+        }
+        return savedAndroidSignerRefreshMutex.withLock {
+            _savedAndroidSignerState.value = _savedAndroidSignerState.value.copy(loading = true, error = null)
+            val result = withContext(Dispatchers.IO) {
+                services.nip55SessionStore.listSessions()
+            }
+            when (result) {
+                is Nip55SessionStoreResult.Listed -> {
+                    _savedAndroidSignerState.value = SavedAndroidSignerState(sessions = result.sessions.map { it.withDerivedNpub() })
+                    true
+                }
+                Nip55SessionStoreResult.Unavailable -> {
+                    _savedAndroidSignerState.value = SavedAndroidSignerState(error = services.nip55SessionStore.unavailableReason)
+                    false
+                }
+                is Nip55SessionStoreResult.Failed -> {
+                    _savedAndroidSignerState.value = SavedAndroidSignerState(error = result.safeMessage.toUserFacingMessage())
+                    false
+                }
+                Nip55SessionStoreResult.Deleted,
+                is Nip55SessionStoreResult.Loaded,
+                Nip55SessionStoreResult.Saved,
+                -> {
+                    _savedAndroidSignerState.value = SavedAndroidSignerState(error = "Saved Android signer sessions could not be loaded.")
+                    false
+                }
+            }
+        }
+    }
+
+    fun startRefreshSavedAndroidSigners(): Job = appScope.launch {
+        refreshSavedAndroidSigners()
+    }
+
+    private suspend fun restoreActiveSavedAndroidSigner(): Boolean {
+        if (platform != AppPlatform.Android || !services.nip55SessionStore.isAvailable || _mode.value != AppMode.SignedOut) {
+            return false
+        }
+        val listed = withContext(Dispatchers.IO) {
+            services.nip55SessionStore.listSessions()
+        }
+        val active = (listed as? Nip55SessionStoreResult.Listed)
+            ?.sessions
+            ?.firstOrNull { it.active }
+            ?: return false
+        return restoreSavedAndroidSignerSession(active.userPubkey, requireActive = true, message = "Signed in with saved Android signer.")
     }
 
     fun requestExistingNsecKeyringSaveConfirmation() {
@@ -873,6 +952,16 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         return copy(userNpub = derived.orEmpty())
     }
 
+    private fun SavedNip55SessionMetadata.withDerivedNpub(): SavedNip55SessionMetadata {
+        if (userNpub.isNotBlank()) return this
+        val derived = if (userPubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+            crypto.encodeNpub(NostrPublicKey(userPubkey.lowercase(), "")).getOrNull()
+        } else {
+            null
+        }
+        return copy(userNpub = derived.orEmpty())
+    }
+
     private fun ensureSavedIdentityVisible(publicKey: NostrPublicKey) {
         val current = _savedIdentityState.value
         if (current.identities.any { it.accountPubkey.equals(publicKey.hex, ignoreCase = true) }) return
@@ -913,6 +1002,39 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         )
     }
 
+    private fun ensureSavedAndroidSignerVisible(session: SavedNip55SessionMetadata) {
+        val current = _savedAndroidSignerState.value
+        if (current.sessions.any { it.userPubkey.equals(session.userPubkey, ignoreCase = true) }) return
+        _savedAndroidSignerState.value = current.copy(
+            loading = false,
+            error = null,
+            sessions = current.sessions + session.withDerivedNpub(),
+        )
+    }
+
+    private fun removeSavedAndroidSignerFromState(userPubkey: String) {
+        val current = _savedAndroidSignerState.value
+        _savedAndroidSignerState.value = current.copy(
+            loading = false,
+            sessions = current.sessions.filterNot { it.userPubkey.equals(userPubkey, ignoreCase = true) },
+        )
+    }
+
+    private fun SavedNip55Session.hasRequiredLocalFields(): Boolean =
+        userPubkey.matches(Regex("^[0-9a-fA-F]{64}$")) &&
+            signerPackage.isNotBlank()
+
+    private fun SavedNip55Session.restorableNpub(): String =
+        userNpub.takeIf { it.isNotBlank() }
+            ?: crypto.encodeNpub(NostrPublicKey(userPubkey.lowercase(), "")).getOrNull()
+            ?: ""
+
+    private fun isSavedAndroidSignerAvailable(signerPackage: String): Boolean {
+        if (signerPackage.isBlank()) return false
+        val targeted = services.externalSignerProvider as? TargetedNostrSignerAvailability
+        return targeted?.isSignerPackageAvailable(signerPackage) ?: externalSignerAvailable
+    }
+
     fun requestExternalSignerPublicKey() {
         if (!externalSignerAvailable) {
             "No Android signer found. Install a NIP-55 signer such as Amber, or paste an nsec for this session."
@@ -921,6 +1043,109 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         }
         _message.value = "Waiting for signer..."
         services.externalSignerPublicKeyRequester.requestPublicKey(::handleSignerPublicKeyResult)
+    }
+
+    suspend fun loginWithSavedAndroidSigner(userPubkey: String): Boolean {
+        return restoreSavedAndroidSignerSession(
+            userPubkey = userPubkey,
+            requireActive = false,
+            message = "Signed in with saved Android signer.",
+        )
+    }
+
+    private suspend fun restoreSavedAndroidSignerSession(
+        userPubkey: String,
+        requireActive: Boolean,
+        message: String,
+    ): Boolean {
+        if (!services.nip55SessionStore.isAvailable) {
+            _message.value = "Saved Android signer session could not be loaded."
+            return false
+        }
+        val loaded = withContext(Dispatchers.IO) {
+            services.nip55SessionStore.loadSession(userPubkey)
+        }
+        val savedSession = when (loaded) {
+            is Nip55SessionStoreResult.Loaded -> loaded.session
+            Nip55SessionStoreResult.Unavailable -> {
+                _message.value = "Saved Android signer session could not be loaded."
+                return false
+            }
+            is Nip55SessionStoreResult.Failed -> {
+                _message.value = loaded.safeMessage.toUserFacingMessage()
+                return false
+            }
+            Nip55SessionStoreResult.Deleted,
+            is Nip55SessionStoreResult.Listed,
+            Nip55SessionStoreResult.Saved,
+            -> {
+                _message.value = "Saved Android signer session could not be loaded."
+                return false
+            }
+        }
+        if (requireActive && !savedSession.active) {
+            return false
+        }
+        if (!savedSession.hasRequiredLocalFields()) {
+            _message.value = "Saved Android signer session is corrupted."
+            return false
+        }
+        if (!isSavedAndroidSignerAvailable(savedSession.signerPackage)) {
+            _message.value = "The saved Android signer is not installed or is no longer available."
+            return false
+        }
+        val updated = savedSession.copy(
+            active = true,
+            lastUsedAtMs = com.libertasprimordium.othernote.util.nowMs(),
+        )
+        withContext(Dispatchers.IO) {
+            services.nip55SessionStore.saveSession(updated)
+        }
+        refreshSavedAndroidSigners()
+        activateExternalSignerSession(updated.userPubkey, updated.restorableNpub(), updated.signerPackage, message)
+        return true
+    }
+
+    suspend fun forgetSavedAndroidSigner(userPubkey: String): Boolean {
+        if (!services.nip55SessionStore.isAvailable) {
+            _message.value = "Saved Android signer session could not be forgotten."
+            return false
+        }
+        val result = withContext(Dispatchers.IO) {
+            services.nip55SessionStore.deleteSession(userPubkey)
+        }
+        return when (result) {
+            Nip55SessionStoreResult.Deleted -> {
+                removeSavedAndroidSignerFromState(userPubkey)
+                _message.value = if (_session.value?.authMethod == SessionAuthMethod.ExternalSigner &&
+                    _session.value?.publicKeyHex.equals(userPubkey, ignoreCase = true)
+                ) {
+                    _session.value = null
+                    _mode.value = AppMode.SignedOut
+                    _profileState.value = ProfileUiState()
+                    notes.clear()
+                    "Saved Android signer forgotten. Current signer session was cleared."
+                } else {
+                    "Saved Android signer forgotten."
+                }
+                true
+            }
+            Nip55SessionStoreResult.Unavailable -> {
+                _message.value = "Saved Android signer session could not be forgotten."
+                false
+            }
+            is Nip55SessionStoreResult.Failed -> {
+                _message.value = result.safeMessage.toUserFacingMessage()
+                false
+            }
+            is Nip55SessionStoreResult.Listed,
+            is Nip55SessionStoreResult.Loaded,
+            Nip55SessionStoreResult.Saved,
+            -> {
+                _message.value = "Saved Android signer session could not be forgotten."
+                false
+            }
+        }
     }
 
     fun startRemoteSignerConnection(rawToken: String): Boolean {
@@ -1224,17 +1449,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private fun handleSignerPublicKeyResult(result: SignerPublicKeyRequestResult) {
         when (result) {
             is SignerPublicKeyRequestResult.Success -> {
-                _session.value = UserSession(
-                    nsec = "external-signer",
-                    privateKeyHex = "",
-                    npub = result.npub,
-                    publicKeyHex = result.pubkeyHex,
-                    authMethod = SessionAuthMethod.ExternalSigner,
-                    signerPackage = result.signerPackage,
-                )
-                _mode.value = AppMode.Authenticated
-                _message.value = "Signer login ready; relay sync can run with signer prompts."
-                startProfileLoad()
+                activateExternalSignerSession(result.pubkeyHex, result.npub, result.signerPackage)
+                appScope.launch {
+                    persistActiveAndroidSignerSession(result)
+                }
             }
             SignerPublicKeyRequestResult.Cancelled -> {
                 _message.value = "Signer request cancelled"
@@ -1248,6 +1466,57 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             is SignerPublicKeyRequestResult.InvalidResponse -> {
                 _message.value = result.safeReason.toUserFacingMessage()
             }
+        }
+    }
+
+    private fun activateExternalSignerSession(
+        pubkeyHex: String,
+        npub: String,
+        signerPackage: String?,
+        message: String = "Signer login ready; relay sync can run with signer prompts.",
+    ) {
+        _session.value = UserSession(
+            nsec = "external-signer",
+            privateKeyHex = "",
+            npub = npub,
+            publicKeyHex = pubkeyHex,
+            authMethod = SessionAuthMethod.ExternalSigner,
+            signerPackage = signerPackage,
+        )
+        _mode.value = AppMode.Authenticated
+        _message.value = message
+        startProfileLoad()
+    }
+
+    private suspend fun persistActiveAndroidSignerSession(result: SignerPublicKeyRequestResult.Success): Boolean {
+        val store = services.nip55SessionStore
+        if (!store.isAvailable) return false
+        val signerPackage = result.signerPackage?.takeIf { it.isNotBlank() } ?: return false
+        val now = com.libertasprimordium.othernote.util.nowMs()
+        val session = SavedNip55Session(
+            userPubkey = result.pubkeyHex,
+            userNpub = result.npub,
+            signerPackage = signerPackage,
+            signerLabel = services.externalSignerProvider.displayName,
+            active = true,
+            createdAtMs = now,
+            lastUsedAtMs = now,
+        )
+        return when (val save = withContext(Dispatchers.IO) { store.saveSession(session) }) {
+            Nip55SessionStoreResult.Saved -> {
+                refreshSavedAndroidSigners()
+                ensureSavedAndroidSignerVisible(session.metadata())
+                true
+            }
+            is Nip55SessionStoreResult.Failed -> {
+                _diagnosticMessage.value = save.safeMessage
+                false
+            }
+            Nip55SessionStoreResult.Unavailable,
+            Nip55SessionStoreResult.Deleted,
+            is Nip55SessionStoreResult.Listed,
+            is Nip55SessionStoreResult.Loaded,
+            -> false
         }
     }
 
@@ -1434,13 +1703,30 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun logout() {
+        val currentSession = _session.value
+        if (currentSession?.authMethod == SessionAuthMethod.ExternalSigner && services.nip55SessionStore.isAvailable) {
+            val loaded = withContext(Dispatchers.IO) {
+                services.nip55SessionStore.loadSession(currentSession.publicKeyHex)
+            }
+            if (loaded is Nip55SessionStoreResult.Loaded) {
+                withContext(Dispatchers.IO) {
+                    services.nip55SessionStore.saveSession(
+                        loaded.session.copy(
+                            active = false,
+                            lastUsedAtMs = com.libertasprimordium.othernote.util.nowMs(),
+                        ),
+                    )
+                }
+                refreshSavedAndroidSigners()
+            }
+        }
         services.remoteSigner?.disconnect()
         _session.value = null
         _mode.value = AppMode.SignedOut
         _profileState.value = ProfileUiState()
         _remoteSignerPairingState.value = RemoteSignerPairingState()
         notes.clear()
-        _message.value = "Session cleared. Local in-memory notes were removed. Saved remote signers remain available."
+        _message.value = "Session cleared. Local in-memory notes were removed. Saved signers remain available."
     }
 
     suspend fun save(existing: Note?, markdown: String): Boolean {

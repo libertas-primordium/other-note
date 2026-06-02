@@ -202,6 +202,19 @@ class UtilityTests {
     }
 
     @Test
+    fun savedAndroidSignerMismatchMapsToReadableGuidance() {
+        val raw = "Saved Android signer returned a different public key. secret=must-not-appear nsec1leak privateKey=leak"
+        val error = userFacingErrorFor(raw)
+
+        assertEquals("Saved Android signer does not match", error.title)
+        assertTrue(error.message.contains("choose the signer again"))
+        assertPrimaryErrorCopyIsReadable(error.message)
+        assertFalse(error.message.contains("must-not-appear"))
+        assertFalse(error.message.contains("nsec1leak"))
+        assertFalse(error.message.contains("privateKey"))
+    }
+
+    @Test
     fun relayTestFailureMapsToReadableWarning() {
         val raw = "Relay rejected the test event. stage=relay_test_publish outcome=rejected secret=must-not-appear nsec1leak privateKey=leak body_markdown"
         val error = userFacingErrorFor(raw)
