@@ -351,8 +351,8 @@ fun NotesListScreen(appState: AppState, onOpen: (Note) -> Unit, onNew: () -> Uni
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
             Text(session?.abbreviatedNpub() ?: "Local-only session", color = OtherNoteMuted)
-            if (appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
-                Text("Developer relay runtime", color = OtherNotePurple)
+            if (appState.runtimeMode == AppRuntimeMode.DesktopRelay || appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
+                Text("Desktop relay runtime", color = OtherNotePurple)
             }
             Text(message, color = OtherNoteMuted)
             if ((appState.showRelayDiagnostics || appState.showNip55Diagnostics) && diagnostics.isNotBlank()) {

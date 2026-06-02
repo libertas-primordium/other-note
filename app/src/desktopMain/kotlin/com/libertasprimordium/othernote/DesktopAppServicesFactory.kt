@@ -4,15 +4,13 @@ import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
-import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.security.nip46RemoteSigner
+import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
-import com.libertasprimordium.othernote.ui.defaultAppServices
 
 object DesktopAppServicesFactory {
     fun create(): AppServices {
-        if (!isDevRelayRuntimeEnabled()) return defaultAppServices(platform = AppPlatform.Desktop)
         val crypto = ProductionNostrCryptoFactory.createOrNull()
         return if (crypto == null) {
             AppServices(
@@ -28,8 +26,9 @@ object DesktopAppServicesFactory {
             )
         } else {
             val relayClient = DesktopNostrClient()
+            val developerFlagEnabled = isDevRelayRuntimeEnabled()
             AppServices(
-                mode = AppRuntimeMode.DesktopDevRelay,
+                mode = if (developerFlagEnabled) AppRuntimeMode.DesktopDevRelay else AppRuntimeMode.DesktopRelay,
                 platform = AppPlatform.Desktop,
                 crypto = crypto,
                 client = relayClient,
@@ -38,7 +37,13 @@ object DesktopAppServicesFactory {
                 remoteSigner = relayClient.nip46RemoteSigner(),
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
-                startupWarnings = listOf("Developer relay runtime enabled"),
+                startupWarnings = listOf(
+                    if (developerFlagEnabled) {
+                        "Desktop relay runtime enabled; developer relay flag is no longer required"
+                    } else {
+                        "Desktop relay runtime enabled"
+                    },
+                ),
             )
         }
     }

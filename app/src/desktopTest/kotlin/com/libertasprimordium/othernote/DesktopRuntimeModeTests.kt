@@ -1,7 +1,5 @@
 package com.libertasprimordium.othernote
 
-import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
-import com.libertasprimordium.othernote.nostr.OfflineNostrClient
 import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.DesktopSecureSecretStore
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
@@ -21,18 +19,32 @@ class DesktopRuntimeModeTests {
     }
 
     @Test
-    fun defaultDesktopRuntimeUsesOfflineServices() {
+    fun defaultDesktopRuntimeUsesProductionCryptoAndDesktopRelayClient() {
         System.clearProperty("othernote.devRelayRuntime")
 
         val services = DesktopAppServicesFactory.create()
 
-        assertEquals(AppRuntimeMode.Offline, services.mode)
-        assertIs<NonProductionNostrCrypto>(services.crypto)
-        assertIs<OfflineNostrClient>(services.client)
+        assertNotNull(ProductionNostrCryptoFactory.createOrNull())
+        assertEquals(AppRuntimeMode.DesktopRelay, services.mode)
+        assertEquals(false, services.showRelayDiagnostics)
+        assertTrue(services.crypto.productionReady)
+        assertIs<DesktopNostrClient>(services.client)
+        assertIs<DesktopSecureSecretStore>(services.secureSecretStore)
+        assertEquals(false, services.secureSecretStore.isAvailable)
+        assertEquals(
+            listOf(
+                "wss://relay.damus.io",
+                "wss://relay.primal.net",
+                "wss://relay.nostr.net",
+                "wss://nos.lol",
+                "wss://relay.ditto.pub",
+            ),
+            services.relaySettings.normalizedUrls(),
+        )
     }
 
     @Test
-    fun devFlagRuntimeUsesProductionCryptoAndDesktopRelayClient() {
+    fun devFlagKeepsDesktopRelayClientAndMarksDeveloperMode() {
         System.setProperty("othernote.devRelayRuntime", "true")
 
         val services = DesktopAppServicesFactory.create()
@@ -70,7 +82,7 @@ class DesktopRuntimeModeTests {
 
     @Test
     fun devRuntimeLoginDerivesNpubAndDoesNotStoreNsecText() {
-        System.setProperty("othernote.devRelayRuntime", "true")
+        System.clearProperty("othernote.devRelayRuntime")
         val crypto = ProductionNostrCryptoFactory.createOrNull() ?: error(ProductionNostrCryptoFactory.unavailableReason)
         val nsec = crypto.encodeNsec(crypto.generatePrivateKey().getOrThrow()).getOrThrow()
         val state = AppState(DesktopAppServicesFactory.create())

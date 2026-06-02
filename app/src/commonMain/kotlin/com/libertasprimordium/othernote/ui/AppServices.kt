@@ -28,6 +28,7 @@ import com.libertasprimordium.othernote.security.UnavailableSignerPublicKeyReque
 
 enum class AppRuntimeMode {
     Offline,
+    DesktopRelay,
     DesktopDevRelay,
 }
 
@@ -55,18 +56,20 @@ data class AppServices(
     val pendingWriteStore: PendingWriteStore = InMemoryPendingWriteStore(),
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
-        if (mode == AppRuntimeMode.DesktopDevRelay) DesktopDevRelayDefaults else DefaultRelays,
+        if (mode == AppRuntimeMode.DesktopRelay || mode == AppRuntimeMode.DesktopDevRelay) DesktopRelayDefaults else DefaultRelays,
     ),
     val startupWarnings: List<String> = emptyList(),
 )
 
-val DesktopDevRelayDefaults = listOf(
+val DesktopRelayDefaults = listOf(
     RelayConfig("wss://relay.damus.io"),
     RelayConfig("wss://relay.primal.net"),
     RelayConfig("wss://relay.nostr.net"),
     RelayConfig("wss://nos.lol"),
     RelayConfig("wss://relay.ditto.pub"),
 )
+
+val DesktopDevRelayDefaults = DesktopRelayDefaults
 
 fun defaultAppServices(platform: AppPlatform = AppPlatform.Generic): AppServices = AppServices(
     mode = AppRuntimeMode.Offline,

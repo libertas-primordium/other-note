@@ -12,15 +12,20 @@ import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.nio.ByteBuffer
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.util.UUID
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.name
 import kotlin.io.path.readText
-import kotlin.io.path.writeText
 
 object DesktopLocalStorePaths {
     fun dataDir(): Path {
@@ -68,18 +73,20 @@ class DesktopLocalEventCache(
 class DesktopPendingWriteStore(
     private val baseDir: Path = DesktopLocalStorePaths.dataDir().resolve("pending-writes"),
 ) : PendingWriteStore {
+    private val lock = Mutex()
     private val _changes = MutableStateFlow(0L)
     override val changes: StateFlow<Long> = _changes
 
-    override suspend fun enqueuePendingWrite(accountPubkey: String, event: NostrEvent, targetRelays: List<String>) {
-        val current = loadRecords(accountPubkey).associateBy { it.event.id }.toMutableMap()
+    override suspend fun enqueuePendingWrite(accountPubkey: String, event: NostrEvent, targetRelays: List<String>) = lock.withLock {
+        val current = loadRecordsUnlocked(accountPubkey).associateBy { it.event.id }.toMutableMap()
         val now = nowMs()
         val existing = current[event.id]
+        val distinctRelays = targetRelays.distinct()
         current[event.id] = DurablePendingWriteRecord(
             accountPubkey = accountPubkey,
             event = event.toDurableRecord(),
-            targetRelays = targetRelays.distinct(),
-            relayStatuses = existing?.relayStatuses.orEmpty() + targetRelays.distinct().associateWith {
+            targetRelays = distinctRelays,
+            relayStatuses = existing?.relayStatuses.orEmpty() + distinctRelays.associateWith {
                 existing?.relayStatuses?.get(it) ?: PendingWriteStatus.Pending.name
             },
             retryCounts = existing?.retryCounts.orEmpty(),
@@ -87,7 +94,7 @@ class DesktopPendingWriteStore(
             createdAtMs = existing?.createdAtMs ?: now,
             updatedAtMs = now,
         )
-        writeRecords(accountPubkey, current.values.sortedBy { it.event.id })
+        writeRecordsUnlocked(accountPubkey, current.values.sortedBy { it.event.id })
     }
 
     override suspend fun markRelayAccepted(eventId: String, relayUrl: String) {
@@ -119,15 +126,15 @@ class DesktopPendingWriteStore(
         }
     }
 
-    override suspend fun loadPendingWrites(accountPubkey: String): List<PendingRelayWrite> =
-        loadRecords(accountPubkey)
+    override suspend fun loadPendingWrites(accountPubkey: String): List<PendingRelayWrite> = lock.withLock {
+        loadRecordsUnlocked(accountPubkey)
             .filter { it.accountPubkey == accountPubkey }
             .map { it.toPendingWrite() }
+    }
 
-    override suspend fun removeCompletedWrite(eventId: String) {
-        val files = runCatching { Files.list(baseDir).use { it.toList() } }.getOrDefault(emptyList())
-        files.filter { it.name.endsWith(".pending.json") }.forEach { file ->
-            val records = readPendingRecords(file)
+    override suspend fun removeCompletedWrite(eventId: String) = lock.withLock {
+        pendingFiles().forEach { file ->
+            val records = readPendingRecordsUnlocked(file)
             if (records.any { it.event.id == eventId }) {
                 val remaining = records.filterNot { it.event.id == eventId }
                 atomicWrite(file, DurableRelayStoreCodec.encodePendingWrites(remaining))
@@ -136,10 +143,9 @@ class DesktopPendingWriteStore(
         }
     }
 
-    private fun update(eventId: String, transform: (DurablePendingWriteRecord) -> DurablePendingWriteRecord) {
-        val files = runCatching { Files.list(baseDir).use { it.toList() } }.getOrDefault(emptyList())
-        files.filter { it.name.endsWith(".pending.json") }.forEach { file ->
-            val records = readPendingRecords(file)
+    private suspend fun update(eventId: String, transform: (DurablePendingWriteRecord) -> DurablePendingWriteRecord) = lock.withLock {
+        pendingFiles().forEach { file ->
+            val records = readPendingRecordsUnlocked(file)
             if (records.any { it.event.id == eventId }) {
                 val updated = records.map { if (it.event.id == eventId) transform(it) else it }
                 atomicWrite(file, DurableRelayStoreCodec.encodePendingWrites(updated))
@@ -148,17 +154,24 @@ class DesktopPendingWriteStore(
         }
     }
 
-    private fun loadRecords(accountPubkey: String): List<DurablePendingWriteRecord> =
-        readPendingRecords(fileFor(accountPubkey))
+    private fun loadRecordsUnlocked(accountPubkey: String): List<DurablePendingWriteRecord> =
+        readPendingRecordsUnlocked(fileFor(accountPubkey))
 
-    private fun readPendingRecords(file: Path): List<DurablePendingWriteRecord> =
+    private fun readPendingRecordsUnlocked(file: Path): List<DurablePendingWriteRecord> =
         readFile(file)
             ?.let { DurableRelayStoreCodec.decodePendingWritesOrEmpty(it) }
             .orEmpty()
 
-    private fun writeRecords(accountPubkey: String, records: List<DurablePendingWriteRecord>) {
+    private fun writeRecordsUnlocked(accountPubkey: String, records: List<DurablePendingWriteRecord>) {
         atomicWrite(fileFor(accountPubkey), DurableRelayStoreCodec.encodePendingWrites(records))
         bump()
+    }
+
+    private fun pendingFiles(): List<Path> {
+        baseDir.createDirectories()
+        return runCatching {
+            Files.list(baseDir).use { files -> files.filter { it.name.endsWith(".pending.json") }.toList() }
+        }.getOrDefault(emptyList())
     }
 
     private fun fileFor(accountPubkey: String): Path =
@@ -174,11 +187,24 @@ class DesktopPendingWriteStore(
 
 private fun atomicWrite(file: Path, content: String) {
     file.parent.createDirectories()
-    val tmp = file.resolveSibling("${file.name}.tmp")
-    tmp.writeText(content)
+    val tmp = file.resolveSibling("${file.name}.${UUID.randomUUID()}.tmp")
+    FileChannel.open(
+        tmp,
+        StandardOpenOption.CREATE_NEW,
+        StandardOpenOption.WRITE,
+    ).use { channel ->
+        val bytes = content.encodeToByteArray()
+        var written = 0
+        while (written < bytes.size) {
+            written += channel.write(ByteBuffer.wrap(bytes, written, bytes.size - written))
+        }
+        runCatching { channel.force(true) }
+    }
     try {
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     } catch (_: AtomicMoveNotSupportedException) {
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING)
+    } finally {
+        runCatching { Files.deleteIfExists(tmp) }
     }
 }

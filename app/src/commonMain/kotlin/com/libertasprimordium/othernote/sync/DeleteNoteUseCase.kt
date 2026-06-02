@@ -49,18 +49,17 @@ class DeleteNoteUseCase(
         diagnostics += localControlDiagnostics
         val publishStart = TimeSource.Monotonic.markNow()
         val targetRelays = relays.distinct()
-        pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, build.event, targetRelays)
+        val pendingEnqueue = runCatching {
+            pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, build.event, targetRelays)
+        }
+        if (pendingEnqueue.isFailure) {
+            return SaveResult.Failed("Delete failed: pending write persistence failed. ${pendingEnqueue.exceptionOrNull()?.safePersistenceMessage()}")
+        }
         val publish = nostr.publishBestEffort(relays, build.event, publishScope) { statuses ->
             publishScope.launch {
-                statuses.forEach { status ->
-                    if (status.writable) {
-                        pendingWriteStore.markRelayAccepted(build.event.id, status.url)
-                    } else {
-                        pendingWriteStore.markRelayRejectedOrFailed(build.event.id, status.url, status.message)
-                    }
+                runCatching {
+                    updatePendingWriteStatuses(session.publicKeyHex, build.event.id, statuses)
                 }
-                val pending = pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == build.event.id }
-                if (pending?.isComplete == true) pendingWriteStore.removeCompletedWrite(build.event.id)
             }
             onPublishStatus(statuses)
         }
@@ -70,17 +69,14 @@ class DeleteNoteUseCase(
         if (!firstAccepted.anySucceeded) {
             return SaveResult.Failed("Delete failed: No relay accepted tombstone. ${diagnostics.joinToString(" ")} ${firstAccepted.statuses.toSafeMessages().joinToString("; ")}")
         }
-        firstAccepted.statuses.forEach { status ->
-            if (status.writable) {
-                pendingWriteStore.markRelayAccepted(build.event.id, status.url)
-            } else {
-                pendingWriteStore.markRelayRejectedOrFailed(build.event.id, status.url, status.message)
-            }
+        val pendingStatusUpdate = runCatching {
+            updatePendingWriteStatuses(session.publicKeyHex, build.event.id, firstAccepted.statuses)
+        }
+        if (pendingStatusUpdate.isFailure) {
+            return SaveResult.Failed("Delete failed: pending write status persistence failed. ${pendingStatusUpdate.exceptionOrNull()?.safePersistenceMessage()}")
         }
         notes.upsertLocal(tombstone, build.event)
         localEventCache.upsertEvents(session.publicKeyHex, listOf(build.event))
-        val pendingAfterFirstAccepted = pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == build.event.id }
-        if (pendingAfterFirstAccepted?.isComplete == true) pendingWriteStore.removeCompletedWrite(build.event.id)
         publishScope.launchWhenComplete(publish.complete) { complete ->
             if (complete.allSucceeded) notes.markPublished(build.event.id)
         }
@@ -96,5 +92,17 @@ class DeleteNoteUseCase(
                 listOf("Delete accepted by at least one relay ${diagnostics.joinToString(" ")}") +
                 firstAccepted.statuses.toSafeMessages(),
         )
+    }
+
+    private suspend fun updatePendingWriteStatuses(accountPubkey: String, eventId: String, statuses: List<RelayStatus>) {
+        statuses.forEach { status ->
+            if (status.writable) {
+                pendingWriteStore.markRelayAccepted(eventId, status.url)
+            } else {
+                pendingWriteStore.markRelayRejectedOrFailed(eventId, status.url, status.message)
+            }
+        }
+        val pending = pendingWriteStore.loadPendingWrites(accountPubkey).firstOrNull { it.event.id == eventId }
+        if (pending?.isComplete == true) pendingWriteStore.removeCompletedWrite(eventId)
     }
 }

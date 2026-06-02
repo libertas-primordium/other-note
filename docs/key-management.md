@@ -92,7 +92,7 @@ Saved-device key storage may be enabled only through OS credential stores:
 
 If an OS keyring is unavailable, locked, unsupported, or not implemented, saved-key mode must be disabled and session-only mode used. There must be no plaintext file fallback.
 
-The desktop developer relay runtime may cache signed encrypted Nostr events and pending relay-write metadata under the user's local app data directory. That cache is not key storage: it must not contain `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. It may contain encrypted event content because that is the same signed ciphertext intended for public relays.
+The desktop relay runtime may cache signed encrypted Nostr events and pending relay-write metadata under the user's local app data directory. That cache is not key storage: it must not contain `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext. It may contain encrypted event content because that is the same signed ciphertext intended for public relays. Desktop direct-key sessions remain session-only: production crypto can use the in-memory key to encrypt, decrypt, sign, fetch, publish, edit, and tombstone notes, but Other Note still does not persist the plaintext key.
 
 ## iOS Plan
 
