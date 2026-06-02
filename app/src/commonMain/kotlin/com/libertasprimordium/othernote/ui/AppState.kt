@@ -843,7 +843,20 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         action: SignerWriteAction,
     ): RelayPublishResult {
         val relays = relaySettings.normalizedUrls().distinct()
-        services.pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, event, relays)
+        val pendingEnqueue = runCatching {
+            services.pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, event, relays)
+        }
+        if (pendingEnqueue.isFailure) {
+            return RelayPublishResult(
+                listOf(
+                    RelayStatus(
+                        url = "local-pending-write-store",
+                        writable = false,
+                        message = "stage=pending_write outcome=failed ${pendingEnqueue.exceptionOrNull()?.safePersistenceMessage()}",
+                    ),
+                ),
+            )
+        }
         var firstAcceptedReached = false
         val publish = nostr.publishBestEffort(relays, event, appScope) { statuses ->
             appScope.launch { updateSignerPendingStatuses(session.publicKeyHex, event.id, statuses) }
@@ -1109,11 +1122,17 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     private fun String.abbreviatedId(): String = take(12)
 
+    private fun Throwable.safePersistenceMessage(): String =
+        "${this::class.simpleName}: ${message?.take(160).orEmpty()}"
+
     private fun startupMessage(): String =
-        if (services.mode == AppRuntimeMode.DesktopDevRelay) {
-            "Developer relay runtime enabled. Use throwaway nsecs only; keys are session-only."
-        } else {
-            "Offline runtime. Desktop key persistence is disabled; nsec is kept in memory only."
+        when (services.mode) {
+            AppRuntimeMode.DesktopRelay ->
+                "Desktop relay runtime enabled. Keys are session-only; encrypted relay sync is available."
+            AppRuntimeMode.DesktopDevRelay ->
+                "Desktop relay runtime enabled. Developer flag accepted; keys are session-only."
+            AppRuntimeMode.Offline ->
+                "Offline runtime. Desktop key persistence is disabled; nsec is kept in memory only."
         }
 }
 

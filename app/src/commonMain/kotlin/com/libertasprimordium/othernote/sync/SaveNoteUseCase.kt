@@ -56,18 +56,17 @@ class SaveNoteUseCase(
         diagnostics += localControlDiagnostics
         val publishStart = TimeSource.Monotonic.markNow()
         val targetRelays = relays.distinct()
-        pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, build.event, targetRelays)
+        val pendingEnqueue = runCatching {
+            pendingWriteStore.enqueuePendingWrite(session.publicKeyHex, build.event, targetRelays)
+        }
+        if (pendingEnqueue.isFailure) {
+            return SaveResult.Failed("Save failed: pending write persistence failed. ${pendingEnqueue.exceptionOrNull()?.safePersistenceMessage()}")
+        }
         val publish = nostr.publishBestEffort(relays, build.event, publishScope) { statuses ->
             publishScope.launch {
-                statuses.forEach { status ->
-                    if (status.writable) {
-                        pendingWriteStore.markRelayAccepted(build.event.id, status.url)
-                    } else {
-                        pendingWriteStore.markRelayRejectedOrFailed(build.event.id, status.url, status.message)
-                    }
+                runCatching {
+                    updatePendingWriteStatuses(session.publicKeyHex, build.event.id, statuses)
                 }
-                val pending = pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == build.event.id }
-                if (pending?.isComplete == true) pendingWriteStore.removeCompletedWrite(build.event.id)
             }
             onPublishStatus(statuses)
         }
@@ -77,17 +76,14 @@ class SaveNoteUseCase(
         if (!firstAccepted.anySucceeded) {
             return SaveResult.Failed("Save failed: No relay accepted write. ${diagnostics.joinToString(" ")} ${firstAccepted.statuses.toSafeMessages().joinToString("; ")}")
         }
-        firstAccepted.statuses.forEach { status ->
-            if (status.writable) {
-                pendingWriteStore.markRelayAccepted(build.event.id, status.url)
-            } else {
-                pendingWriteStore.markRelayRejectedOrFailed(build.event.id, status.url, status.message)
-            }
+        val pendingStatusUpdate = runCatching {
+            updatePendingWriteStatuses(session.publicKeyHex, build.event.id, firstAccepted.statuses)
+        }
+        if (pendingStatusUpdate.isFailure) {
+            return SaveResult.Failed("Save failed: pending write status persistence failed. ${pendingStatusUpdate.exceptionOrNull()?.safePersistenceMessage()}")
         }
         notes.upsertLocal(note, build.event)
         localEventCache.upsertEvents(session.publicKeyHex, listOf(build.event))
-        val pendingAfterFirstAccepted = pendingWriteStore.loadPendingWrites(session.publicKeyHex).firstOrNull { it.event.id == build.event.id }
-        if (pendingAfterFirstAccepted?.isComplete == true) pendingWriteStore.removeCompletedWrite(build.event.id)
         publishScope.launchWhenComplete(publish.complete) { complete ->
             if (complete.allSucceeded) notes.markPublished(build.event.id)
         }
@@ -103,6 +99,18 @@ class SaveNoteUseCase(
                 listOf("Save accepted by at least one relay ${diagnostics.joinToString(" ")}") +
                 firstAccepted.statuses.toSafeMessages(),
         )
+    }
+
+    private suspend fun updatePendingWriteStatuses(accountPubkey: String, eventId: String, statuses: List<RelayStatus>) {
+        statuses.forEach { status ->
+            if (status.writable) {
+                pendingWriteStore.markRelayAccepted(eventId, status.url)
+            } else {
+                pendingWriteStore.markRelayRejectedOrFailed(eventId, status.url, status.message)
+            }
+        }
+        val pending = pendingWriteStore.loadPendingWrites(accountPubkey).firstOrNull { it.event.id == eventId }
+        if (pending?.isComplete == true) pendingWriteStore.removeCompletedWrite(eventId)
     }
 }
 
@@ -123,3 +131,6 @@ sealed class SaveResult {
 
 fun List<com.libertasprimordium.othernote.domain.RelayStatus>.toSafeMessages(): List<String> =
     map { "${it.url}: read=${it.readable} write=${it.writable} ${it.message.take(180)}" }
+
+internal fun Throwable.safePersistenceMessage(): String =
+    "${this::class.simpleName}: ${message?.take(160).orEmpty()}"

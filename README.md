@@ -18,8 +18,8 @@ Important security status:
 - `ProductionNostrCryptoFactory` is enabled for direct session-only signing, NIP-44 v2 encryption/decryption, and relay-backed tests where a real relay client is wired. `NonProductionNostrCrypto` remains the safety fallback.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
 - Direct `nsec` and generated-identity use remains session-only and unsaved, but can encrypt/sign/publish/fetch when production crypto and a real relay client are available. Bounded desktop/JVM and Android WebSocket relay clients surface explicit per-relay status instead of fake success.
-- Desktop can be launched in an explicit developer relay runtime with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1`; Android relay-backed note runtime is available for external signer, NIP-46, and production-crypto direct session-only identities.
-- Desktop developer relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
+- Desktop relay runtime is enabled by default when production crypto is available. It can fetch and publish encrypted note events through configured relays for session-only direct keys and signer-backed sessions.
+- Desktop relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - NIP-46 remote signer foundation support can parse `bunker://` tokens, create session-only NIP-46 transport keys, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
@@ -67,7 +67,7 @@ Default relays are editable:
 
 Public relays may purge old events. Add a relay you control for stronger long-term retention.
 
-Relay changes are planned through a migration use case that identifies added and removed relays. The intended production behavior is to fetch from old/removing relays, reduce to current note state, republish current signed events to added relays, and only then finalize settings. The first pass stores the plan and surfaces limitations because relay networking is not wired yet.
+Relay changes are planned through a migration use case that identifies added and removed relays. The intended production behavior is to fetch from old/removing relays, reduce to current note state, republish current signed events to added relays, and only then finalize settings. The current settings flow stores the plan and surfaces limitations; full relay migration execution remains future work even though normal relay fetch/publish is available.
 
 ## Key Management And nsec Safety
 
@@ -191,15 +191,15 @@ Commands:
 ./gradlew :app:check
 ```
 
-Default runtime remains offline. For manual desktop-only relay testing with throwaway keys:
+Desktop relay runtime is enabled by default when production crypto is available. The legacy developer flag is still accepted for compatibility, but it is no longer required:
 
 ```sh
 OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run
 ```
 
-The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. Use throwaway `nsec` values only. The pasted `nsec` is used only for the active process session, is redacted after login, and is not written to local files, relay settings, cache, logs, or test output. Saved-key mode is intentionally unavailable until OS keyring or external signer support is implemented.
+The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. The pasted `nsec` is used only for the active process session, is redacted after login, and is not written to local files, relay settings, cache, logs, or test output. Saved-key mode is intentionally unavailable until OS keyring or external signer support is implemented.
 
-Desktop developer relay runtime keeps a local durability layer at `~/.local/share/other-note/`:
+Desktop relay runtime keeps a local durability layer at `~/.local/share/other-note/`:
 
 - `event-cache/` stores signed encrypted kind `30078` events keyed by account pubkey.
 - `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, and safe error strings.
@@ -217,12 +217,12 @@ Android external-signer relay runtime keeps the same durable encrypted event and
 Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
 
 ```sh
-OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS=1 ./gradlew :app:run
+OTHER_NOTE_SHOW_RELAY_DIAGNOSTICS=1 ./gradlew :app:run
 ```
 
 The equivalent diagnostics JVM property is `-Dothernote.showRelayDiagnostics=true`.
 
-Developer relay runtime defaults:
+Desktop relay runtime defaults:
 
 - `wss://relay.damus.io`
 - `wss://relay.primal.net`
@@ -233,10 +233,10 @@ Developer relay runtime defaults:
 Manual relay checklist:
 
 1. Create or obtain a throwaway `nsec`.
-2. Launch with `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run`.
+2. Launch with `./gradlew :app:run`.
 3. Log in with the throwaway `nsec` and confirm the abbreviated `npub` appears.
 4. Create a note and verify at least one relay accepts the write.
-5. Restart in developer relay mode, log in with the same throwaway `nsec`, and refresh/fetch the note.
+5. Restart the desktop app, log in with the same throwaway `nsec`, and refresh/fetch the note.
 6. Edit the note and verify refresh keeps only the newest version.
 7. Delete the note and verify refresh/restart hides the tombstoned note.
 
@@ -266,7 +266,7 @@ Runtime troubleshooting:
 - Verbose fetch diagnostics include safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. They do not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
 - If no note appears after sync, enable relay diagnostics to distinguish: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
-- Current developer runtime recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
+- Current desktop and Android relay recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
 OS keyring persistence, saved-device Android key storage, durable NIP-46 session metadata, richer client-initiated NIP-46 pairing UI, profile rendering, and inline media rendering are intentionally future work.
 
@@ -329,7 +329,7 @@ The real crypto round-trip tests live under `desktopTest`. They generate throwaw
 - Sends `CLOSE` after bounded fetches.
 - Falls back to author/kind filtering if tag filtering does not return usable events.
 
-The desktop client is wired only into desktop developer relay runtime when `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` or `-Dothernote.devRelayRuntime=true` is set. The Android client is wired for Android external-signer, NIP-46, and production-crypto direct session-only identities. Direct `nsec` fallback remains session-only and unsaved; it falls back to local/offline only if production crypto is unavailable.
+The desktop client is wired into the normal Debian/desktop runtime when production crypto is available. The legacy `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` and `-Dothernote.devRelayRuntime=true` switches are still accepted as compatibility markers but are no longer required for relay fetch/publish. The Android client remains wired for Android external-signer, NIP-46, and production-crypto direct session-only identities. Direct `nsec` fallback remains session-only and unsaved; it falls back to local/offline only if production crypto is unavailable.
 
 ## Architecture
 
@@ -350,7 +350,7 @@ Platform code:
 ## Known Limitations And TODOs
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
-- Keep desktop developer relay runtime gated until storage and failure handling are reviewed for normal runtime use.
+- Add user-editable relay migration execution now that desktop and Android relay read/write paths are available.
 - Implement Android encrypted key storage and Linux desktop secret-service integration.
 - Fetch and cache kind 0 profile metadata once networking exists.
 - Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
