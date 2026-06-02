@@ -7,7 +7,10 @@ data class UserSession(
     val publicKeyHex: String,
     val authMethod: SessionAuthMethod = SessionAuthMethod.SessionOnlyNsec,
     val signerPackage: String? = null,
-)
+) {
+    override fun toString(): String =
+        "UserSession(nsec=redacted, privateKeyHex=redacted, npub=${npub.safePrefix()}, publicKeyHex=${publicKeyHex.safePrefix()}, authMethod=$authMethod, signerPackage=$signerPackage)"
+}
 
 enum class SessionAuthMethod {
     SessionOnlyNsec,
@@ -20,3 +23,6 @@ fun UserSession.abbreviatedNpub(): String =
 
 fun UserSession.hasSessionPrivateKey(): Boolean =
     authMethod == SessionAuthMethod.SessionOnlyNsec && privateKeyHex.length == 64
+
+private fun String.safePrefix(): String =
+    if (length <= 12) this else take(12)

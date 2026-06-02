@@ -24,6 +24,10 @@ Use this priority order:
 
 Session-only `nsec` means the key is held only in process memory for the active app session. The input field must be cleared after login and the full `nsec` must not be displayed after entry.
 
+Other Note may generate a fresh Nostr identity for a user-facing "Create new identity" flow. The generated `nsec` is the private key. It may be displayed only inside the deliberate generation flow so the user can save it outside Other Note or import it into a signer, and it must never be written to app preferences, DataStore, SQLite, files, JSON stores, durable relay caches, logs, analytics, crash reports, or relay events. The generated direct-key session remains session-only. When production crypto and a relay client are available, that session may use the in-memory private key for NIP-44 v2 encryption/decryption and NIP-01 signing, but durable storage must still contain only signed encrypted events and safe relay metadata. Losing the generated `nsec` means losing access to encrypted notes for that identity.
+
+Generated-identity UX must require explicit acknowledgement that the user saved the `nsec` and understands the recovery risk before using it for a session. Clipboard copy must never happen automatically. If a future platform-specific copy action is added, it must be explicit, warning-labeled, and clear the clipboard after a short delay where the platform API makes that reliable.
+
 ## Android Plan
 
 Preferred Android signing is external signer delegation through NIP-55 Android signer apps such as Amber. NIP-46 remote signer/bunker support is available as a signer-mediated foundation path and remains session-only for its local communication key material in this pass.
@@ -43,7 +47,9 @@ Current Android NIP-55 status is discovery, explicit public-key request, interna
 - Signer-built events must be validated locally before success is reported: signer pubkey must match the session, event fields must match the request, and the NIP-01 event id/signature must verify.
 - The scaffold must not store, log, or transmit `nsec` values or private keys.
 
-Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use password/autofill/credential behavior so Android and Google Password Manager can prompt where appropriate. The app itself must not save Android `nsec` values to plaintext app storage.
+Direct `nsec` paste may exist as a fallback. The direct `nsec` field should use password/autofill/credential behavior so Android and Google Password Manager can prompt where appropriate. The app itself must not save Android `nsec` values to plaintext app storage. If production crypto is available, direct session-only keys can encrypt/decrypt and sign notes in memory for relay publication and recovery; if production crypto is unavailable, the safety fallback remains local-only and must not emit plaintext.
+
+The "Create new identity" flow can be used to generate an `nsec`, but the recommended Android path remains importing or saving that key in Amber or another NIP-55 signer and then using Android signer login in Other Note. Users who do not want to manage a raw `nsec` should prefer Android signer, NIP-46 remote signer/bunker, or future OS-backed credential storage.
 
 Saved-device `nsec` support must require Android secure credential or keystore-backed storage when implemented. Until that exists, saved-key mode stays disabled and session-only mode is used.
 

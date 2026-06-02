@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
+import com.libertasprimordium.othernote.nostr.ProductionNostrCryptoFactory
 import com.libertasprimordium.othernote.security.AndroidExternalSignerProvider
 import com.libertasprimordium.othernote.security.AndroidNip55EventSigner
 import com.libertasprimordium.othernote.security.AndroidNip55Nip44Operator
@@ -29,9 +30,10 @@ class MainActivity : ComponentActivity() {
         publicKeyRequester.attachLauncher(publicKeyLauncher)
         eventSigner.attachLauncher(signEventLauncher)
         val nostrClient = AndroidNostrClient()
+        val crypto = ProductionNostrCryptoFactory.createOrNull() ?: NonProductionNostrCrypto()
         val services = AppServices(
             mode = AppRuntimeMode.Offline,
-            crypto = NonProductionNostrCrypto(),
+            crypto = crypto,
             client = nostrClient,
             externalSignerProvider = AndroidExternalSignerProvider(this),
             externalSignerPublicKeyRequester = publicKeyRequester,
@@ -42,7 +44,11 @@ class MainActivity : ComponentActivity() {
             pendingWriteStore = AndroidPendingWriteStore(this),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
-            startupWarnings = listOf("Android signer relay runtime enabled; nsec fallback remains local-only"),
+            startupWarnings = if (crypto.productionReady) {
+                listOf("Android relay runtime enabled; direct nsec use is session-only and not persisted")
+            } else {
+                listOf("Android signer relay runtime enabled; direct nsec fallback remains local-only")
+            },
         )
         setContent {
             OtherNoteApp(services)

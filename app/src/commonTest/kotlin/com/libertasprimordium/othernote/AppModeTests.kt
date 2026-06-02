@@ -4,11 +4,22 @@ import com.libertasprimordium.othernote.ui.AppMode
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
+import com.libertasprimordium.othernote.ui.GeneratedIdentityStep
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.Nip19
+import com.libertasprimordium.othernote.nostr.NostrClient
+import com.libertasprimordium.othernote.nostr.NostrCrypto
 import com.libertasprimordium.othernote.nostr.NostrEvent
+import com.libertasprimordium.othernote.nostr.NostrPrivateKey
+import com.libertasprimordium.othernote.nostr.NostrPublicKey
 import com.libertasprimordium.othernote.nostr.OfflineNostrClient
+import com.libertasprimordium.othernote.nostr.ProfileMetadata
+import com.libertasprimordium.othernote.nostr.RelayFetchResult
+import com.libertasprimordium.othernote.nostr.RelayPublishResult
+import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.domain.DefaultRelays
+import com.libertasprimordium.othernote.domain.NoteKind
+import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
@@ -19,6 +30,9 @@ import com.libertasprimordium.othernote.security.SignerPublicKeyRequestResult
 import com.libertasprimordium.othernote.security.SignerMode
 import com.libertasprimordium.othernote.security.UnavailableExternalSignerProvider
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
+import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
+import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
+import com.libertasprimordium.othernote.nostr.KeyDecodeResult
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -321,6 +335,95 @@ class AppModeTests {
         assertEquals(AppMode.Authenticated, state.mode.value)
         assertEquals("Signer returned invalid encryption result", state.message.value)
     }
+
+    @Test
+    fun generatedIdentityRequiresAcknowledgementAndStartsSessionOnly() = runBlocking {
+        val crypto = GeneratedIdentityTestCrypto()
+        val cache = InMemoryLocalEventCache()
+        val pending = InMemoryPendingWriteStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = crypto,
+                client = AcceptingGeneratedIdentityClient(),
+                localEventCache = cache,
+                pendingWriteStore = pending,
+            ),
+        )
+
+        state.startGeneratedIdentityFlow()
+        assertEquals(GeneratedIdentityStep.Explanation, state.generatedIdentityState.value.step)
+        assertTrue(state.generateFreshIdentity())
+        state.toggleGeneratedIdentityNsecReveal()
+        val generated = state.generatedIdentityState.value
+        val generatedNsec = generated.nsecForDisplay()
+        val generatedPrivateKey = generated.secret?.privateKeyHex ?: error("missing generated private key")
+
+        assertTrue(generatedNsec.startsWith("nsec-test-"))
+        assertFalse(generated.toString().contains(generatedNsec))
+        assertFalse(generated.toString().contains(generatedPrivateKey))
+        assertFalse(state.useGeneratedIdentityForSession())
+        state.acknowledgeGeneratedIdentitySaved(true)
+        assertFalse(state.useGeneratedIdentityForSession())
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        assertTrue(state.useGeneratedIdentityForSession())
+
+        val session = state.session.value ?: error("missing generated session")
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, session.authMethod)
+        assertEquals("nsec-redacted", session.nsec)
+        assertEquals(generatedPrivateKey, session.privateKeyHex)
+        assertFalse(session.toString().contains(generatedNsec))
+        assertFalse(session.toString().contains(generatedPrivateKey))
+        assertEquals(GeneratedIdentityStep.Idle, state.generatedIdentityState.value.step)
+
+        val originalText = "generated identity note"
+        val editedText = "generated identity edited note"
+        assertTrue(state.save(existing = null, markdown = originalText))
+        assertFalse(state.message.value.contains("NIP-44 v2 encryption is not wired yet"))
+        assertEquals(originalText, state.notes.notes.value.single().bodyMarkdown)
+
+        val originalNote = state.notes.notes.value.single()
+        assertTrue(state.save(existing = originalNote, markdown = editedText))
+        assertEquals(editedText, state.notes.notes.value.single().bodyMarkdown)
+
+        val editedNote = state.notes.notes.value.single()
+        assertTrue(state.delete(editedNote))
+        assertTrue(state.notes.notes.value.isEmpty())
+
+        val cachedEvents = cache.loadEvents(session.publicKeyHex)
+        assertEquals(3, cachedEvents.size)
+        assertTrue(cachedEvents.all { it.kind == NoteKind })
+        val serializedCacheForSafety = cachedEvents.joinToString(" ") { event ->
+            listOf(event.id, event.pubkey, event.createdAt.toString(), event.kind.toString(), event.tags.toString(), event.content, event.sig).joinToString(" ")
+        }
+        assertFalse(serializedCacheForSafety.contains(generatedNsec))
+        assertFalse(serializedCacheForSafety.contains(generatedPrivateKey))
+        assertFalse(serializedCacheForSafety.contains(originalText))
+        assertFalse(serializedCacheForSafety.contains(editedText))
+        assertFalse(serializedCacheForSafety.contains("body_markdown"))
+        assertTrue(pending.loadPendingWrites(session.publicKeyHex).isEmpty())
+    }
+
+    @Test
+    fun cancellingGeneratedIdentityFlowClearsDisplayedSecret() {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+            ),
+        )
+
+        state.startGeneratedIdentityFlow()
+        assertTrue(state.generateFreshIdentity())
+        state.toggleGeneratedIdentityNsecReveal()
+        val generatedNsec = state.generatedIdentityState.value.nsecForDisplay()
+        state.cancelGeneratedIdentityFlow()
+
+        assertEquals(GeneratedIdentityStep.Idle, state.generatedIdentityState.value.step)
+        assertFalse(state.generatedIdentityState.value.toString().contains(generatedNsec))
+        assertNull(state.session.value)
+    }
 }
 
 private class TestSignerPublicKeyRequester(
@@ -372,4 +475,77 @@ private object AvailableTestSignerProvider : NostrSignerProvider {
     override val canSignEvent: Boolean = true
     override val canNip44EncryptDecrypt: Boolean = true
     override val safeDiagnostics: List<String> = listOf("safe test signer available")
+}
+
+private class GeneratedIdentityTestCrypto : NostrCrypto {
+    override val productionReady: Boolean = true
+    private var counter = 1
+    private val plaintextByCiphertext = mutableMapOf<String, String>()
+
+    override fun generatePrivateKey(): Result<NostrPrivateKey> = Result.success(
+        NostrPrivateKey((counter++).toString(16).padStart(64, '0')),
+    )
+
+    override fun encodeNsec(privateKey: NostrPrivateKey): Result<String> =
+        Result.success("nsec-test-${privateKey.hex}")
+
+    override fun encodeNpub(publicKey: NostrPublicKey): Result<String> =
+        Result.success("npub-test-${publicKey.hex.take(16)}")
+
+    override fun decodeNsec(nsec: String): KeyDecodeResult =
+        if (nsec.startsWith("nsec-test-")) {
+            KeyDecodeResult.Valid(NostrPrivateKey(nsec.removePrefix("nsec-test-")))
+        } else {
+            KeyDecodeResult.Invalid("Invalid generated test nsec")
+        }
+
+    override fun derivePublicKey(privateKey: NostrPrivateKey): Result<NostrPublicKey> {
+        val publicHex = privateKey.hex.reversed()
+        return Result.success(NostrPublicKey(publicHex, "npub-test-${publicHex.take(16)}"))
+    }
+
+    override fun encryptToSelf(
+        plaintext: String,
+        privateKey: NostrPrivateKey,
+        publicKey: NostrPublicKey,
+    ): Result<String> = runCatching {
+        val ciphertext = "cipher-${plaintext.hashCode()}-${plaintext.length}"
+        plaintextByCiphertext[ciphertext] = plaintext
+        ciphertext
+    }
+
+    override fun decryptFromSelf(
+        ciphertext: String,
+        privateKey: NostrPrivateKey,
+        publicKey: NostrPublicKey,
+    ): Result<String> =
+        plaintextByCiphertext[ciphertext]?.let { Result.success(it) } ?: Result.failure(IllegalArgumentException("missing ciphertext"))
+
+    override fun computeEventId(unsigned: UnsignedNostrEvent): Result<String> =
+        Result.success("event-${unsigned.pubkey.take(8)}-${unsigned.createdAt}-${unsigned.content.hashCode()}")
+
+    override fun sign(unsigned: UnsignedNostrEvent, privateKey: NostrPrivateKey): Result<NostrEvent> =
+        Result.success(
+            NostrEvent(
+                id = computeEventId(unsigned).getOrThrow(),
+                pubkey = unsigned.pubkey,
+                createdAt = unsigned.createdAt,
+                kind = unsigned.kind,
+                tags = unsigned.tags,
+                content = unsigned.content,
+                sig = "valid",
+            ),
+        )
+
+    override fun validate(event: NostrEvent): Result<Boolean> = Result.success(event.sig == "valid")
+}
+
+private class AcceptingGeneratedIdentityClient : NostrClient {
+    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
+        RelayFetchResult(emptyList(), relays.map { RelayStatus(it, readable = true, message = "ok") })
+
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult =
+        RelayPublishResult(relays.map { RelayStatus(it, writable = true, message = "accepted") })
+
+    override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
 }
