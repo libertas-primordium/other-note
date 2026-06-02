@@ -199,9 +199,7 @@ class SyncNotesUseCase(
             crypto.decryptFromSelf(event.content, privateKey, publicKey)
         }
         val reduceDurationMs = reduceStart.elapsedNow().inWholeMilliseconds
-        val selectedNoteIds = reduced.selectedNoteIds
-        val preservedNotes = notes.notes.value.filter { it.id !in selectedNoteIds }
-        notes.replaceFromSync(reduced.notes + preservedNotes)
+        notes.replaceFromSync(mergeReducedNotesWithCurrent(notes.notes.value, reduced))
         val appliedNoteCount = notes.notes.value.size
         val fetchedCount = uniqueEvents.size
         val preDecryptRejectedCount = wrongAuthorCount + wrongKindCount + missingTTagCount + missingDTagCount + invalidSignatureCount

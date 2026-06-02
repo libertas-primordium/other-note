@@ -73,6 +73,53 @@ class SignerNoteEventBuilderTests {
     }
 
     @Test
+    fun replacementPreservesDTagAndUsesNewerEventTimestamp() {
+        val fixture = fixture()
+        val nip44 = FakeNip44Operator()
+        val signer = SigningEventSigner(fixture.privateKey)
+        val builder = builder(nip44, signer)
+        val existing = Note(
+            id = "existing-note-id",
+            createdAtMs = 1_700_000_000_000,
+            updatedAtMs = 1_700_000_000_500,
+            bodyMarkdown = "old",
+        )
+
+        val result = assertIs<SignerNoteEventBuildResult.Success>(
+            builder.buildReplacementLocalNoteEvent(fixture.session, "com.example.signer", existing, "edited"),
+        )
+        val payload = JsonNotePayloadCodec.decode(nip44.lastPlaintext ?: error("missing plaintext")).getOrThrow()
+
+        assertEquals(existing.id, result.note.id)
+        assertEquals(noteDTag(existing.id), result.dTag)
+        assertEquals(noteEventTags(noteDTag(existing.id)), result.signedEvent.tags)
+        assertTrue(result.signedEvent.createdAt > existing.updatedAtMs / 1_000)
+        assertEquals("edited", payload.bodyMarkdown)
+        assertEquals(result.note.updatedAtMs, payload.updatedAtMs)
+    }
+
+    @Test
+    fun tombstoneUsesNewerEventTimestamp() {
+        val fixture = fixture()
+        val nip44 = FakeNip44Operator()
+        val signer = SigningEventSigner(fixture.privateKey)
+        val builder = builder(nip44, signer)
+        val existing = Note(
+            id = "existing-note-id",
+            createdAtMs = 1_700_000_000_000,
+            updatedAtMs = 1_700_000_000_500,
+            bodyMarkdown = "old",
+        )
+
+        val result = assertIs<SignerNoteEventBuildResult.Success>(
+            builder.buildLocalTombstoneEvent(fixture.session, "com.example.signer", existing),
+        )
+
+        assertTrue(result.signedEvent.createdAt > existing.updatedAtMs / 1_000)
+        assertTrue(result.note.deleted)
+    }
+
+    @Test
     fun rejectsWrongPubkeyReturnedEvent() {
         val fixture = fixture()
         val otherPrivateKey = crypto.generatePrivateKey().getOrThrow()

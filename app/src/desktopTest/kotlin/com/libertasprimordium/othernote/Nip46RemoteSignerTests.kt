@@ -621,6 +621,41 @@ class Nip46RemoteSignerTests {
     }
 
     @Test
+    fun appCanEditAndMaterializeEncryptedNoteWithNip46Signer() = runBlocking {
+        val fixture = fixture()
+        val remoteSigner = Nip46RemoteSigner(FakeNip46Transport(crypto, fixture), crypto)
+        val cache = InMemoryLocalEventCache()
+        val relayClient = CapturingNostrClient()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                crypto = crypto,
+                client = relayClient,
+                remoteSigner = remoteSigner,
+                localEventCache = cache,
+                relaySettings = com.libertasprimordium.othernote.data.RelaySettingsStore(
+                    listOf(RelayConfig("wss://relay.example.com")),
+                ),
+            ),
+        )
+
+        assertTrue(state.connectRemoteSigner("bunker://${fixture.remotePubkey}?relay=wss://relay.example.com"))
+        assertTrue(state.save(existing = null, markdown = "first nip46 note"))
+        val original = state.notes.notes.value.single()
+        val originalEvent = relayClient.published.single()
+        assertTrue(state.save(existing = original, markdown = "edited nip46 note"))
+
+        val edited = state.notes.notes.value.single()
+        val editedEvent = relayClient.published.last()
+        assertEquals(original.id, edited.id)
+        assertEquals("edited nip46 note", edited.bodyMarkdown)
+        assertEquals(originalEvent.dTag(), editedEvent.dTag())
+        assertTrue(editedEvent.createdAt > originalEvent.createdAt)
+        assertTrue(cache.loadEvents(fixture.userPubkey).contains(editedEvent))
+        assertFalse(editedEvent.content.contains("edited nip46 note"))
+    }
+
+    @Test
     fun remoteSignerSaveFailureKeepsEditorErrorAndDoesNotCreatePendingWrite() = runBlocking {
         val fixture = fixture()
         val cache = InMemoryLocalEventCache()

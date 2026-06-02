@@ -6,6 +6,7 @@ import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.UserSession
+import com.libertasprimordium.othernote.domain.nextNoteVersionUpdatedAtMs
 import com.libertasprimordium.othernote.nostr.NostrRepository
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +31,11 @@ class SaveNoteUseCase(
     ): SaveResult {
         val totalStart = TimeSource.Monotonic.markNow()
         val now = nowMs()
-        val note = existing?.copy(bodyMarkdown = bodyMarkdown, updatedAtMs = now, deleted = false)
+        val note = existing?.copy(
+            bodyMarkdown = bodyMarkdown,
+            updatedAtMs = nextNoteVersionUpdatedAtMs(existing.updatedAtMs, now),
+            deleted = false,
+        )
             ?: Note(createdAtMs = now, updatedAtMs = now, bodyMarkdown = bodyMarkdown)
         if (session == null) {
             notes.upsertLocal(note)

@@ -35,6 +35,15 @@ data class NotePayload(
 
 fun noteDTag(noteId: String): String = "other-note:note:$noteId"
 
+fun nextNoteVersionUpdatedAtMs(previousUpdatedAtMs: Long, nowMs: Long): Long {
+    val nextEventSecondMs = if (previousUpdatedAtMs >= Long.MAX_VALUE - 1_000) {
+        Long.MAX_VALUE
+    } else {
+        ((previousUpdatedAtMs / 1_000) + 1) * 1_000
+    }
+    return maxOf(nowMs, nextEventSecondMs)
+}
+
 fun Note.toPayload(): NotePayload = NotePayload(
     noteId = id,
     createdAtMs = createdAtMs,
