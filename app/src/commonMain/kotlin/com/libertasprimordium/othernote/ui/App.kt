@@ -77,11 +77,13 @@ import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
 import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.MarkdownSpan
+import com.libertasprimordium.othernote.util.NoteSortOption
 import com.libertasprimordium.othernote.util.detectUrls
-import com.libertasprimordium.othernote.util.filterVisibleNotesBySearchQuery
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
+import com.libertasprimordium.othernote.util.noteListDisplayNotes
+import com.libertasprimordium.othernote.util.noteSortOptionForId
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.launch
 
@@ -760,10 +762,13 @@ fun NotesListScreen(
     var notePendingDelete by remember { mutableStateOf<Note?>(null) }
     var showAbout by remember { mutableStateOf(false) }
     var showThemePicker by remember { mutableStateOf(false) }
+    var showSortPicker by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     val selectedThemeId by appState.selectedThemeId.collectAsState()
-    val searchedNotes = remember(notes, searchQuery) {
-        filterVisibleNotesBySearchQuery(notes, searchQuery)
+    val selectedSortId by appState.selectedNoteSortId.collectAsState()
+    val selectedSort = noteSortOptionForId(selectedSortId)
+    val displayNotes = remember(notes, searchQuery, selectedSortId) {
+        noteListDisplayNotes(notes, searchQuery, selectedSortId)
     }
     val searchActive = searchQuery.trim().isNotEmpty()
     Scaffold(
@@ -813,8 +818,27 @@ fun NotesListScreen(
                     }
                 },
             )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Sort: ${selectedSort.label}",
+                    color = OtherNoteMuted,
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { showSortPicker = true },
+                    modifier = Modifier.semantics { contentDescription = "Change note sort order" },
+                ) {
+                    Text("Change")
+                }
+            }
             Spacer(Modifier.height(12.dp))
-            if (searchedNotes.isEmpty()) {
+            if (displayNotes.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
                     Text(if (searchActive) "No matching notes" else "No notes yet", color = OtherNoteMuted)
                 }
@@ -827,7 +851,7 @@ fun NotesListScreen(
                         verticalItemSpacing = 8.dp,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(searchedNotes, key = { it.id }) { note ->
+                        items(displayNotes, key = { it.id }) { note ->
                             NoteCard(
                                 note = note,
                                 platform = appState.platform,
@@ -861,6 +885,14 @@ fun NotesListScreen(
             selectedThemeId = selectedThemeId,
             onSelect = appState::selectTheme,
             onDismiss = { showThemePicker = false },
+        )
+    }
+    if (showSortPicker) {
+        NoteSortSelectionDialog(
+            options = appState.availableNoteSortOptions,
+            selectedSortId = selectedSortId,
+            onSelect = appState::selectNoteSort,
+            onDismiss = { showSortPicker = false },
         )
     }
 }
@@ -980,6 +1012,44 @@ private fun ThemeSelectionDialog(
                                 "${theme.displayName} (selected)"
                             } else {
                                 theme.displayName
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OtherNoteButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+    )
+}
+
+@Composable
+private fun NoteSortSelectionDialog(
+    options: List<NoteSortOption>,
+    selectedSortId: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Sort notes") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                options.forEach { option ->
+                    TextButton(
+                        onClick = { onSelect(option.id) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Sort notes by ${option.label}" },
+                    ) {
+                        Text(
+                            if (option.id == selectedSortId) {
+                                "${option.label} (selected)"
+                            } else {
+                                option.label
                             },
                         )
                     }
