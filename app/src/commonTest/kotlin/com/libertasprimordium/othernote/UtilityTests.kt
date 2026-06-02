@@ -24,10 +24,12 @@ import com.libertasprimordium.othernote.sync.selectLatestSignedEncryptedNoteEven
 import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.NoteCardAction
 import com.libertasprimordium.othernote.ui.NoteCardActionPresentation
+import com.libertasprimordium.othernote.ui.SignInInfoTopic
 import com.libertasprimordium.othernote.ui.noteCardActionPresentation
 import com.libertasprimordium.othernote.ui.noteCardActionMenuText
 import com.libertasprimordium.othernote.ui.noteCardActionItems
 import com.libertasprimordium.othernote.ui.noteDeleteConfirmationText
+import com.libertasprimordium.othernote.ui.signInInfoCopy
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.ui.userFacingErrorFor
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
@@ -156,6 +158,23 @@ class UtilityTests {
         assertFalse(visible.contains("kind 30078"))
         assertFalse(visible.contains("d-tag"))
         assertFalse(visible.contains("body_markdown"))
+    }
+
+    @Test
+    fun signInInfoCopyKeepsDetailedSecurityTextSafeAndOptional() {
+        val copies = SignInInfoTopic.values().map(::signInInfoCopy)
+
+        assertEquals(SignInInfoTopic.values().size, copies.size)
+        assertTrue(copies.any { it.title == "Android signer" && it.body.contains("Log out ends automatic sign-in") })
+        assertTrue(copies.any { it.title == "Remote signer" && it.body.contains("remote-signer session") })
+        assertTrue(copies.any { it.title == "Existing nsec" && it.body.contains("current session") })
+        assertTrue(copies.any { it.title == "Create identity" && it.body.contains("fresh nsec") })
+        assertTrue(copies.any { it.title == "Local-only" && it.body.contains("does not sync to relays") })
+        copies.forEach { copy ->
+            assertPrimaryErrorCopyIsReadable("${copy.title}\n${copy.body}")
+            assertFalse(copy.body.contains("nsec1leak"))
+            assertFalse(copy.body.contains("must-not-appear"))
+        }
     }
 
     @Test
