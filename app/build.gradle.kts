@@ -73,11 +73,17 @@ compose.desktop {
         mainClass = "com.libertasprimordium.othernote.DesktopMainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Deb)
-            packageName = "other-note"
+            packageName = "Other Note"
             packageVersion = "0.1.0"
             description = "GPLv3 Nostr-backed encrypted notes app"
             vendor = "Libertas Primordium"
             licenseFile.set(project.rootProject.file("LICENSE"))
+            linux {
+                packageName = "other-note"
+                iconFile.set(project.file("src/desktopMain/resources/icons/other-note.png"))
+                shortcut = true
+                appCategory = "Utility"
+            }
         }
     }
 }
