@@ -20,7 +20,7 @@ Important security status:
 - Direct `nsec` and generated-identity use remains session-only unless the desktop user explicitly saves the key to the OS keyring. These sessions can encrypt/sign/publish/fetch when production crypto and a real relay client are available. Bounded desktop/JVM and Android WebSocket relay clients surface explicit per-relay status instead of fake success.
 - Desktop relay runtime is enabled by default when production crypto is available. It can fetch and publish encrypted note events through configured relays for session-only direct keys and signer-backed sessions.
 - Desktop relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
-- Android can detect generic NIP-55 external signer apps, request signer public identity, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
+- Android can detect generic NIP-55 external signer apps, request signer public identity, remember safe signer-session metadata, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android cloud backup and device-transfer extraction are explicitly disabled for app data through the manifest and backup-rule resources. This is privacy hardening, not a backup feature.
 - NIP-46 remote signer foundation support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
@@ -97,7 +97,9 @@ Android builds include NIP-55 discovery, public-key request, internal coverage f
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
 - Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
 - When a NIP-55 signer is detected, the login screen presents Android signer as the recommended Android path, shows remote signer/bunker as an advanced secondary option when available, and keeps the direct `nsec` field as a lower-emphasis session-only fallback.
-- Pressing "Use Android signer" explicitly launches a NIP-55 `get_public_key` intent. If the signer approves, Other Note creates an in-memory signer-backed session with public key, `npub`, and signer package metadata only.
+- Pressing "Use Android signer" explicitly launches a NIP-55 `get_public_key` intent. If the signer approves, Other Note creates a signer-backed session with public key, `npub`, and signer package metadata only.
+- After successful Android signer login, Other Note can remember the signer package, account pubkey, and local active-session state in app-private no-backup storage. Future launches can restore the authenticated app shell without opening Amber just to continue the session.
+- Remembered Android signer metadata is not saved-key storage: the user private key remains in the signer app. Log out disables automatic session restoration, and "Forget Android signer" removes only this app's saved signer metadata from the device.
 - Internal tests and helper code cover the NIP-55 `ContentResolver` `SIGN_EVENT` path using harmless unpublished events. These development test actions are no longer exposed in the normal app UI.
 - The initial `get_public_key` request asks for optional `sign_event` permissions for kind `1`, encrypted note kind `30078`, and relay-list kind `10002`, plus NIP-44 encrypt/decrypt permissions so compatible signers can approve the ContentResolver requests.
 - Signer-built note events are validated locally: pubkey must match the signer-backed session, content/kind/tags must match the request, and the NIP-01 event id/signature must verify.
@@ -115,21 +117,25 @@ Manual Android signer test with Amber or another NIP-55 signer:
 3. Tap "Use Android signer."
 4. Approve the public-key request in the signer.
 5. Confirm Other Note shows the abbreviated `npub` and starts a relay sync.
-6. Confirm the old development-only signer test buttons are not visible in the normal notes UI.
-7. Create a normal note through the editor and tap "Save."
-8. Approve required signer encrypt/sign/decrypt requests.
-9. Confirm at least one relay accepts the write and the note appears.
-10. Force stop or relaunch the app, use Android signer again, and confirm the cached note can appear before or alongside relay fetch.
-11. Confirm the note is fetched, decrypted, and displayed after relay sync completes.
-12. If practical, simulate partial relay fanout by including one unreachable relay, relaunch, log in with Android signer, and confirm the pending write retries on the next sync/login.
-13. Inspect app-private durable store files under the debug app data directory and confirm no `nsec`, private key, decrypted note body, or decrypted payload JSON such as `body_markdown` appears.
-14. Edit the note, approve signer requests, relaunch, and confirm the replacement appears.
-15. Open the note, tap "Delete", and confirm.
-16. Approve required signer encrypt/sign/decrypt requests and confirm the note disappears after at least one relay accepts the tombstone.
-17. Relaunch and confirm the tombstoned note stays hidden.
-18. If signer operations fail, enable NIP-55 diagnostics and capture only the safe request path, payload length, field booleans, result status, and result columns.
-19. If relay recovery fails, enable relay diagnostics and capture only safe per-relay status, counts, and rejection classes.
-20. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
+6. Force close or relaunch before logging out and confirm Other Note restores the signed-in app shell without opening Amber for login approval.
+7. Confirm the old development-only signer test buttons are not visible in the normal notes UI.
+8. Create a normal note through the editor and tap "Save."
+9. Approve required signer encrypt/sign/decrypt requests.
+10. Confirm at least one relay accepts the write and the note appears.
+11. Force stop or relaunch the app, confirm the saved Android signer session restores, and confirm the cached note can appear before or alongside relay fetch.
+12. Confirm the note is fetched, decrypted, and displayed after relay sync completes.
+13. If practical, simulate partial relay fanout by including one unreachable relay, relaunch, log in with Android signer, and confirm the pending write retries on the next sync/login.
+14. Inspect app-private durable store files under the debug app data directory and confirm no `nsec`, private key, decrypted note body, or decrypted payload JSON such as `body_markdown` appears.
+15. Edit the note, approve signer requests, relaunch, and confirm the replacement appears.
+16. Open the note, tap "Delete", and confirm.
+17. Approve required signer encrypt/sign/decrypt requests and confirm the note disappears after at least one relay accepts the tombstone.
+18. Relaunch and confirm the tombstoned note stays hidden.
+19. Log out, force close, and relaunch; confirm automatic Android signer restoration is disabled after logout.
+20. Use "Continue with Android signer" and confirm it restores locally without the full signer-selection flow.
+21. Use "Forget Android signer" and confirm only the saved signer option disappears; fresh signer selection still works.
+22. If signer operations fail, enable NIP-55 diagnostics and capture only the safe request path, payload length, field booleans, result status, and result columns.
+23. If relay recovery fails, enable relay diagnostics and capture only safe per-relay status, counts, and rejection classes.
+24. Confirm the direct `nsec` fallback remains hidden/password-style and session-only.
 
 ## NIP-46 Remote Signer Status
 

@@ -15,7 +15,11 @@ import com.libertasprimordium.othernote.nostr.NostrEvent
 import com.libertasprimordium.othernote.security.Nip46SessionCodec
 import com.libertasprimordium.othernote.security.Nip46SessionStore
 import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
+import com.libertasprimordium.othernote.security.Nip55SessionCodec
+import com.libertasprimordium.othernote.security.Nip55SessionStore
+import com.libertasprimordium.othernote.security.Nip55SessionStoreResult
 import com.libertasprimordium.othernote.security.SavedNip46Session
+import com.libertasprimordium.othernote.security.SavedNip55Session
 import com.libertasprimordium.othernote.util.nowMs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -226,6 +230,47 @@ class AndroidNip46SessionStore(
 
     private fun loadSessionsUnlocked(): List<SavedNip46Session> =
         readFile(file)?.let { Nip46SessionCodec.decodeSessionsOrEmpty(it) }.orEmpty()
+}
+
+class AndroidNip55SessionStore(
+    context: Context,
+    private val file: File = File(context.applicationContext.noBackupFilesDir, "nip55-sessions.json"),
+) : Nip55SessionStore {
+    private val lock = Mutex()
+    override val isAvailable: Boolean = true
+    override val unavailableReason: String? = null
+
+    override suspend fun listSessions(): Nip55SessionStoreResult = lock.withLock {
+        Nip55SessionStoreResult.Listed(loadSessionsUnlocked().map { it.metadata() })
+    }
+
+    override suspend fun saveSession(session: SavedNip55Session): Nip55SessionStoreResult = lock.withLock {
+        val signerPackage = session.signerPackage.takeIf { it.isNotBlank() }
+            ?: return@withLock Nip55SessionStoreResult.Failed("Saved Android signer session is corrupted.")
+        val sessions = loadSessionsUnlocked()
+            .filterNot { it.userPubkey.equals(session.userPubkey, ignoreCase = true) } +
+            session.copy(
+                userPubkey = session.userPubkey.lowercase(),
+                signerPackage = signerPackage,
+            )
+        atomicWrite(file, Nip55SessionCodec.encodeSessions(sessions.sortedBy { it.userPubkey }))
+        Nip55SessionStoreResult.Saved
+    }
+
+    override suspend fun loadSession(userPubkey: String): Nip55SessionStoreResult = lock.withLock {
+        loadSessionsUnlocked().firstOrNull { it.userPubkey.equals(userPubkey, ignoreCase = true) }
+            ?.let { Nip55SessionStoreResult.Loaded(it) }
+            ?: Nip55SessionStoreResult.Failed("Saved Android signer session could not be loaded.")
+    }
+
+    override suspend fun deleteSession(userPubkey: String): Nip55SessionStoreResult = lock.withLock {
+        val remaining = loadSessionsUnlocked().filterNot { it.userPubkey.equals(userPubkey, ignoreCase = true) }
+        atomicWrite(file, Nip55SessionCodec.encodeSessions(remaining))
+        Nip55SessionStoreResult.Deleted
+    }
+
+    private fun loadSessionsUnlocked(): List<SavedNip55Session> =
+        readFile(file)?.let { Nip55SessionCodec.decodeSessionsOrEmpty(it) }.orEmpty()
 }
 
 private fun readFile(file: File): String? =

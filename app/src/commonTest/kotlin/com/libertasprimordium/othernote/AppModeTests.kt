@@ -36,6 +36,13 @@ import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
 import com.libertasprimordium.othernote.security.NostrSignerNip44Operator
 import com.libertasprimordium.othernote.security.NostrSignerPublicKeyRequester
+import com.libertasprimordium.othernote.security.TargetedNostrSignerPublicKeyRequester
+import com.libertasprimordium.othernote.security.TargetedNostrSignerAvailability
+import com.libertasprimordium.othernote.security.InMemoryNip46SessionStore
+import com.libertasprimordium.othernote.security.InMemoryNip55SessionStore
+import com.libertasprimordium.othernote.security.Nip46SessionStoreResult
+import com.libertasprimordium.othernote.security.Nip55SessionStoreResult
+import com.libertasprimordium.othernote.security.SavedNip46Session
 import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SecureSecretStore
 import com.libertasprimordium.othernote.security.SecureSecretStoreResult
@@ -195,6 +202,399 @@ class AppModeTests {
         assertEquals(pubkeyHex, session.publicKeyHex)
         assertEquals(npub, session.npub)
         assertEquals("com.example.signer", session.signerPackage)
+    }
+
+    @Test
+    fun firstTimeNip55SignInPersistsSavedAndroidSignerSession() = runBlocking {
+        val pubkeyHex = "02".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x02 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+        withTimeout(1_500) {
+            while (assertListedNip55Sessions(store).isEmpty()) yield()
+        }
+
+        val saved = assertListedNip55Sessions(store).single()
+        assertEquals(pubkeyHex, saved.userPubkey)
+        assertEquals(npub, saved.userNpub)
+        assertEquals("com.example.signer", saved.signerPackage)
+        assertTrue(saved.active)
+        assertFalse(saved.toString().contains("nsec"))
+        assertFalse(saved.toString().contains("privateKey"))
+    }
+
+    @Test
+    fun appStartupListsPersistedSavedAndroidSignerSession() = runBlocking {
+        val pubkeyHex = "03".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x03 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.example.signer",
+                signerLabel = "Test Signer",
+            ),
+        )
+
+        val restarted = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+        withTimeout(1_500) {
+            while (restarted.savedAndroidSignerState.value.sessions.isEmpty()) yield()
+        }
+
+        val saved = restarted.savedAndroidSignerState.value.sessions.single()
+        assertEquals(pubkeyHex, saved.userPubkey)
+        assertEquals("com.example.signer", saved.signerPackage)
+    }
+
+    @Test
+    fun androidStartupWithActiveSavedNip55SessionRestoresWithoutPublicKeyRequester() = runBlocking {
+        val pubkeyHex = "04".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x04 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.example.signer",
+                active = true,
+            ),
+        )
+        val requester = TestSignerPublicKeyRequester(
+            result = SignerPublicKeyRequestResult.Failed("Generic discovery should not be used"),
+            targetedResult = SignerPublicKeyRequestResult.Failed("Targeted discovery should not be used"),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = requester,
+                nip55SessionStore = store,
+            ),
+        )
+        withTimeout(1_500) {
+            while (state.mode.value != AppMode.Authenticated) yield()
+        }
+
+        assertEquals(0, requester.genericRequestCount)
+        assertTrue(requester.targetedPackages.isEmpty())
+        assertEquals(SessionAuthMethod.ExternalSigner, state.session.value?.authMethod)
+        assertEquals(pubkeyHex, state.session.value?.publicKeyHex)
+        assertEquals("com.example.signer", state.session.value?.signerPackage)
+    }
+
+    @Test
+    fun continueSavedNip55SessionRestoresLocallyWithoutPublicKeyRequester() = runBlocking {
+        val pubkeyHex = "05".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x05 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.example.signer",
+                active = false,
+            ),
+        )
+        val requester = TestSignerPublicKeyRequester(
+            result = SignerPublicKeyRequestResult.Failed("Generic discovery should not be used"),
+            targetedResult = SignerPublicKeyRequestResult.Failed("Targeted discovery should not be used"),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = requester,
+                nip55SessionStore = store,
+            ),
+        )
+
+        assertTrue(state.loginWithSavedAndroidSigner(pubkeyHex))
+
+        assertEquals(0, requester.genericRequestCount)
+        assertTrue(requester.targetedPackages.isEmpty())
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertEquals(SessionAuthMethod.ExternalSigner, state.session.value?.authMethod)
+        assertEquals(pubkeyHex, state.session.value?.publicKeyHex)
+        assertEquals("com.example.signer", state.session.value?.signerPackage)
+        assertTrue(assertListedNip55Sessions(store).single().active)
+    }
+
+    @Test
+    fun restoredNip55SessionKeepsSignerPackageForOperationRouting() = runBlocking {
+        val pubkeyHex = "0e".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x0e }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.example.signer",
+                active = true,
+            ),
+        )
+        val requester = TestSignerPublicKeyRequester(
+            result = SignerPublicKeyRequestResult.Failed("Generic discovery should not be used"),
+            targetedResult = SignerPublicKeyRequestResult.Failed("Targeted discovery should not be used"),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = requester,
+                nip55SessionStore = store,
+            ),
+        )
+        withTimeout(1_500) {
+            while (state.mode.value != AppMode.Authenticated) yield()
+        }
+
+        val restored = state.session.value ?: error("Missing restored signer session")
+        assertEquals(SessionAuthMethod.ExternalSigner, restored.authMethod)
+        assertEquals("com.example.signer", restored.signerPackage)
+        assertEquals(0, requester.genericRequestCount)
+        assertTrue(requester.targetedPackages.isEmpty())
+    }
+
+    @Test
+    fun corruptSavedNip55SessionFailsWithoutAuth() = runBlocking {
+        val savedPubkey = "06".repeat(32)
+        val savedNpub = Nip19.encode("npub", ByteArray(32) { 0x06 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = savedPubkey,
+                userNpub = savedNpub,
+                signerPackage = "",
+                active = true,
+            ),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    result = SignerPublicKeyRequestResult.Failed("Generic discovery should not be used"),
+                    targetedResult = SignerPublicKeyRequestResult.Failed("Targeted discovery should not be used"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+
+        assertFalse(state.loginWithSavedAndroidSigner(savedPubkey))
+
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("corrupted"))
+    }
+
+    @Test
+    fun logoutKeepsSavedNip55SessionButForgetDeletesIt() = runBlocking {
+        val pubkeyHex = "07".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x07 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+
+        state.requestExternalSignerPublicKey()
+        withTimeout(1_500) {
+            while (assertListedNip55Sessions(store).isEmpty()) yield()
+        }
+        state.logout()
+
+        val afterLogout = assertListedNip55Sessions(store).single()
+        assertFalse(afterLogout.active)
+        val restarted = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+        withTimeout(1_500) {
+            while (restarted.savedAndroidSignerState.value.loading) yield()
+        }
+        repeat(5) { yield() }
+        assertEquals(AppMode.SignedOut, restarted.mode.value)
+        assertNull(restarted.session.value)
+        assertTrue(state.forgetSavedAndroidSigner(pubkeyHex))
+        assertEquals(0, assertListedNip55Sessions(store).size)
+    }
+
+    @Test
+    fun savedNip55SessionUnavailableSignerFailsSafelyWithoutAuth() = runBlocking {
+        val pubkeyHex = "08".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x08 }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.example.signer",
+                active = true,
+            ),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = UnavailableExternalSignerProvider("No Android NIP-55 signer found."),
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(pubkeyHex, npub, "com.example.signer"),
+                ),
+                nip55SessionStore = store,
+            ),
+        )
+
+        assertFalse(state.loginWithSavedAndroidSigner(pubkeyHex))
+
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertNull(state.session.value)
+        assertTrue(state.message.value.contains("not installed") || state.message.value.contains("no longer available"))
+        assertEquals(1, assertListedNip55Sessions(store).size)
+    }
+
+    @Test
+    fun savedNip55SessionWithMissingSignerPackageFailsSafelyWithoutAuth() = runBlocking {
+        val pubkeyHex = "0b".repeat(32)
+        val npub = Nip19.encode("npub", ByteArray(32) { 0x0b }) ?: error("npub encode failed")
+        val store = InMemoryNip55SessionStore()
+        store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = pubkeyHex,
+                userNpub = npub,
+                signerPackage = "com.missing.signer",
+                active = true,
+            ),
+        )
+        val requester = TestSignerPublicKeyRequester(
+            result = SignerPublicKeyRequestResult.Failed("Generic discovery should not be used"),
+            targetedResult = SignerPublicKeyRequestResult.Failed("Targeted discovery should not be used"),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = PackageAwareTestSignerProvider(availablePackages = setOf("com.example.signer")),
+                externalSignerPublicKeyRequester = requester,
+                nip55SessionStore = store,
+            ),
+        )
+
+        assertFalse(state.loginWithSavedAndroidSigner(pubkeyHex))
+
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertNull(state.session.value)
+        assertEquals(0, requester.genericRequestCount)
+        assertTrue(requester.targetedPackages.isEmpty())
+        assertTrue(state.message.value.contains("not installed") || state.message.value.contains("no longer available"))
+    }
+
+    @Test
+    fun forgettingNip55SessionDoesNotDeleteSavedNip46Session() = runBlocking {
+        val androidPubkey = "09".repeat(32)
+        val androidNpub = Nip19.encode("npub", ByteArray(32) { 0x09 }) ?: error("npub encode failed")
+        val nip55Store = InMemoryNip55SessionStore()
+        val nip46Store = InMemoryNip46SessionStore()
+        nip55Store.saveSession(
+            com.libertasprimordium.othernote.security.SavedNip55Session(
+                userPubkey = androidPubkey,
+                userNpub = androidNpub,
+                signerPackage = "com.example.signer",
+            ),
+        )
+        nip46Store.saveSession(
+            SavedNip46Session(
+                userPubkey = "0a".repeat(32),
+                userNpub = Nip19.encode("npub", ByteArray(32) { 0x0a }) ?: error("npub encode failed"),
+                clientPrivateKeyHex = "0b".repeat(32),
+                clientPubkey = "0c".repeat(32),
+                remoteSignerPubkey = "0d".repeat(32),
+                relays = listOf("wss://relay.example.com"),
+            ),
+        )
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = NonProductionNostrCrypto(),
+                client = OfflineNostrClient(),
+                externalSignerProvider = AvailableTestSignerProvider,
+                externalSignerPublicKeyRequester = TestSignerPublicKeyRequester(
+                    SignerPublicKeyRequestResult.Success(androidPubkey, androidNpub, "com.example.signer"),
+                ),
+                nip55SessionStore = nip55Store,
+                nip46SessionStore = nip46Store,
+            ),
+        )
+
+        assertTrue(state.forgetSavedAndroidSigner(androidPubkey))
+
+        assertEquals(0, assertListedNip55Sessions(nip55Store).size)
+        val remoteSessions = when (val listed = nip46Store.listSessions()) {
+            is Nip46SessionStoreResult.Listed -> listed.sessions
+            else -> error("Expected listed remote signer sessions, got $listed")
+        }
+        assertEquals(1, remoteSessions.size)
     }
 
     @Test
@@ -1666,11 +2066,28 @@ class AppModeTests {
 
 private class TestSignerPublicKeyRequester(
     private val result: SignerPublicKeyRequestResult,
-) : NostrSignerPublicKeyRequester {
+    private val targetedResult: SignerPublicKeyRequestResult = result,
+) : TargetedNostrSignerPublicKeyRequester {
+    var genericRequestCount: Int = 0
+        private set
+    val targetedPackages = mutableListOf<String>()
+
     override fun requestPublicKey(onResult: (SignerPublicKeyRequestResult) -> Unit) {
+        genericRequestCount++
         onResult(result)
     }
+
+    override fun requestPublicKeyForSigner(signerPackage: String, onResult: (SignerPublicKeyRequestResult) -> Unit) {
+        targetedPackages += signerPackage
+        onResult(targetedResult)
+    }
 }
+
+private suspend fun assertListedNip55Sessions(store: InMemoryNip55SessionStore) =
+    when (val listed = store.listSessions()) {
+        is Nip55SessionStoreResult.Listed -> listed.sessions
+        else -> error("Expected listed sessions, got $listed")
+    }
 
 private class TestSignerEventSigner(
     private val sign: (NostrEvent) -> SignEventRequestResult,
@@ -1704,7 +2121,7 @@ private class TestNip44Operator(
         SignerNip44OperationResult.Decrypted(expectedPlaintext.orEmpty(), signerPackage)
 }
 
-private object AvailableTestSignerProvider : NostrSignerProvider {
+private object AvailableTestSignerProvider : NostrSignerProvider, TargetedNostrSignerAvailability {
     override val mode: SignerMode = SignerMode.ExternalSigner
     override val isAvailable: Boolean = true
     override val unavailableReason: String? = null
@@ -1713,6 +2130,23 @@ private object AvailableTestSignerProvider : NostrSignerProvider {
     override val canSignEvent: Boolean = true
     override val canNip44EncryptDecrypt: Boolean = true
     override val safeDiagnostics: List<String> = listOf("safe test signer available")
+    override fun isSignerPackageAvailable(signerPackage: String): Boolean =
+        signerPackage == "com.example.signer"
+}
+
+private class PackageAwareTestSignerProvider(
+    private val availablePackages: Set<String>,
+) : NostrSignerProvider, TargetedNostrSignerAvailability {
+    override val mode: SignerMode = SignerMode.ExternalSigner
+    override val isAvailable: Boolean = availablePackages.isNotEmpty()
+    override val unavailableReason: String? = if (isAvailable) null else "No Android NIP-55 signer found."
+    override val displayName: String = "Test NIP-55 Signer"
+    override val canGetPublicKey: Boolean = isAvailable
+    override val canSignEvent: Boolean = isAvailable
+    override val canNip44EncryptDecrypt: Boolean = isAvailable
+    override val safeDiagnostics: List<String> = listOf("safe test signer available")
+    override fun isSignerPackageAvailable(signerPackage: String): Boolean =
+        signerPackage in availablePackages
 }
 
 private class GeneratedIdentityTestCrypto : NostrCrypto {

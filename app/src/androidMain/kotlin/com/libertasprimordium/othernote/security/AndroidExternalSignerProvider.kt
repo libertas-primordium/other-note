@@ -6,9 +6,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 
-class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
+class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider, TargetedNostrSignerAvailability {
     override val mode: SignerMode = SignerMode.ExternalSigner
-    private val discovery = discoverSigner(context.applicationContext.packageManager)
+    private val packageManager = context.applicationContext.packageManager
+    private val discovery = discoverSigner(packageManager)
+    val signerPackage: String? = discovery?.packageName
 
     override val isAvailable: Boolean = discovery != null
     override val unavailableReason: String? = if (discovery == null) "No Android NIP-55 signer found." else null
@@ -25,10 +27,14 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
         "External signer note sync is not implemented yet",
     )
 
+    override fun isSignerPackageAvailable(signerPackage: String): Boolean =
+        signerPackage.isNotBlank() && discoverSigner(packageManager, signerPackage) != null
+
     companion object {
-        fun discoverSigner(packageManager: PackageManager): AndroidSignerDiscovery? {
+        fun discoverSigner(packageManager: PackageManager, signerPackage: String? = null): AndroidSignerDiscovery? {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
                 addCategory(Intent.CATEGORY_BROWSABLE)
+                signerPackage?.takeIf { it.isNotBlank() }?.let { setPackage(it) }
             }
             val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 packageManager.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0))
@@ -42,9 +48,9 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
                     val label = resolveInfo.loadLabel(packageManager).toString()
                     val displayName = label.takeIf { it.isNotBlank() }
                         ?: activityInfo.packageName
-                    AndroidSignerDiscovery(displayName = displayName)
+                    AndroidSignerDiscovery(displayName = displayName, packageName = activityInfo.packageName)
                 }
-                .distinctBy { it.displayName }
+                .distinctBy { it.packageName }
                 .sortedBy { it.displayName.lowercase() }
                 .firstOrNull()
         }
@@ -53,4 +59,5 @@ class AndroidExternalSignerProvider(context: Context) : NostrSignerProvider {
 
 data class AndroidSignerDiscovery(
     val displayName: String,
+    val packageName: String,
 )

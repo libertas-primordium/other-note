@@ -72,6 +72,41 @@ fun userFacingErrorFor(raw: String): UserFacingError {
                 technicalDetails = source.safeTechnicalDetails(),
             )
 
+        lower.contains("saved android signer session is corrupted") ->
+            UserFacingError(
+                title = "Saved Android signer is invalid",
+                message = "This saved Android signer session is invalid. Forget it and choose the signer again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved android signer session could not be loaded") ->
+            UserFacingError(
+                title = "Could not load saved Android signer",
+                message = "Other Note could not load the saved Android signer. You can retry, forget it, or choose a signer again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved android signer session could not be forgotten") ->
+            UserFacingError(
+                title = "Could not forget Android signer",
+                message = "Other Note could not remove this saved Android signer session.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved android signer") && lower.contains("different public key") ->
+            UserFacingError(
+                title = "Saved Android signer does not match",
+                message = "The saved Android signer returned a different account public key. Forget it and choose the signer again.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("saved android signer") && (lower.contains("not installed") || lower.contains("no longer available")) ->
+            UserFacingError(
+                title = "Saved Android signer is unavailable",
+                message = "The saved Android signer is not installed or is no longer available. Forget it or choose another signer.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
         lower.contains("already") && (lower.contains("bunker") || lower.contains("paired") || lower.contains("connect")) ->
             UserFacingError(
                 title = "Bunker link already used",

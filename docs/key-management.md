@@ -40,8 +40,10 @@ Current Android NIP-55 status is discovery, explicit public-key request, interna
 
 - Other Note uses generic NIP-55 `nostrsigner:` intent discovery to determine whether a signer app is installed.
 - Amber is the primary planned/tested target, but the architecture does not hard-require Amber.
-- The login UI can show signer availability and a "Use Android signer" action.
-- The action launches a user-triggered NIP-55 `get_public_key` intent and stores only public identity metadata in memory for the active app session: public key hex, `npub`, and signer package when returned.
+- The login UI can show signer availability, saved Android signer sessions, a "Continue with Android signer" action when remembered metadata exists, and a "Use Android signer" action for fresh selection.
+- First-time NIP-55 login launches a user-triggered `get_public_key` intent and stores only safe identity/routing metadata: public key hex, `npub`, signer package, signer label, local active-session state, and timestamps. While active, Android startup may restore the authenticated app shell from this local metadata without launching a fresh signer approval request.
+- Saved NIP-55 metadata is Android app-local signer-session metadata, not saved key storage. It must not contain `nsec`, user private keys, decrypted notes, decrypted payload JSON, raw signer responses, NIP-46 session material, or desktop keyring secrets. Log out must disable automatic Android signer session restoration, and "Forget Android signer" must delete only this saved NIP-55 metadata.
+- Later signer-controlled operations may still prompt in the signer app depending on signer policy; those prompts are operation approval, not login restoration.
 - Internal tests and helper code cover NIP-55 `SIGN_EVENT`, NIP-44 encrypt/decrypt, and signer-backed note-event construction. These development test actions are no longer exposed in the normal app UI.
 - Normal editor save/edit in an Android signer session can build a signed encrypted kind `30078` event through the same signer pipeline, publish it to configured relays, and display it after at least one relay accepts the write. Delete creates a signer-backed tombstone event with the same d tag, publishes it, and hides the note after at least one relay accepts.
 - Android signer login can fetch kind `30078` Other Note events for the signer pubkey from relays, validate id/signature before decryption, decrypt through signer NIP-44, decode `NotePayload`, reduce replacements/tombstones, and update visible notes incrementally.
