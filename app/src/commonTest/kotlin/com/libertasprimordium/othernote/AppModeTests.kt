@@ -27,6 +27,7 @@ import com.libertasprimordium.othernote.nostr.RelayTestResult
 import com.libertasprimordium.othernote.nostr.UnsignedNostrEvent
 import com.libertasprimordium.othernote.domain.DefaultRelays
 import com.libertasprimordium.othernote.domain.NoteKind
+import com.libertasprimordium.othernote.domain.RelayConfig
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.security.NostrSignerProvider
 import com.libertasprimordium.othernote.security.NostrSignerEventSigner
@@ -500,11 +501,132 @@ class AppModeTests {
             ),
         )
 
-        assertTrue(state.saveRelays(listOf("wss://relay.one.example", " WSS://Relay.Two.Example/ ")))
         assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        assertTrue(state.saveRelays(listOf("wss://relay.one.example", " WSS://Relay.Two.Example/ ")))
         assertTrue(state.save(existing = null, markdown = "relay settings publish note"))
 
         assertEquals(listOf(listOf("wss://relay.one.example", "wss://relay.two.example")), client.publishedRelayBatches)
+    }
+
+    @Test
+    fun relayMigrationRepublishesLatestCachedEncryptedEventsToAddedRelays() = runBlocking {
+        val client = MigrationRelayClient()
+        val cache = InMemoryLocalEventCache()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                localEventCache = cache,
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://old.example"))),
+            ),
+        )
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        assertTrue(state.save(existing = null, markdown = "relay migration note"))
+        val savedEvent = cache.loadEvents(state.session.value?.publicKeyHex.orEmpty()).single()
+
+        assertTrue(state.saveRelays(listOf("wss://old.example", "wss://new.example")))
+
+        assertEquals(listOf("wss://old.example", "wss://new.example"), state.relaySettings.normalizedUrls())
+        assertEquals(listOf("wss://old.example"), client.publishedRelayBatches.first())
+        assertEquals(listOf("wss://new.example"), client.publishedRelayBatches.last())
+        assertEquals(savedEvent.id, client.published.last().id)
+        assertFalse(client.published.last().content.contains("relay migration note"))
+        assertTrue(state.relayMigrationState.value.warning == null)
+    }
+
+    @Test
+    fun relayMigrationFetchesRemovedRelaysBeforePersistingRequestedSettings() = runBlocking {
+        val client = MigrationRelayClient()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://old.example"), RelayConfig("wss://stay.example"))),
+            ),
+        )
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+
+        assertTrue(state.saveRelays(listOf("wss://stay.example")))
+
+        assertEquals(listOf("wss://old.example", "wss://stay.example"), client.fetchRelayBatches.single())
+        assertEquals(listOf("wss://stay.example"), state.relaySettings.normalizedUrls())
+    }
+
+    @Test
+    fun relayMigrationWarningCanCancelWithoutChangingSettings() = runBlocking {
+        val client = MigrationRelayClient(unreadableRelays = setOf("wss://old.example"))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://old.example"))),
+            ),
+        )
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+
+        assertFalse(state.saveRelays(listOf("wss://new.example")))
+
+        assertNotNull(state.relayMigrationState.value.warning)
+        assertEquals(listOf("wss://old.example"), state.relaySettings.normalizedUrls())
+        state.cancelRelayMigrationWarning()
+        assertEquals(listOf("wss://old.example"), state.relaySettings.normalizedUrls())
+        assertNull(state.relayMigrationState.value.warning)
+    }
+
+    @Test
+    fun relayMigrationContinuePersistsSettingsAndQueuesFailedEncryptedRepublish() = runBlocking {
+        val pending = InMemoryPendingWriteStore()
+        val cache = InMemoryLocalEventCache()
+        val client = MigrationRelayClient(rejectedRelays = setOf("wss://new.example"))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = client,
+                localEventCache = cache,
+                pendingWriteStore = pending,
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://old.example"))),
+            ),
+        )
+        assertTrue(state.login("nsec-test-${"1".padStart(64, '0')}"))
+        val session = state.session.value ?: error("missing session")
+        assertTrue(state.save(existing = null, markdown = "pending migration note"))
+        pending.loadPendingWrites(session.publicKeyHex).forEach { pending.removeCompletedWrite(it.event.id) }
+
+        assertFalse(state.saveRelays(listOf("wss://old.example", "wss://new.example")))
+        assertEquals(listOf("wss://old.example"), state.relaySettings.normalizedUrls())
+        assertNotNull(state.relayMigrationState.value.warning)
+
+        assertTrue(state.continueRelayMigration())
+
+        assertEquals(listOf("wss://old.example", "wss://new.example"), state.relaySettings.normalizedUrls())
+        val queued = pending.loadPendingWrites(session.publicKeyHex)
+        assertEquals(1, queued.size)
+        assertEquals(listOf("wss://new.example"), queued.single().targetRelays)
+        assertFalse(queued.single().event.content.contains("pending migration note"))
+        assertFalse(queued.single().event.content.contains("body_markdown"))
+    }
+
+    @Test
+    fun relayMigrationWithoutSignedInSessionRequiresExplicitContinue() = runBlocking {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.DesktopDevRelay,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = MigrationRelayClient(),
+                relaySettings = RelaySettingsStore(initialRelays = listOf(RelayConfig("wss://old.example"))),
+            ),
+        )
+
+        assertFalse(state.saveRelays(listOf("wss://new.example")))
+        assertEquals(listOf("wss://old.example"), state.relaySettings.normalizedUrls())
+        assertNotNull(state.relayMigrationState.value.warning)
+
+        assertTrue(state.continueRelayMigration())
+        assertEquals(listOf("wss://new.example"), state.relaySettings.normalizedUrls())
     }
 
     @Test
@@ -771,6 +893,46 @@ private class AcceptingGeneratedIdentityClient : NostrClient {
     override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
         publishedRelayBatches += relays
         return RelayPublishResult(relays.map { RelayStatus(it, writable = true, message = "accepted") })
+    }
+
+    override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
+}
+
+private class MigrationRelayClient(
+    private val rejectedRelays: Set<String> = emptySet(),
+    private val unreadableRelays: Set<String> = emptySet(),
+    private val fetchedEvents: List<NostrEvent> = emptyList(),
+) : NostrClient {
+    val publishedRelayBatches = mutableListOf<List<String>>()
+    val published = mutableListOf<NostrEvent>()
+    val fetchRelayBatches = mutableListOf<List<String>>()
+
+    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult {
+        fetchRelayBatches += relays
+        return RelayFetchResult(
+            events = fetchedEvents.filter { it.pubkey == authorPubkey },
+            statuses = relays.map { relay ->
+                RelayStatus(
+                    url = relay,
+                    readable = relay !in unreadableRelays,
+                    message = if (relay in unreadableRelays) "stage=fetch outcome=timeout" else "stage=fetch outcome=complete",
+                )
+            },
+        )
+    }
+
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult {
+        publishedRelayBatches += relays
+        published += event
+        return RelayPublishResult(
+            relays.map { relay ->
+                RelayStatus(
+                    url = relay,
+                    writable = relay !in rejectedRelays,
+                    message = if (relay in rejectedRelays) "stage=publish outcome=rejected" else "stage=publish outcome=accepted",
+                )
+            },
+        )
     }
 
     override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null

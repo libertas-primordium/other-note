@@ -4,6 +4,7 @@ import com.libertasprimordium.othernote.domain.Note
 import com.libertasprimordium.othernote.domain.NoteKind
 import com.libertasprimordium.othernote.domain.OtherNoteTag
 import com.libertasprimordium.othernote.domain.DefaultRelays
+import com.libertasprimordium.othernote.domain.RelayConfig
 import com.libertasprimordium.othernote.domain.RelayStatus
 import com.libertasprimordium.othernote.domain.SessionAuthMethod
 import com.libertasprimordium.othernote.domain.SyncState
@@ -33,10 +34,13 @@ import com.libertasprimordium.othernote.security.SignerSignEventRequestBuilder
 import com.libertasprimordium.othernote.security.SignerTestEventFactory
 import com.libertasprimordium.othernote.sync.DeleteNoteUseCase
 import com.libertasprimordium.othernote.sync.MigrateRelaysUseCase
+import com.libertasprimordium.othernote.sync.RelayMigrationExecutionResult
+import com.libertasprimordium.othernote.sync.RelayMigrationUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
 import com.libertasprimordium.othernote.sync.mergeReducedNotesWithCurrent
+import com.libertasprimordium.othernote.sync.queueRelayMigrationPendingWrites
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
 import kotlinx.coroutines.CoroutineScope
@@ -101,6 +105,24 @@ data class RelayAddWarning(
     val safeReason: String,
 )
 
+data class RelayMigrationUiState(
+    val inProgress: Boolean = false,
+    val warning: RelayMigrationWarning? = null,
+)
+
+data class RelayMigrationWarning(
+    val summary: String,
+    val details: String,
+)
+
+private data class PendingRelayMigrationDecision(
+    val requestedConfigs: List<RelayConfig>,
+    val result: RelayMigrationExecutionResult?,
+    val sessionPubkey: String?,
+    val summary: String,
+    val details: String,
+)
+
 sealed interface RelayAddResult {
     data class Added(val relayUrl: String) : RelayAddResult
     data class ValidationFailed(val message: String) : RelayAddResult
@@ -145,6 +167,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         appScope,
     )
     private val migrateRelays = MigrateRelaysUseCase()
+    private val relayMigration = RelayMigrationUseCase(nostr, crypto, services.localEventCache)
     private val signerNoteEventBuilder = SignerNoteEventBuilder(
         nip44 = services.externalSignerNip44Operator,
         eventSigner = services.externalSignerEventSigner,
@@ -197,6 +220,10 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     private val _relayAddTestState = MutableStateFlow(RelayAddTestState())
     val relayAddTestState: StateFlow<RelayAddTestState> = _relayAddTestState
+
+    private val _relayMigrationState = MutableStateFlow(RelayMigrationUiState())
+    val relayMigrationState: StateFlow<RelayMigrationUiState> = _relayMigrationState
+    private var pendingRelayMigrationDecision: PendingRelayMigrationDecision? = null
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
@@ -1124,19 +1151,52 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = newConfig.exceptionOrNull()?.message ?: "Invalid relay settings"
             return false
         }
+        pendingRelayMigrationDecision = null
+        _relayMigrationState.value = RelayMigrationUiState()
         val old = relaySettings.normalizedUrls()
         val plan = migrateRelays.migrate(old, configs.map { it.url })
-        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
-        if (persisted.isFailure) {
-            _message.value = "Relay settings could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+        if (!plan.migrationRequired) {
+            return persistRelaySettings(configs, "Relay settings saved.")
+        }
+
+        val session = _session.value
+        if (session == null) {
+            val summary = "Relay migration requires sign-in"
+            val details = "Relay settings can be saved, but Other Note cannot fetch removed relays or republish encrypted note events without an active account pubkey."
+            pendingRelayMigrationDecision = PendingRelayMigrationDecision(
+                requestedConfigs = configs,
+                result = null,
+                sessionPubkey = null,
+                summary = summary,
+                details = details,
+            )
+            _relayMigrationState.value = RelayMigrationUiState(warning = RelayMigrationWarning(summary, details))
+            _message.value = summary
             return false
         }
-        _message.value = buildString {
-            append("Relay settings saved.")
-            if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
-            if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
+
+        _relayMigrationState.value = RelayMigrationUiState(inProgress = true)
+        _message.value = "Migrating encrypted relay state..."
+        val result = withContext(Dispatchers.IO) {
+            relayMigration.execute(session, plan)
         }
-        return true
+        _relayMigrationState.value = RelayMigrationUiState()
+        _diagnosticMessage.value = result.safeDetails()
+        if (result.fullSuccess) {
+            return persistRelaySettings(configs, result.safeSummary())
+        }
+        pendingRelayMigrationDecision = PendingRelayMigrationDecision(
+            requestedConfigs = configs,
+            result = result,
+            sessionPubkey = session.publicKeyHex,
+            summary = result.safeSummary(),
+            details = result.safeDetails(),
+        )
+        _relayMigrationState.value = RelayMigrationUiState(
+            warning = RelayMigrationWarning(result.safeSummary(), result.safeDetails()),
+        )
+        _message.value = result.safeSummary()
+        return false
     }
 
     suspend fun testRelayBeforeAdd(rawRelay: String, existingRelays: List<String>): RelayAddResult {
@@ -1181,18 +1241,47 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun restoreDefaultRelays(): Boolean {
-        val old = relaySettings.normalizedUrls()
-        val plan = migrateRelays.migrate(old, defaultRelayUrls)
-        val persisted = runCatching { relaySettings.restoreDefaultsAndPersist() }
-        if (persisted.isFailure) {
-            _message.value = "Default relay settings could not be restored. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+        return saveRelays(defaultRelayUrls)
+    }
+
+    fun cancelRelayMigrationWarning() {
+        pendingRelayMigrationDecision = null
+        _relayMigrationState.value = RelayMigrationUiState()
+        _message.value = "Relay settings were not changed."
+    }
+
+    suspend fun continueRelayMigration(): Boolean {
+        val pending = pendingRelayMigrationDecision ?: return false
+        val result = pending.result
+        val sessionPubkey = pending.sessionPubkey
+        val queuedPendingWrites = if (result != null && sessionPubkey != null && result.failedAddedRelays.isNotEmpty()) {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    queueRelayMigrationPendingWrites(sessionPubkey, result, services.pendingWriteStore)
+                }
+            }
+        } else {
+            Result.success(Unit)
+        }
+        if (queuedPendingWrites.isFailure) {
+            _message.value = "Relay migration pending writes could not be saved. ${queuedPendingWrites.exceptionOrNull()?.safePersistenceMessage()}"
             return false
         }
-        _message.value = buildString {
-            append("Default app relays restored.")
-            if (plan.addedRelays.isNotEmpty()) append(" Added: ${plan.addedRelays.joinToString()}.")
-            if (plan.removedRelays.isNotEmpty()) append(" Removed after migration planning: ${plan.removedRelays.joinToString()}.")
+        val persisted = persistRelaySettings(pending.requestedConfigs, "Relay settings saved after migration warning.")
+        if (persisted) {
+            pendingRelayMigrationDecision = null
+            _relayMigrationState.value = RelayMigrationUiState()
         }
+        return persisted
+    }
+
+    private suspend fun persistRelaySettings(configs: List<RelayConfig>, successMessage: String): Boolean {
+        val persisted = runCatching { relaySettings.commitAndPersist(configs) }
+        if (persisted.isFailure) {
+            _message.value = "Relay settings could not be saved. ${persisted.exceptionOrNull()?.safePersistenceMessage()}"
+            return false
+        }
+        _message.value = successMessage
         return true
     }
 

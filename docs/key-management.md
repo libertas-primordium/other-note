@@ -67,6 +67,10 @@ Relay URL validation should accept production `wss://` relay URLs and naked rela
 
 Relay testing applies only to local app/note relays. A direct/session-only key session may publish and fetch a harmless non-note test event to verify write and read capability. Signer-backed or local-only contexts should use a bounded read/connect test unless a safe signer-mediated write test is explicitly implemented. Relay test diagnostics may include relay URL, status class, latency, event counts, and safe truncated relay errors only. Failed tests may be overridden by explicit user confirmation.
 
+When the local app relay list changes, Other Note should execute a migration before finalizing the new settings. Migration identifies added and removed relays, fetches signed encrypted kind `30078` note events from the current relays before removal, merges fetched ciphertext events into the durable encrypted event cache, selects the latest signed encrypted event for each account/kind/d-tag address, and republishes those existing signed encrypted events to newly added relays. Delete/tombstone state is preserved because the latest signed encrypted event for the note address is republished even when it represents a tombstone. Migration must not decrypt and re-encrypt notes as its primary path, must never emit plaintext fallback data, and must not touch NIP-46 signer-transport relays.
+
+If removed relays cannot be fetched or added relays reject republished encrypted events, the UI should keep the previous relay settings until the user explicitly continues. Continuing may queue pending writes containing only the signed encrypted events and safe failed-relay metadata. Cancelling must preserve the previous relay settings. If no account pubkey is available, relay settings may still be saved only after the user acknowledges that note migration requires sign-in.
+
 Published relay-list discovery or publishing, including NIP-65 kind `10002`, is future work and must be implemented in a dedicated pass. Local settings should remain local until that feature is designed and tested.
 
 ## NIP-46 Remote Signer Plan
