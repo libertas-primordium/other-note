@@ -10,6 +10,7 @@ import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
 import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
+import com.libertasprimordium.othernote.data.NoteListPreferenceStore
 import com.libertasprimordium.othernote.data.ThemePreferenceStore
 import com.libertasprimordium.othernote.data.toDurableRecord
 import com.libertasprimordium.othernote.nostr.NostrEvent
@@ -206,6 +207,18 @@ class AndroidThemePreferenceStore(
 
     override suspend fun saveThemeId(themeId: String) {
         atomicWrite(file, themeId.trim())
+    }
+}
+
+class AndroidNoteListPreferenceStore(
+    context: Context,
+    private val file: File = File(context.applicationContext.noBackupFilesDir, "note-list-sort.txt"),
+) : NoteListPreferenceStore {
+    override suspend fun loadSortId(): String? =
+        readFile(file)?.trim()?.takeIf { it.isNotBlank() }
+
+    override suspend fun saveSortId(sortId: String) {
+        atomicWrite(file, sortId.trim())
     }
 }
 

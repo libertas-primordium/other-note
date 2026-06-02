@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
             pendingWriteStore = AndroidPendingWriteStore(this),
             relaySettings = RelaySettingsStore(persistence = AndroidRelaySettingsPersistence(this)),
             themePreferenceStore = AndroidThemePreferenceStore(this),
+            noteListPreferenceStore = AndroidNoteListPreferenceStore(this),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
             startupWarnings = if (crypto.productionReady) {

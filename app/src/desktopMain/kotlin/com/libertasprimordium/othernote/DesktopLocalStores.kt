@@ -7,6 +7,7 @@ import com.libertasprimordium.othernote.data.LocalEventCache
 import com.libertasprimordium.othernote.data.PendingRelayWrite
 import com.libertasprimordium.othernote.data.PendingWriteStatus
 import com.libertasprimordium.othernote.data.PendingWriteStore
+import com.libertasprimordium.othernote.data.NoteListPreferenceStore
 import com.libertasprimordium.othernote.data.RelaySettingsCodec
 import com.libertasprimordium.othernote.data.RelaySettingsPersistence
 import com.libertasprimordium.othernote.data.ThemePreferenceStore
@@ -210,6 +211,20 @@ class DesktopThemePreferenceStore(
 
     override suspend fun saveThemeId(themeId: String) {
         atomicWrite(file, themeId.trim())
+    }
+
+    private fun readFile(file: Path): String? =
+        runCatching { if (file.exists()) file.readText() else null }.getOrNull()
+}
+
+class DesktopNoteListPreferenceStore(
+    private val file: Path = DesktopLocalStorePaths.dataDir().resolve("note-list-sort.txt"),
+) : NoteListPreferenceStore {
+    override suspend fun loadSortId(): String? =
+        readFile(file)?.trim()?.takeIf { it.isNotBlank() }
+
+    override suspend fun saveSortId(sortId: String) {
+        atomicWrite(file, sortId.trim())
     }
 
     private fun readFile(file: Path): String? =

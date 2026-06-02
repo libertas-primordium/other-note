@@ -27,6 +27,7 @@ object DesktopAppServicesFactory {
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
                 themePreferenceStore = DesktopThemePreferenceStore(),
+                noteListPreferenceStore = DesktopNoteListPreferenceStore(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),
@@ -48,6 +49,7 @@ object DesktopAppServicesFactory {
                 localEventCache = DesktopLocalEventCache(),
                 pendingWriteStore = DesktopPendingWriteStore(),
                 themePreferenceStore = DesktopThemePreferenceStore(),
+                noteListPreferenceStore = DesktopNoteListPreferenceStore(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),

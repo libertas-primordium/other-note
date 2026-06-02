@@ -59,6 +59,10 @@ import com.libertasprimordium.othernote.sync.planManualRelaySync
 import com.libertasprimordium.othernote.sync.queueRelayMigrationPendingWrites
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
+import com.libertasprimordium.othernote.util.BuiltInNoteSortOptions
+import com.libertasprimordium.othernote.util.DefaultNoteSortOption
+import com.libertasprimordium.othernote.util.NoteSortOption
+import com.libertasprimordium.othernote.util.noteSortOptionForId
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -373,6 +377,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val availableThemes: List<OtherNoteThemeDefinition> = BuiltInOtherNoteThemes
     private var themeSelectionChangedInSession = false
 
+    private val _selectedNoteSortId = MutableStateFlow(DefaultNoteSortOption.id)
+    val selectedNoteSortId: StateFlow<String> = _selectedNoteSortId
+    val availableNoteSortOptions: List<NoteSortOption> = BuiltInNoteSortOptions
+    private var noteSortChangedInSession = false
+
     private val _keyringSaveConfirmationState = MutableStateFlow(KeyringSaveConfirmationState())
     val keyringSaveConfirmationState: StateFlow<KeyringSaveConfirmationState> = _keyringSaveConfirmationState
 
@@ -423,6 +432,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             loadThemePreference()
         }
         appScope.launch {
+            loadNoteListPreference()
+        }
+        appScope.launch {
             runCatching { relaySettings.loadPersisted() }
                 .onFailure { _message.value = "Relay settings could not be loaded. ${it.safePersistenceMessage()}" }
         }
@@ -454,6 +466,26 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         appScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching { services.themePreferenceStore.saveThemeId(selected.id) }
+            }
+        }
+    }
+
+    private suspend fun loadNoteListPreference() {
+        val stored = withContext(Dispatchers.IO) {
+            runCatching { services.noteListPreferenceStore.loadSortId() }.getOrNull()
+        }
+        if (!noteSortChangedInSession) {
+            _selectedNoteSortId.value = noteSortOptionForId(stored).id
+        }
+    }
+
+    fun selectNoteSort(sortId: String) {
+        val selected = noteSortOptionForId(sortId)
+        noteSortChangedInSession = true
+        _selectedNoteSortId.value = selected.id
+        appScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { services.noteListPreferenceStore.saveSortId(selected.id) }
             }
         }
     }
