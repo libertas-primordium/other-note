@@ -376,8 +376,8 @@ Platform code:
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Implement Android encrypted key storage and broaden desktop keyring support beyond Linux Secret Service where needed.
-- Fetch and cache kind 0 profile metadata once networking exists.
-- Replace minimal markdown rendering with a compatible renderer if one fits licensing and KMP constraints.
+- Keep remote profile image loading disabled until privacy controls and size/time limits are designed.
+- Keep the practical Markdown renderer focused on the tested subset; consider a fuller compatible renderer later if licensing and KMP constraints fit.
 - Add inline image/video loading with size limits and timeouts.
 
 ## License
