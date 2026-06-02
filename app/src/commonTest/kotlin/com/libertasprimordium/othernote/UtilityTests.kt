@@ -34,7 +34,11 @@ import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.ui.userFacingErrorFor
 import com.libertasprimordium.othernote.util.JsonNotePayloadCodec
 import com.libertasprimordium.othernote.util.MediaType
+import com.libertasprimordium.othernote.util.MarkdownBlock
+import com.libertasprimordium.othernote.util.MarkdownSpan
 import com.libertasprimordium.othernote.util.detectUrls
+import com.libertasprimordium.othernote.util.markdownBlocks
+import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.runBlocking
@@ -487,9 +491,82 @@ class UtilityTests {
 
     @Test
     fun markdownTruncationStripsCommonMarkup() {
-        val truncated = truncateMarkdown("# Heading\n\n**bold** text", maxChars = 20)
+        val truncated = truncateMarkdown("# Heading\n\n**bold** ~text~", maxChars = 20)
         assertFalse(truncated.contains("#"))
+        assertFalse(truncated.contains("~"))
         assertTrue(truncated.startsWith("Heading"))
+    }
+
+    @Test
+    fun markdownBlocksPreserveHeadingsAndFencedCodeBlocks() {
+        val blocks = markdownBlocks("# Header\n\n```kotlin\n**literal**\n`code`\n```\n\nPlain")
+
+        assertEquals(
+            listOf(
+                MarkdownBlock.Heading(1, "Header"),
+                MarkdownBlock.CodeBlock("**literal**\n`code`"),
+                MarkdownBlock.Paragraph("Plain"),
+            ),
+            blocks,
+        )
+    }
+
+    @Test
+    fun markdownBlocksParseBlockquoteWithoutLiteralMarker() {
+        val blocks = markdownBlocks("> quoted line\n> second line\n\nnormal")
+
+        assertEquals(
+            listOf(
+                MarkdownBlock.BlockQuote("quoted line\nsecond line"),
+                MarkdownBlock.Paragraph("normal"),
+            ),
+            blocks,
+        )
+    }
+
+    @Test
+    fun markdownSpansParseCommonInlineStyles() {
+        val spans = markdownSpans("this is **bold** and *italic* and ~strike~ and ~~gone~~ and `code`")
+
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("this is "),
+                MarkdownSpan.Bold("bold"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.Italic("italic"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.Strike("strike"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.Strike("gone"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.Code("code"),
+            ),
+            spans,
+        )
+    }
+
+    @Test
+    fun markdownInlineCodeDoesNotParseNestedMarkers() {
+        assertEquals(
+            listOf(MarkdownSpan.Code("**bold** *italic* ~strike~")),
+            markdownSpans("`**bold** *italic* ~strike~`"),
+        )
+    }
+
+    @Test
+    fun malformedMarkdownMarkersStayReadable() {
+        val spans = markdownSpans("plain **unclosed and *also unclosed")
+
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("plain "),
+                MarkdownSpan.Text("**"),
+                MarkdownSpan.Text("unclosed and "),
+                MarkdownSpan.Text("*"),
+                MarkdownSpan.Text("also unclosed"),
+            ),
+            spans,
+        )
     }
 
     @Test

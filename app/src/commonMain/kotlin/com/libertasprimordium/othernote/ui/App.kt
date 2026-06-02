@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -53,9 +54,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,9 +72,11 @@ import com.libertasprimordium.othernote.security.SavedNsecIdentity
 import com.libertasprimordium.othernote.security.SavedNip46SessionMetadata
 import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
+import com.libertasprimordium.othernote.util.MarkdownSpan
 import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
 import com.libertasprimordium.othernote.util.markdownBlocks
+import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.launch
 
@@ -1069,9 +1076,66 @@ private fun NoteDeleteConfirmationDialog(
 fun RenderMarkdown(markdown: String) {
     markdownBlocks(markdown).forEach { block ->
         when (block) {
-            is MarkdownBlock.Heading -> Text(block.text, color = OtherNoteText, fontSize = (28 - block.level * 2).sp, fontWeight = FontWeight.Bold)
-            is MarkdownBlock.Paragraph -> Text(block.text, color = OtherNoteText, modifier = Modifier.padding(bottom = 10.dp))
-            is MarkdownBlock.CodeBlock -> Text(block.code, color = Color(0xFFE8D7FF), fontFamily = FontFamily.Monospace, modifier = Modifier.background(Color(0xFF191020)).padding(10.dp))
+            is MarkdownBlock.Heading -> Text(
+                renderInlineMarkdown(block.text),
+                color = OtherNoteText,
+                fontSize = (28 - block.level * 2).sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            is MarkdownBlock.Paragraph -> Text(
+                renderInlineMarkdown(block.text),
+                color = OtherNoteText,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+            is MarkdownBlock.BlockQuote -> Row(
+                Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Box(Modifier.width(3.dp).height(28.dp).background(OtherNotePurple))
+                Text(renderInlineMarkdown(block.text), color = OtherNoteMuted, modifier = Modifier.weight(1f))
+            }
+            is MarkdownBlock.CodeBlock -> Text(
+                block.code,
+                color = Color(0xFFE8D7FF),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.fillMaxWidth().background(Color(0xFF191020)).padding(10.dp),
+            )
+        }
+    }
+}
+
+private fun renderInlineMarkdown(markdown: String) = buildAnnotatedString {
+    markdownSpans(markdown).forEach { span ->
+        when (span) {
+            is MarkdownSpan.Text -> append(span.text)
+            is MarkdownSpan.Bold -> {
+                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                append(span.text)
+                pop()
+            }
+            is MarkdownSpan.Italic -> {
+                pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+                append(span.text)
+                pop()
+            }
+            is MarkdownSpan.Strike -> {
+                pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+                append(span.text)
+                pop()
+            }
+            is MarkdownSpan.Code -> {
+                pushStyle(
+                    SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        color = Color(0xFFE8D7FF),
+                        background = Color(0xFF191020),
+                    ),
+                )
+                append(span.text)
+                pop()
+            }
         }
     }
 }
@@ -1113,7 +1177,7 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
         },
         containerColor = OtherNoteBlack,
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).imePadding().padding(12.dp)) {
             when {
                 saveState.error != null -> {
                     Text(saveState.error.orEmpty(), color = OtherNotePurple, modifier = Modifier.padding(bottom = 8.dp))
@@ -1130,7 +1194,7 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
                         appState.clearEditorSaveState()
                     }
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 label = { Text("Markdown") },
                 enabled = !saveState.inProgress,
             )
