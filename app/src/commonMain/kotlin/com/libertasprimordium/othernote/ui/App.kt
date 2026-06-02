@@ -78,6 +78,7 @@ import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.MarkdownSpan
 import com.libertasprimordium.othernote.util.detectUrls
+import com.libertasprimordium.othernote.util.filterVisibleNotesBySearchQuery
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
@@ -736,6 +737,11 @@ fun NotesListScreen(
     val scope = rememberCoroutineScope()
     var notePendingDelete by remember { mutableStateOf<Note?>(null) }
     var showAbout by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val searchedNotes = remember(notes, searchQuery) {
+        filterVisibleNotesBySearchQuery(notes, searchQuery)
+    }
+    val searchActive = searchQuery.trim().isNotEmpty()
     Scaffold(
         topBar = {
             TopAppBar(
@@ -764,10 +770,28 @@ fun NotesListScreen(
             }
             Spacer(Modifier.height(12.dp))
             Button(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Search notes") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { searchQuery = "" },
+                            modifier = Modifier.semantics { contentDescription = "Clear note search" },
+                        ) {
+                            Text("X")
+                        }
+                    }
+                },
+            )
             Spacer(Modifier.height(12.dp))
-            if (notes.isEmpty()) {
+            if (searchedNotes.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
-                    Text("No notes yet", color = OtherNoteMuted)
+                    Text(if (searchActive) "No matching notes" else "No notes yet", color = OtherNoteMuted)
                 }
             } else {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -778,7 +802,7 @@ fun NotesListScreen(
                         verticalItemSpacing = 8.dp,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(notes, key = { it.id }) { note ->
+                        items(searchedNotes, key = { it.id }) { note ->
                             NoteCard(
                                 note = note,
                                 platform = appState.platform,
