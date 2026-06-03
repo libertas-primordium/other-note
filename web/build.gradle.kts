@@ -106,6 +106,32 @@ val webSecuritySourceCheck by tasks.registering {
         check(directNsecRequest.indexOf("clearDirectNsecDraft()") in 0 until directNsecRequest.indexOf("createWebDirectKeySession")) {
             "Direct nsec submit must clear the draft before creating or reporting the session."
         }
+        val generatedIdentityPanel = Regex(
+            """private fun generatedIdentityPanel\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun requestNip07PublicKey""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define generatedIdentityPanel for session-only generated identities.")
+        check(generatedIdentityPanel.contains("Create new identity") && generatedIdentityPanel.contains("GeneratedIdentitySubmitLabel")) {
+            "Generated identity UI must expose a deliberate create/use flow."
+        }
+        check(
+            generatedIdentityPanel.contains("GeneratedIdentityRecoverAckLabel") &&
+                generatedIdentityPanel.contains("GeneratedIdentitySavedAckLabel") &&
+                generatedIdentityPanel.contains("GeneratedIdentityLossAckLabel"),
+        ) {
+            "Generated identity UI must require recovery, saved-key, and loss-risk acknowledgements."
+        }
+        check(generatedIdentityPanel.contains("generated-secret-display") && !generatedIdentityPanel.contains("setAttribute")) {
+            "Generated nsec may be displayed only as explicit confirmation text, not as DOM attributes."
+        }
+        val generatedIdentityRequest = Regex(
+            """private fun requestGeneratedIdentitySession\(\)\s*\{(?<body>.*?)private fun startDirectKeySession""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define requestGeneratedIdentitySession.")
+        check(generatedIdentityRequest.indexOf("clearGeneratedIdentityState()") in 0 until generatedIdentityRequest.indexOf("startDirectKeySession")) {
+            "Generated identity submit must clear generated-key state before session activation."
+        }
         val relayInputUpdater = Regex(
             """private fun updateNoteRelayInput\(value: String\)\s*\{(?<body>.*?)}""",
             setOf(RegexOption.DOT_MATCHES_ALL),

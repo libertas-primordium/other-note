@@ -65,6 +65,7 @@ private var relayStatsGuard = WebRelayStatsGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var directNsecDraft = WebDirectNsecDraftState()
+private var generatedIdentityState = WebGeneratedIdentityState()
 private var webMenuState = WebMenuUiState()
 private var noteLaneCount = webNoteLaneCountForViewport()
 private var noteLoadGuard = WebNoteLoadGuard()
@@ -117,7 +118,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(element("section", "hero") {
         appendChild(textElement("p", "eyebrow", "Web client preview"))
         appendChild(textElement("h1", "title", "Other Note"))
-        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07, NIP-46, and session-only direct-key sign-in with encrypted note loading and basic note saves."))
+        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07, NIP-46, session-only direct-key sign-in, and session-only fresh identities with encrypted note loading and basic note saves."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Security boundary"))
@@ -127,14 +128,16 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(nip07SignInPanel(state))
     appendChild(nip46SignInPanel(state))
     appendChild(directNsecSignInPanel(state))
+    appendChild(generatedIdentityPanel(state))
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Sign-in paths"))
         appendChild(element("ul", "method-list") {
             appendChild(textElement("li", "method", "NIP-07 browser extension"))
             appendChild(textElement("li", "method", "NIP-46 remote signer"))
             appendChild(textElement("li", "method", "Session-only direct nsec fallback"))
+            appendChild(textElement("li", "method", "Session-only generated identity"))
         })
-        appendChild(textElement("p", "body small-gap", "This web preview does not persist web sessions, remote signer sessions, direct-key sessions, note caches, drafts, note relay preferences, relay migration queues, or pending writes. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
+        appendChild(textElement("p", "body small-gap", "This web preview does not persist web sessions, remote signer sessions, direct-key sessions, generated identities, note caches, drafts, note relay preferences, relay migration queues, or pending writes. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
     })
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
 }
@@ -662,16 +665,76 @@ private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
         )
     }
 
+private fun generatedIdentityPanel(state: WebAuthUiState): WebElement =
+    element("section", "panel fallback-panel") {
+        appendChild(textElement("p", "eyebrow", "Deliberate recovery flow"))
+        appendChild(textElement("h2", "section-title", "Create new identity"))
+        appendChild(textElement("p", "body", "This creates a new Nostr identity in this browser. The nsec is your private key."))
+        appendChild(textElement("p", "body small-gap", "Other Note cannot recover this key. If you lose this nsec, you will lose access to encrypted notes for this identity forever."))
+        appendChild(textElement("p", "body small-gap", "Save it in a secure password manager, OS keyring, or signer before continuing. This browser session will forget the key when you refresh or log out."))
+        val secret = generatedIdentityState.secret
+        if (secret == null) {
+            if (generatedIdentityState.message.isNotBlank()) {
+                appendChild(textElement("p", "body small-gap", generatedIdentityState.message))
+            }
+            appendChild(buttonElement(
+                text = "Generate fresh identity",
+                enabled = state.signInState !is WebSignInState.SigningIn,
+                onClick = ::generateFreshIdentity,
+            ))
+        } else {
+            appendChild(textElement("p", "body small-gap", "Generated public identity: ${secret.displayPublicKey}"))
+            appendChild(textElement("pre", "generated-secret-display", secret.revealNsec()))
+            appendChild(element("div", "checkbox-list") {
+                appendChild(checkboxElement(
+                    label = GeneratedIdentityRecoverAckLabel,
+                    checked = generatedIdentityState.recoverAcknowledged,
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onChange = ::acknowledgeGeneratedIdentityRecovery,
+                ))
+                appendChild(checkboxElement(
+                    label = GeneratedIdentitySavedAckLabel,
+                    checked = generatedIdentityState.savedAcknowledged,
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onChange = ::acknowledgeGeneratedIdentitySaved,
+                ))
+                appendChild(checkboxElement(
+                    label = GeneratedIdentityLossAckLabel,
+                    checked = generatedIdentityState.lossAcknowledged,
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onChange = ::acknowledgeGeneratedIdentityLoss,
+                ))
+            })
+            if (generatedIdentityState.message.isNotBlank()) {
+                appendChild(textElement("p", "body error small-gap", generatedIdentityState.message))
+            }
+            appendChild(element("div", "inline-actions") {
+                appendChild(buttonElement(
+                    text = GeneratedIdentitySubmitLabel,
+                    enabled = generatedIdentityState.canUseForSession && state.signInState !is WebSignInState.SigningIn,
+                    onClick = ::requestGeneratedIdentitySession,
+                ))
+                appendChild(buttonElement(
+                    text = "Cancel",
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onClick = ::cancelGeneratedIdentityFlow,
+                ))
+            })
+        }
+    }
+
 private fun requestNip07PublicKey() {
     val signer = window.nostr
     if (signer == null) {
         clearDirectNsecDraft()
+        clearGeneratedIdentityState()
         authState = beginNip07SignIn(authState.copy(nip07Available = false))
         render()
         return
     }
 
     clearDirectNsecDraft()
+    clearGeneratedIdentityState()
     authState = beginNip07SignIn(authState.copy(nip07Available = true))
     render()
 
@@ -707,6 +770,7 @@ private fun requestNip07PublicKey() {
 
 private fun requestNip46PublicKey() {
     clearDirectNsecDraft()
+    clearGeneratedIdentityState()
     authState = beginNip46SignIn(authState)
     render()
     clearDirectKeySession()
@@ -750,6 +814,64 @@ private fun requestNip46PublicKey() {
 private fun requestDirectNsecSession() {
     val submitted = directNsecDraft.input
     clearDirectNsecDraft()
+    clearGeneratedIdentityState()
+    startDirectKeySession(submitted, ::failDirectNsecSignIn)
+}
+
+private fun generateFreshIdentity() {
+    clearDirectNsecDraft()
+    clearDirectKeySession()
+    activeNip46RemoteSigner.disconnect()
+    nip46TokenInput = ""
+    generatedIdentityState = when (val generated = generateWebDirectKeyIdentity()) {
+        is WebGeneratedIdentityResult.Success -> WebGeneratedIdentityState(
+            secret = generated.secret,
+            message = WebDirectKeyCopy.GeneratedIdentityReady,
+        )
+        is WebGeneratedIdentityResult.Failed -> clearWebGeneratedIdentityState(generated.safeMessage)
+    }
+    authState = authState.copy(
+        signInState = WebSignInState.SignedOut,
+        nip46Status = WebNip46Status.Idle,
+        nip46Message = "",
+    )
+    render()
+}
+
+private fun acknowledgeGeneratedIdentityRecovery(acknowledged: Boolean) {
+    generatedIdentityState = acknowledgeWebGeneratedIdentityRecovery(generatedIdentityState, acknowledged)
+    render()
+}
+
+private fun acknowledgeGeneratedIdentitySaved(acknowledged: Boolean) {
+    generatedIdentityState = acknowledgeWebGeneratedIdentitySaved(generatedIdentityState, acknowledged)
+    render()
+}
+
+private fun acknowledgeGeneratedIdentityLoss(acknowledged: Boolean) {
+    generatedIdentityState = acknowledgeWebGeneratedIdentityLoss(generatedIdentityState, acknowledged)
+    render()
+}
+
+private fun cancelGeneratedIdentityFlow() {
+    clearGeneratedIdentityState(WebDirectKeyCopy.GeneratedIdentityCancelled)
+    render()
+}
+
+private fun requestGeneratedIdentitySession() {
+    val secret = generatedIdentityState.secret
+    if (!generatedIdentityState.canUseForSession || secret == null) {
+        generatedIdentityState = generatedIdentityState.copy(message = WebDirectKeyCopy.GeneratedIdentityRequiresAcknowledgement)
+        render()
+        return
+    }
+    val submitted = secret.revealNsec()
+    clearGeneratedIdentityState()
+    clearDirectNsecDraft()
+    startDirectKeySession(submitted, ::failGeneratedIdentitySignIn)
+}
+
+private fun startDirectKeySession(rawNsec: String, onFailure: (String) -> Unit) {
     clearDirectKeySession()
     activeNip46RemoteSigner.disconnect()
     nip46TokenInput = ""
@@ -759,7 +881,7 @@ private fun requestDirectNsecSession() {
         nip46Message = "",
     )
     render()
-    when (val result = createWebDirectKeySession(submitted)) {
+    when (val result = createWebDirectKeySession(rawNsec)) {
         is WebDirectKeyLoginResult.Success -> {
             activeDirectKeySession = result.session
             noteState = WebNoteLoadState.Idle
@@ -780,8 +902,8 @@ private fun requestDirectNsecSession() {
             refreshRelayStatsForSignedInSession()
             autoLoadNotesForSignedInSession()
         }
-        is WebDirectKeyLoginResult.Invalid -> failDirectNsecSignIn(result.safeMessage)
-        is WebDirectKeyLoginResult.Unavailable -> failDirectNsecSignIn(result.safeMessage)
+        is WebDirectKeyLoginResult.Invalid -> onFailure(result.safeMessage)
+        is WebDirectKeyLoginResult.Unavailable -> onFailure(result.safeMessage)
     }
 }
 
@@ -790,6 +912,17 @@ private fun failDirectNsecSignIn(safeMessage: String) {
     clearDirectNsecDraft(message = safeMessage)
     authState = authState.copy(
         signInState = WebSignInState.Failed(safeMessage, WebAuthMethod.DirectNsec),
+        nip46Status = WebNip46Status.Idle,
+        nip46Message = "",
+    )
+    render()
+}
+
+private fun failGeneratedIdentitySignIn(safeMessage: String) {
+    clearDirectKeySession()
+    clearGeneratedIdentityState(message = safeMessage)
+    authState = authState.copy(
+        signInState = WebSignInState.SignedOut,
         nip46Status = WebNip46Status.Idle,
         nip46Message = "",
     )
@@ -1061,6 +1194,10 @@ private fun clearDirectKeySession() {
 
 private fun clearDirectNsecDraft(message: String = "") {
     directNsecDraft = clearWebDirectNsecDraft(message)
+}
+
+private fun clearGeneratedIdentityState(message: String = "") {
+    generatedIdentityState = clearWebGeneratedIdentityState(message)
 }
 
 private fun updateNoteRelayInput(value: String) {
@@ -1458,6 +1595,7 @@ private fun logout() {
     activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
     nip46TokenInput = ""
     clearDirectNsecDraft()
+    clearGeneratedIdentityState()
     webMenuState = resetWebMenuState()
     resetNoteListControlsState()
     clearNoteDetail()
@@ -1500,6 +1638,26 @@ private fun menuItemElement(
     element("button", if (danger) "menu-item danger" else "menu-item").also { button ->
         button.textContent = text
         button.addEventListener("click") { onClick() }
+    }
+
+private fun checkboxElement(
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+): WebElement =
+    element("label", "checkbox-label") {
+        appendChild(
+            element("input", "checkbox-input").also { input ->
+                input.setAttribute("type", "checkbox")
+                input.asDynamic().checked = checked
+                if (!enabled) input.setAttribute("disabled", "disabled")
+                input.addEventListener("change") {
+                    onChange(input.asDynamic().checked as Boolean)
+                }
+            },
+        )
+        appendChild(textElement("span", "checkbox-text", label))
     }
 
 private fun textInputElement(

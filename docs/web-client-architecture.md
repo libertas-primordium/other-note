@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, session-only direct `nsec` fallback sign-in, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed or direct-key note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web value is the generic theme ID under `on.web.theme`; browser persistence for sessions, relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, direct-key sessions, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed or direct-key note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web value is the generic theme ID under `on.web.theme`; browser persistence for sessions, relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, direct-key sessions, generated identities, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -17,7 +17,7 @@ The first web client should be a fallback for users who cannot yet use a native 
 - MUST NOT store `nsec` values or private keys in server sessions.
 - MUST NOT log `nsec` values, private keys, bunker tokens, signer secrets, decrypted notes, decrypted payload JSON, or raw decrypted NIP-44 payloads.
 - MUST NOT add analytics or telemetry that can capture note text, keys, signer payloads, relay payloads, account secrets, or sensitive diagnostics.
-- MUST treat direct `nsec` paste as session-only unless a future explicitly approved design changes that.
+- MUST treat direct `nsec` paste and generated web identities as session-only unless a future explicitly approved design changes that.
 - MUST prefer NIP-07 browser extensions and NIP-46 remote signers for normal web sign-in.
 - MUST keep NIP-46 signer transport relays separate from note write/fetch relays.
 
@@ -28,6 +28,7 @@ Recommended priority:
 1. Phase 1: NIP-07 browser extension signer.
 2. Phase 1 or 2: NIP-46 remote signer/bunker.
 3. Fallback: direct `nsec` paste for the current browser session only.
+4. Deliberate recovery flow: fresh generated identity for the current browser session only.
 
 Explicitly unsupported initially:
 
@@ -42,7 +43,9 @@ UX requirements for the first web sign-in surface:
 - Explain clearly when no extension signer is available.
 - Offer a remote signer/bunker option where feasible.
 - Keep direct `nsec` paste lower emphasis and session-only.
+- Keep fresh identity generation lower emphasis, explicit, and session-only.
 - Clear direct `nsec` input after successful login or logout.
+- Show generated `nsec` only inside the generated-identity acknowledgement flow, then clear it on cancel, session use, logout, refresh, or session replacement.
 - Ensure logout clears session-only secrets and authenticated in-memory state.
 
 ## Client-side cryptography boundary
@@ -53,7 +56,7 @@ For NIP-46, the remote signer owns the user's private key. Other Note may use a 
 
 For direct `nsec` fallback, the private key may exist only in browser memory for the active session. It may be used to sign events and perform NIP-44 encrypt/decrypt locally, then must be discarded on logout, refresh, tab close, or process end as far as browser behavior allows.
 
-Current direct-key implementation status: the web runtime can decode a valid `nsec`, derive the account pubkey, encrypt/decrypt NIP-44 payloads to self, sign and validate kind `30078` note events, and clear the in-memory key bytes on logout/session replacement. The signed-out UI exposes this only as a lower-emphasis session-only fallback below NIP-07 and NIP-46. The input is password-style, uses browser-assistance suppression where practical, clears the draft on every submit attempt, avoids putting the raw value in DOM attributes or URLs, and explains that refresh/logout forgets the session.
+Current direct-key implementation status: the web runtime can decode a valid `nsec`, generate a fresh key through browser secure random, derive the account pubkey, encrypt/decrypt NIP-44 payloads to self, sign and validate kind `30078` note events, and clear the in-memory key bytes on logout/session replacement. The signed-out UI exposes pasted `nsec` only as a lower-emphasis session-only fallback below NIP-07 and NIP-46. The direct input is password-style, uses browser-assistance suppression where practical, clears the draft on every submit attempt, avoids putting the raw value in DOM attributes or URLs, and explains that refresh/logout forgets the session. Fresh identity generation is a separate deliberate flow that displays the generated `nsec` only until the user cancels or acknowledges recovery risk and uses it for the current session.
 
 Decrypted note text may exist in browser memory and UI state only. It must not be sent to an Other Note server, written to logs, stored in durable browser storage, or captured by analytics.
 
