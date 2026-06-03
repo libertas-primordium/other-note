@@ -15,6 +15,7 @@ captures/
 .cxx/
 generated/
 out/
+kotlin-js-store/
 
 *.apk
 *.aab

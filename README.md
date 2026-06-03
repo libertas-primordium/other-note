@@ -4,7 +4,7 @@ Other Note is a GPLv3 Nostr-powered notes app foundation for private notes. The 
 
 ## Status
 
-This repository now contains a runnable project structure with shared domain, data, sync, Nostr abstraction, UI, Android entry point, desktop entry point, desktop Debian packaging configuration, and focused tests.
+This repository now contains a runnable project structure with shared domain, data, sync, Nostr abstraction, UI, Android entry point, desktop entry point, desktop Debian packaging configuration, a static web-client skeleton, and focused tests.
 
 Important security status:
 
@@ -24,6 +24,7 @@ Important security status:
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android cloud backup and device-transfer extraction are explicitly disabled for app data through the manifest and backup-rule resources. This is privacy hardening, not a backup feature.
 - NIP-46 remote signer foundation support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
+- The web target currently builds a static preview shell only. It has no web sign-in, no `nsec` input, no relay connections, no browser persistence, no note sync, and no note CRUD.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -199,6 +200,7 @@ Prerequisites:
 
 - JDK 17 or newer.
 - Android SDK for Android builds.
+- Node.js and npm for the Kotlin/JS web skeleton build. The Gradle configuration uses the system Node executable instead of downloading Node or Yarn.
 - Network access the first time Gradle resolves Compose Multiplatform and Kotlin plugin artifacts.
 - `local.properties` is required for Android builds when `ANDROID_HOME` is not set. It should contain `sdk.dir=/path/to/android/sdk` and must not be committed.
 - Debian packaging requires a full JDK 17+ with `jpackage`. Android Studio's bundled JBR is not enough.
@@ -212,6 +214,7 @@ Commands:
 ./gradlew :app:assembleDebug
 ./gradlew :app:packageDeb
 ./gradlew :app:check
+./gradlew :web:jsBrowserDistribution
 ```
 
 Desktop relay runtime is enabled by default when production crypto is available. The legacy developer flag is still accepted for compatibility, but it is no longer required:
@@ -297,6 +300,8 @@ Saved-device Android key storage, non-Linux desktop keyring backends, richer cli
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
+The web skeleton output is generated under `web/build/dist/js/productionExecutable/`. It is a static preview shell only; web authentication, relay sync, note encryption/decryption, and note CRUD remain future work governed by [docs/web-client-architecture.md](docs/web-client-architecture.md).
+
 ## Safe Test Commands
 
 Normal local validation:
@@ -373,6 +378,7 @@ Platform code:
 
 - `androidMain`: Android activity, NIP-55 signer adapters, bounded Android relay client, and app-private durable encrypted-event cache/pending-write stores for external-signer sessions.
 - `desktopMain`: Compose Desktop window entry point, bounded WebSocket relay client, and file-backed developer runtime cache/pending-write stores.
+- `web`: standalone Kotlin/JS static preview shell. It intentionally does not depend on the native app runtime or implement web auth, browser storage, relay connections, note sync, or note CRUD yet.
 
 ## Known Limitations And TODOs
 

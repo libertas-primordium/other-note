@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "OtherNote"
 include(":app")
+include(":web")
