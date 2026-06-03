@@ -21,4 +21,12 @@ kotlin {
         }
         binaries.executable()
     }
+
+    sourceSets {
+        val jsTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+    }
 }
