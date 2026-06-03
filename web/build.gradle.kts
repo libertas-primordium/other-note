@@ -20,8 +20,10 @@ val webSecuritySourceCheck by tasks.registering {
 
     val runtimeSourceDir = layout.projectDirectory.dir("src/jsMain/kotlin")
     val resourceDir = layout.projectDirectory.dir("src/jsMain/resources")
+    val deploymentSecurityDoc = layout.projectDirectory.file("../docs/web-deployment-security.md")
     inputs.dir(runtimeSourceDir)
     inputs.dir(resourceDir)
+    inputs.file(deploymentSecurityDoc)
 
     doLast {
         val runtimeFiles = fileTree(runtimeSourceDir).matching {
@@ -68,11 +70,11 @@ val webSecuritySourceCheck by tasks.registering {
         check(indexText.contains("""<script src="other-note-web.js"></script>""")) {
             "Web index.html should load only the self-hosted generated bundle."
         }
-        check(indexText.contains("""http-equiv="Content-Security-Policy"""")) {
-            "Web index.html must include the static smoke-test CSP meta tag."
+        check(!indexText.contains("""http-equiv="Content-Security-Policy"""")) {
+            "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."
         }
 
-        val csp = Regex("""Content-Security-Policy"\s+content="([^"]+)"""").find(indexText)?.groupValues?.get(1).orEmpty()
+        val deploymentDoc = deploymentSecurityDoc.asFile.readText()
         val expectedCspDirectives = listOf(
             "default-src 'self'",
             "script-src 'self'",
@@ -82,9 +84,12 @@ val webSecuritySourceCheck by tasks.registering {
             "form-action 'none'",
             "worker-src 'none'",
         )
-        val missingDirectives = expectedCspDirectives.filterNot { directive -> csp.contains(directive) }
+        val missingDirectives = expectedCspDirectives.filterNot { directive -> deploymentDoc.contains(directive) }
         check(missingDirectives.isEmpty()) {
-            "Web CSP meta tag is missing directive(s): ${missingDirectives.joinToString()}"
+            "Web deployment security doc is missing production CSP directive(s): ${missingDirectives.joinToString()}"
+        }
+        check(!deploymentDoc.contains("ws://" + "[::1]")) {
+            "Web deployment security doc must not include invalid bracketed IPv6 wildcard CSP sources."
         }
 
         val externalRuntimeResource = resourceFiles.filter { file -> file.extension != "html" }

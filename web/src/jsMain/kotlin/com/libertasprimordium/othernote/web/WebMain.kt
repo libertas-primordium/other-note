@@ -43,6 +43,7 @@ private var noteEditBody = ""
 private var noteEditMessage = ""
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
+private var webMenuState = WebMenuUiState()
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
@@ -67,26 +68,25 @@ private fun render() {
 }
 
 private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell") {
-        appendChild(element("section", "hero") {
-            appendChild(textElement("p", "eyebrow", "Web client preview"))
-            appendChild(textElement("h1", "title", "Other Note"))
-            appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07 and NIP-46 sign-in with signer-backed note loading and basic note saves."))
-        })
+    val signedIn = state.signInState as? WebSignInState.SignedIn
+    if (signedIn != null) {
+        appendChild(signedInHeader(signedIn.identity))
+        appendChild(notesPanel(signedIn.identity, noteState))
+        activeMenuPanel(signedIn.identity)?.let(::appendChild)
+        return@element
+    }
+
+    appendChild(element("section", "hero") {
+        appendChild(textElement("p", "eyebrow", "Web client preview"))
+        appendChild(textElement("h1", "title", "Other Note"))
+        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07 and NIP-46 sign-in with signer-backed note loading and basic note saves."))
+    })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Security boundary"))
         appendChild(textElement("p", "body", "Your signer keeps your private key. Other Note only asks for your public key in this preview, and signing, encryption, and decryption will remain client-side or signer-delegated."))
     })
-    when (val signInState = state.signInState) {
-        is WebSignInState.SignedIn -> {
-            appendChild(accountPanel(signInState.identity))
-            appendChild(noteRelaySettingsPanel())
-            appendChild(notesPanel(signInState.identity, noteState))
-        }
-        else -> {
-            appendChild(nip07SignInPanel(state))
-            appendChild(nip46SignInPanel(state))
-        }
-    }
+    appendChild(nip07SignInPanel(state))
+    appendChild(nip46SignInPanel(state))
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
         appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, or pending writes. It has no direct nsec input and no full relay-list sync yet."))
@@ -102,17 +102,74 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
 }
 
-private fun accountPanel(identity: WebAccountIdentity): WebElement =
-    element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Signed in"))
-        appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
-        appendChild(textElement("p", "body small-gap", "Notes, drafts, and signer sessions are in memory only. Refreshing this page may clear this session."))
-        appendChild(buttonElement(text = "Logout", enabled = true, onClick = ::logout))
+private fun signedInHeader(identity: WebAccountIdentity): WebElement =
+    element("header", "app-header") {
+        appendChild(element("div", "app-header-copy") {
+            appendChild(textElement("p", "eyebrow", "Web client preview"))
+            appendChild(textElement("h1", "app-title", "Other Note"))
+            appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
+            appendChild(textElement("p", "body muted small-gap", "In-memory web session. Refreshing this page may clear auth, notes, drafts, and relay choices."))
+        })
+        appendChild(signedInMenu(identity))
     }
 
-private fun noteRelaySettingsPanel(): WebElement =
-    element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Note relays"))
+private fun signedInMenu(identity: WebAccountIdentity): WebElement =
+    element("div", "menu-shell") {
+        appendChild(buttonElement(
+            text = "Menu",
+            enabled = true,
+            onClick = {
+                webMenuState = toggleWebMenu(webMenuState)
+                render()
+            },
+        ))
+        if (webMenuState.open) {
+            appendChild(element("div", "menu-popover") {
+                appendChild(menuItemElement("Reload notes") {
+                    webMenuState = closeWebMenu(webMenuState)
+                    loadReadOnlyNotes(identity)
+                })
+                appendChild(menuItemElement("Note relays") {
+                    webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.NoteRelays)
+                    render()
+                })
+                appendChild(menuItemElement("About web preview") {
+                    webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.About)
+                    render()
+                })
+                appendChild(element("div", "menu-divider"))
+                appendChild(menuItemElement("Logout", danger = true) {
+                    webMenuState = closeWebMenu(webMenuState)
+                    logout()
+                })
+            })
+        }
+    }
+
+private fun activeMenuPanel(identity: WebAccountIdentity): WebElement? =
+    when (webMenuState.activePanel) {
+        WebMenuPanel.None -> null
+        WebMenuPanel.NoteRelays -> modalPanel("Note relays") {
+            appendChild(noteRelaySettingsContent())
+        }
+        WebMenuPanel.About -> modalPanel("About web preview") {
+            appendChild(aboutWebPreviewContent(identity))
+        }
+    }
+
+private fun modalPanel(title: String, build: WebElement.() -> Unit): WebElement =
+    element("div", "modal-backdrop") {
+        appendChild(element("section", "panel modal-panel") {
+            appendChild(element("div", "modal-header") {
+                appendChild(textElement("h2", "section-title", title))
+                appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeActivePanel))
+            })
+            build()
+        })
+    }
+
+private fun noteRelaySettingsContent(): WebElement =
+    element("div", "panel-content") {
         appendChild(textElement("p", "body", "These relays fetch and publish your encrypted notes."))
         appendChild(textElement("p", "body small-gap", "Relay choices are kept in memory for this browser session."))
         appendChild(element("div", "relay-list") {
@@ -141,29 +198,40 @@ private fun noteRelaySettingsPanel(): WebElement =
         })
     }
 
+private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
+    element("div", "panel-content") {
+        appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
+        appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated."))
+        appendChild(textElement("p", "body", "This web preview keeps auth, signer sessions, notes, drafts, relay choices, and pending writes in memory only."))
+        appendChild(textElement("p", "body", "It has no direct nsec input, no durable browser storage, no service worker, no tracking/reporting services, and no backend note processing."))
+        appendChild(textElement("p", "body small-gap", "Android and Debian/Linux desktop are the current active native targets."))
+    }
+
 private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
     element("section", "panel") {
         val crudSigner = crudSignerFor(identity)
         val canCrud = crudSigner != null
         appendChild(textElement("h2", "section-title", "Notes"))
-        appendChild(textElement("p", "body", "Loads encrypted Other Note events from note relays and uses the active signer for note encryption, decryption, and signing. No note data is saved in the browser."))
-        appendChild(
-            buttonElement(
-                text = when (notes) {
-                    is WebNoteLoadState.Loading -> "Loading notes..."
-                    else -> "Reload notes"
-                },
-                enabled = notes !is WebNoteLoadState.Loading,
-                onClick = { loadReadOnlyNotes(identity) },
-            ),
-        )
-        appendChild(
-            buttonElement(
-                text = "New note",
-                enabled = canCrud && noteEditMode !is WebNoteEditMode.Busy,
-                onClick = ::startCreateNote,
-            ),
-        )
+        appendChild(textElement("p", "body", "Read and edit encrypted notes in this in-memory web session."))
+        appendChild(element("div", "inline-actions notes-actions") {
+            appendChild(
+                buttonElement(
+                    text = when (notes) {
+                        is WebNoteLoadState.Loading -> "Loading notes..."
+                        else -> "Reload notes"
+                    },
+                    enabled = notes !is WebNoteLoadState.Loading,
+                    onClick = { loadReadOnlyNotes(identity) },
+                ),
+            )
+            appendChild(
+                buttonElement(
+                    text = "New note",
+                    enabled = canCrud && noteEditMode !is WebNoteEditMode.Busy,
+                    onClick = ::startCreateNote,
+                ),
+            )
+        })
         if (!canCrud) {
             appendChild(textElement("p", "body error small-gap", WebNoteCopy.CrudCapabilityUnavailable))
         }
@@ -557,6 +625,11 @@ private fun restoreDefaultNoteRelays() {
     updateNoteRelaySettings(restoreDefaultWebNoteRelays(noteRelaySettings))
 }
 
+private fun closeActivePanel() {
+    webMenuState = closeWebMenuPanel(webMenuState)
+    render()
+}
+
 private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
     val previousRelays = selectedWebNoteRelays(noteRelaySettings)
     noteRelaySettings = next
@@ -587,6 +660,7 @@ private fun logout() {
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     nip46TokenInput = ""
+    webMenuState = resetWebMenuState()
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
     cancelNoteEdit()
@@ -608,6 +682,16 @@ private fun buttonElement(
         } else if (onClick != null) {
             button.addEventListener("click") { onClick() }
         }
+    }
+
+private fun menuItemElement(
+    text: String,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+): WebElement =
+    element("button", if (danger) "menu-item danger" else "menu-item").also { button ->
+        button.textContent = text
+        button.addEventListener("click") { onClick() }
     }
 
 private fun textInputElement(
