@@ -9,10 +9,16 @@
         :root {
             --background: #050507;
             --surface: #111116;
+            --card-surface: #111116;
             --text: #f5f1ff;
             --muted: #b8aec8;
             --accent: #8e44ff;
+            --app-bar: #2a0f45;
             --border: #6c4a90;
+            --subtle-border: rgba(108, 74, 144, 0.35);
+            --button-text: #ffffff;
+            --code-background: #191020;
+            --code-text: #e8d7ff;
         }
 
         * {
@@ -37,13 +43,18 @@
             padding: 48px 0;
         }
 
+        .signed-in-shell {
+            width: min(1280px, calc(100vw - 32px));
+            padding: 32px 0 48px;
+        }
+
         .app-header {
             display: flex;
             gap: 16px;
             align-items: flex-start;
             justify-content: space-between;
-            padding: 20px 0 18px;
-            border-bottom: 1px solid var(--border);
+            padding: 16px 0 12px;
+            border-bottom: 1px solid var(--subtle-border);
         }
 
         .app-header-copy {
@@ -90,8 +101,18 @@
             margin-top: 18px;
             padding: 18px;
             background: var(--surface);
-            border: 1px solid var(--border);
+            border: 1px solid var(--subtle-border);
             border-radius: 8px;
+        }
+
+        .notes-panel {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 14px;
+            padding: 0;
+            background: transparent;
+            border: 0;
+            border-radius: 0;
         }
 
         .section-title {
@@ -104,6 +125,7 @@
             margin: 0;
             color: var(--muted);
             line-height: 1.55;
+            overflow-wrap: anywhere;
         }
 
         .small-gap {
@@ -115,13 +137,13 @@
         }
 
         .action-button {
-            min-height: 44px;
-            margin-top: 14px;
-            padding: 0 16px;
+            min-height: 40px;
+            margin-top: 12px;
+            padding: 0 14px;
             border: 1px solid var(--accent);
             border-radius: 8px;
             background: var(--accent);
-            color: #ffffff;
+            color: var(--button-text);
             font: inherit;
             font-weight: 700;
             cursor: pointer;
@@ -234,6 +256,8 @@
 
         .text-input {
             width: 100%;
+            min-width: 0;
+            max-width: 100%;
             min-height: 44px;
             padding: 0 12px;
             border: 1px solid var(--border);
@@ -265,34 +289,62 @@
         }
 
         .note-list {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 6px;
+            margin-top: 14px;
+        }
+
+        .note-lanes {
+            align-items: flex-start;
+        }
+
+        .note-lane {
             display: grid;
-            gap: 14px;
-            margin-top: 18px;
+            flex: 1 1 0;
+            min-width: 0;
+            max-width: 100%;
+            gap: 6px;
         }
 
         .note-card {
-            padding: 14px;
-            border: 1px solid var(--border);
+            width: 100%;
+            align-self: start;
+            break-inside: avoid;
+            page-break-inside: avoid;
+            min-width: 0;
+            max-width: 100%;
+            padding: 10px;
+            border: 1px solid var(--subtle-border);
             border-radius: 8px;
-            background: #09090d;
+            background: var(--card-surface);
+            overflow-wrap: anywhere;
         }
 
         .note-title {
             margin: 0;
             color: var(--text);
-            font-size: 1.05rem;
-            line-height: 1.25;
+            font-size: 0.875rem;
+            font-weight: 700;
+            line-height: 1.22;
+            overflow-wrap: anywhere;
         }
 
         .note-snippet,
         .note-meta {
-            margin: 8px 0 0;
+            margin: 6px 0 0;
             color: var(--muted);
-            line-height: 1.45;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .note-snippet {
+            font-size: 0.75rem;
         }
 
         .note-meta {
-            font-size: 0.82rem;
+            font-size: 0.6875rem;
         }
 
         .inline-actions {
@@ -309,6 +361,28 @@
 
         .notes-actions {
             margin-top: 14px;
+        }
+
+        .note-card-actions {
+            justify-content: flex-end;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .note-card-actions .action-button {
+            min-height: 32px;
+            padding: 0 8px;
+            border-color: transparent;
+            background: transparent;
+            color: var(--accent);
+            font-size: 0.75rem;
+        }
+
+        .note-card-actions .action-button:hover,
+        .note-card-actions .action-button:focus {
+            border-color: var(--accent);
+            background: rgba(142, 68, 255, 0.18);
+            outline: none;
         }
 
         .relay-list {
@@ -335,11 +409,13 @@
         }
 
         .editor-panel {
+            min-width: 0;
+            max-width: 100%;
             margin-top: 16px;
             padding: 14px;
-            border: 1px solid var(--border);
+            border: 1px solid var(--subtle-border);
             border-radius: 8px;
-            background: #09090d;
+            background: var(--card-surface);
         }
 
         .note-editor-input {
@@ -351,17 +427,23 @@
 
         .markdown-view {
             display: grid;
-            gap: 10px;
-            margin-top: 14px;
+            min-width: 0;
+            max-width: 100%;
+            gap: 8px;
+            margin-top: 10px;
             color: var(--text);
+            overflow-wrap: anywhere;
         }
 
         .markdown-heading,
         .markdown-paragraph,
         .markdown-quote,
         .markdown-code-block {
+            min-width: 0;
+            max-width: 100%;
             margin: 0;
             line-height: 1.5;
+            overflow-wrap: anywhere;
         }
 
         .markdown-heading {
@@ -378,18 +460,25 @@
         .inline-code {
             border: 1px solid var(--border);
             border-radius: 6px;
-            background: #050508;
-            color: var(--text);
+            background: var(--code-background);
+            color: var(--code-text);
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            overflow-wrap: anywhere;
         }
 
         .markdown-code-block {
+            min-width: 0;
+            max-width: 100%;
             overflow-x: auto;
+            overflow-wrap: anywhere;
             padding: 10px;
             white-space: pre-wrap;
         }
 
         .inline-code {
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
             padding: 1px 4px;
         }
 
@@ -405,6 +494,10 @@
                 padding: 28px 0;
             }
 
+            .signed-in-shell {
+                width: min(100vw - 24px, 1280px);
+            }
+
             .app-header {
                 align-items: stretch;
                 flex-direction: column;
@@ -413,6 +506,11 @@
             .menu-popover {
                 left: 0;
                 right: auto;
+            }
+
+            .note-card-actions {
+                align-items: stretch;
+                flex-direction: column;
             }
         }
     </style>

@@ -137,6 +137,71 @@ class WebLayoutMenuStateTests {
     }
 }
 
+class WebResponsiveNoteGridLayoutTests {
+    @Test
+    fun signedInShellUsesDistinctWideLayoutClass() {
+        assertEquals("shell", WebSignedOutShellClass)
+        assertEquals("shell signed-in-shell", WebSignedInShellClass)
+        assertNotEquals(WebSignedOutShellClass, WebSignedInShellClass)
+    }
+
+    @Test
+    fun noteGridUsesDesktopInspiredCardSizingAndSpacing() {
+        assertEquals(280, WebNoteGridMinCardWidthPx)
+        assertEquals(6, WebNoteGridGapPx)
+    }
+
+    @Test
+    fun notePanelAndGridHaveDedicatedLayoutClasses() {
+        assertEquals("panel notes-panel", WebNotesPanelClass)
+        assertEquals("note-list note-lanes", WebNoteGridClass)
+        assertEquals("note-lane", WebNoteLaneClass)
+        assertEquals("inline-actions note-card-actions", WebNoteCardActionsClass)
+    }
+
+    @Test
+    fun laneCountMatchesDesktopColumnBreakpoints() {
+        assertEquals(1, webNoteLaneCount(319))
+        assertEquals(2, webNoteLaneCount(320))
+        assertEquals(2, webNoteLaneCount(719))
+        assertEquals(2, webNoteLaneCount(720))
+        assertEquals(3, webNoteLaneCount(840))
+        assertEquals(4, webNoteLaneCount(1_200))
+        assertEquals(6, webNoteLaneCount(2_400))
+    }
+
+    @Test
+    fun emptyNotesDistributeAcrossRequestedLanes() {
+        assertEquals(listOf(emptyList<String>(), emptyList()), distributeWebNoteLanes(emptyList<String>(), 2))
+    }
+
+    @Test
+    fun oneColumnKeepsOriginalOrder() {
+        assertEquals(listOf(listOf("n1", "n2", "n3")), distributeWebNoteLanes(listOf("n1", "n2", "n3"), 1))
+    }
+
+    @Test
+    fun twoColumnsSeedFirstRowHorizontallyThenContinueRoundRobin() {
+        assertEquals(
+            listOf(listOf("n1", "n3", "n5"), listOf("n2", "n4")),
+            distributeWebNoteLanes(listOf("n1", "n2", "n3", "n4", "n5"), 2),
+        )
+    }
+
+    @Test
+    fun threeColumnsSeedFirstRowHorizontallyThenContinueRoundRobin() {
+        assertEquals(
+            listOf(listOf("n1", "n4"), listOf("n2", "n5"), listOf("n3")),
+            distributeWebNoteLanes(listOf("n1", "n2", "n3", "n4", "n5"), 3),
+        )
+    }
+
+    @Test
+    fun invalidLaneCountFallsBackToOneColumn() {
+        assertEquals(listOf(listOf("n1", "n2")), distributeWebNoteLanes(listOf("n1", "n2"), 0))
+    }
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {

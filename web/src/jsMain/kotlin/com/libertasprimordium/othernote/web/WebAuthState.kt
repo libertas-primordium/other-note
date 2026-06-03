@@ -53,6 +53,32 @@ val WebSignedInMenuItems = listOf(
     "Logout",
 )
 
+const val WebSignedOutShellClass = "shell"
+const val WebSignedInShellClass = "shell signed-in-shell"
+const val WebNotesPanelClass = "panel notes-panel"
+const val WebNoteGridClass = "note-list note-lanes"
+const val WebNoteLaneClass = "note-lane"
+const val WebNoteCardActionsClass = "inline-actions note-card-actions"
+const val WebNoteGridMinCardWidthPx = 280
+const val WebNoteGridGapPx = 6
+const val WebNoteGridMaxColumns = 6
+
+fun webNoteLaneCount(availableWidthPx: Int): Int =
+    when {
+        availableWidthPx < 320 -> 1
+        availableWidthPx < 720 -> 2
+        else -> (availableWidthPx / WebNoteGridMinCardWidthPx).coerceIn(2, WebNoteGridMaxColumns)
+    }
+
+fun <T> distributeWebNoteLanes(items: List<T>, laneCount: Int): List<List<T>> {
+    val safeLaneCount = laneCount.coerceAtLeast(1)
+    val lanes = List(safeLaneCount) { mutableListOf<T>() }
+    items.forEachIndexed { index, item ->
+        lanes[index % safeLaneCount] += item
+    }
+    return lanes
+}
+
 sealed interface Nip07PublicKeyResult {
     data class Valid(val publicKeyHex: String) : Nip07PublicKeyResult
     data class Invalid(val message: String) : Nip07PublicKeyResult
