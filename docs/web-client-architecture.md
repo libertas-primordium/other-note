@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. The web client is not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A static web skeleton exists, but web sign-in, relay sync, encryption/decryption flows, browser persistence, note CRUD, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -158,6 +158,7 @@ Future implementation branches should stay narrow:
   - Render a static app shell.
   - Add no secret storage.
   - Add no note sync yet.
+  - Current status: implemented as a standalone Kotlin/JS skeleton module because the native app `commonMain` still carries Android/JVM crypto dependencies that should not be pulled into the browser target without a later compatibility split.
 - `web-client-nip07-signin`
   - Detect `window.nostr`.
   - Request the account pubkey.
