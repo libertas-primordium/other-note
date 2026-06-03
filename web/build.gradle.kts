@@ -243,6 +243,42 @@ val webSecuritySourceCheck by tasks.registering {
         check(!indexText.contains("""http-equiv="Content-Security-Policy"""")) {
             "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."
         }
+        listOf("fonts.googleapis.com", "fonts.gstatic.com", "fontawesome", "cdnjs", "jsdelivr", "unpkg").forEach { forbiddenFontHost ->
+            check(!indexText.contains(forbiddenFontHost, ignoreCase = true)) {
+                "Web index.html must not reference external font/CDN host: $forbiddenFontHost"
+            }
+        }
+        check(!Regex("""url\(["']?https?://""", RegexOption.IGNORE_CASE).containsMatchIn(indexText)) {
+            "Web font and CSS asset URLs must be same-origin."
+        }
+        check(!indexText.contains("local(", ignoreCase = true)) {
+            "Web font loading must not rely on local(...) as the primary font source."
+        }
+        listOf(
+            "Roboto-Regular.woff2",
+            "Roboto-Italic.woff2",
+            "Roboto-Medium.woff2",
+            "Roboto-Bold.woff2",
+        ).forEach { fontFile ->
+            check(indexText.contains("""url("fonts/roboto/$fontFile") format("woff2")""")) {
+                "Web index.html must declare same-origin Roboto font file $fontFile."
+            }
+            check(resourceDir.file("fonts/roboto/$fontFile").asFile.isFile) {
+                "Bundled web Roboto font file is missing: $fontFile"
+            }
+        }
+        check(indexText.contains("--font-family-body: \"Roboto\"") && indexText.contains("font-family: var(--font-family-body)")) {
+            "Web root typography must use the bundled Roboto font token."
+        }
+        check(indexText.contains("font-display: swap")) {
+            "Bundled web fonts must use font-display for readable loading behavior."
+        }
+        check(resourceDir.file("fonts/roboto/Roboto-COPYRIGHT.txt").asFile.isFile) {
+            "Bundled Roboto web fonts must include copyright/source attribution."
+        }
+        check(resourceDir.file("fonts/roboto/Apache-2.0.txt").asFile.isFile) {
+            "Bundled Roboto web fonts must include the Apache-2.0 license text."
+        }
 
         fun cssBlocks(selector: String): List<String> =
             Regex("""${Regex.escape(selector)}\s*\{([^}]*)}""")

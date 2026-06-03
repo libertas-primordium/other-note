@@ -4,6 +4,8 @@ This document is a design plan for a future Other Note web client. A Kotlin/JS w
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
+The native clients do not bundle a custom app font. Android sets the app font family to the platform `sans` family, which maps to Roboto on Android, and the Compose desktop client uses Material/Compose default sans text. To make the web preview render closer to Android and the Material default, the web client self-hosts Roboto WOFF2 files under `web/src/jsMain/resources/fonts/roboto/`. Those files are derived from Debian `fonts-roboto-unhinted` 2:0~20170802-4, whose upstream is <https://github.com/google/roboto>, and are licensed under Apache-2.0. The web app must load those font files from same-origin static resources only, with no Google Fonts, CDN fonts, remote font CSS, or external font hosts.
+
 ## Non-negotiable security rules
 
 - MUST keep Nostr signing client-side.

@@ -13,6 +13,7 @@ Use this document with [web-client-architecture.md](web-client-architecture.md) 
 - Do not add analytics, telemetry, crash reporting, remote logging, trackers, third-party scripts, or remote fonts.
 - Do not add a service worker or offline cache unless a later reviewed cache/security design explicitly approves it.
 - Do not log request bodies, signer payloads, relay payloads, note plaintext, `nsec` values, bunker tokens, or other account secrets.
+- Web fonts must be same-origin static assets. The current web preview bundles Roboto WOFF2 files under `fonts/roboto/` with Apache-2.0 attribution; do not replace them with Google Fonts, CDN CSS, remote font URLs, or `local(...)`-only font loading.
 
 ## Production Security Headers
 
@@ -88,6 +89,7 @@ Before deployment, inspect that directory:
 
 - [ ] Contains `index.html`.
 - [ ] Contains the generated `other-note-web.js` bundle.
+- [ ] Contains the self-hosted `fonts/roboto/*.woff2` files and Roboto license/attribution files.
 - [ ] Contains no service worker files.
 - [ ] Contains no unexpected third-party scripts.
 - [ ] Contains no generated files staged in git.
@@ -134,6 +136,7 @@ DevTools network checks:
 - [ ] No analytics or telemetry requests.
 - [ ] No backend note API calls.
 - [ ] No unexpected third-party script, font, image, or tracking requests.
+- [ ] Font requests are same-origin `fonts/roboto/*.woff2` requests only.
 - [ ] No remote profile `picture` or `banner` image requests.
 
 ## CSP Smoke Checklist
