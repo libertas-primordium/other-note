@@ -23,6 +23,12 @@ kotlin {
     }
 
     sourceSets {
+        val jsMain by getting {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+                implementation(npm("nostr-tools", "2.10.4"))
+            }
+        }
         val jsTest by getting {
             dependencies {
                 implementation(kotlin("test"))

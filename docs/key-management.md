@@ -155,7 +155,7 @@ This policy currently does not cover completed implementations for:
 - Saved-device Android `nsec` storage.
 - Windows/macOS saved-device key storage.
 - Web relay sync, note encryption/decryption, and note CRUD.
-- Persisted web sessions or durable browser key storage.
+- Persisted web sessions, durable browser key storage, or durable web NIP-46 remote-signer sessions.
 - Custom password-vault or password-derived encrypted file storage.
 
 Secure storage implementations must be added platform by platform and tested before saved-key mode is enabled on that platform. A test fake may exist only in tests and must be clearly marked as a test fake.

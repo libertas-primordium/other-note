@@ -2,21 +2,37 @@ package com.libertasprimordium.othernote.web
 
 data class WebAccountIdentity(
     val publicKeyHex: String,
+    val method: WebAuthMethod,
 ) {
     val displayPublicKey: String =
         "${publicKeyHex.take(8)}...${publicKeyHex.takeLast(8)}"
 }
 
+enum class WebAuthMethod(val displayName: String) {
+    Nip07("NIP-07 browser extension"),
+    Nip46("NIP-46 remote signer"),
+}
+
 sealed interface WebSignInState {
     data object SignedOut : WebSignInState
-    data object SigningIn : WebSignInState
+    data class SigningIn(val method: WebAuthMethod) : WebSignInState
     data class SignedIn(val identity: WebAccountIdentity) : WebSignInState
-    data class Failed(val message: String) : WebSignInState
+    data class Failed(val message: String, val method: WebAuthMethod? = null) : WebSignInState
+}
+
+enum class WebNip46Status {
+    Idle,
+    PreparingConnection,
+    WaitingForSigner,
+    RequestingPublicKey,
+    Failed,
 }
 
 data class WebAuthUiState(
     val nip07Available: Boolean,
     val signInState: WebSignInState = WebSignInState.SignedOut,
+    val nip46Status: WebNip46Status = WebNip46Status.Idle,
+    val nip46Message: String = "",
 )
 
 sealed interface Nip07PublicKeyResult {
@@ -29,6 +45,31 @@ object WebAuthCopy {
     const val PublicKeyMissing = "The extension did not return a public key."
     const val PublicKeyMalformed = "The extension returned an invalid public key."
     const val ExtensionRequestFailed = "The extension request was canceled or failed."
+    const val Nip46InvalidToken = "Paste a valid bunker:// remote signer token."
+    const val Nip46MissingRelay = "Remote signer token must include at least one signer relay."
+    const val Nip46InvalidRemotePubkey = "Remote signer token has an invalid signer public key."
+    const val Nip46SignerTimeout = "Remote signer did not respond before the timeout."
+    const val Nip46SignerRejected = "Remote signer rejected the request."
+    const val Nip46MalformedResponse = "Remote signer returned an unreadable response."
+    const val Nip46ConnectionFailed = "Could not connect to the remote signer relay."
+    const val Nip46RelayPublishFailed = "Could not publish the remote signer request."
+    const val Nip46RelayClosedBeforeResponse = "Remote signer relay closed before a response arrived."
+    const val Nip46PublicKeyTimeout = "Remote signer did not answer the account public-key request before the timeout."
+    const val Nip46PublicKeyRelayClosed = "Remote signer relay closed before the account public-key response arrived."
+    const val Nip46TransportKeyFailed = "Could not create an in-memory remote signer transport key."
+    const val Nip46RequestBuildFailed = "Could not create the remote signer request."
+    const val Nip46RequestMissingRemoteSigner = "Remote signer request is missing a valid signer identity."
+    const val Nip46RequestMissingClientKey = "Remote signer request is missing the in-memory transport identity."
+    const val Nip46RequestJsonFailed = "Could not serialize the remote signer request."
+    const val Nip46RequestEncryptionFailed = "Could not encrypt the remote signer request."
+    const val Nip46RequestSigningFailed = "Could not sign the remote signer transport request."
+    const val Nip46RequestSerializationFailed = "Could not serialize the remote signer event."
+    const val Nip46ResponseDecryptFailed = "Could not decrypt the remote signer response."
+    const val Nip46EmptyResponse = "Remote signer returned an empty response."
+    const val Nip46BrowserCryptoMissing = "Browser secure random generation is unavailable."
+    const val Nip46RandomGenerationFailed = "Browser secure random generation failed."
+    const val Nip46InvalidGeneratedPrivateKey = "Browser generated an invalid remote signer transport key."
+    const val Nip46PublicKeyDerivationFailed = "Could not derive the remote signer transport public key."
 }
 
 private val HexPublicKeyPattern = Regex("^[0-9a-fA-F]{64}$")
@@ -46,21 +87,54 @@ fun validateNip07PublicKey(publicKey: String?): Nip07PublicKeyResult {
 
 fun beginNip07SignIn(state: WebAuthUiState): WebAuthUiState =
     if (state.nip07Available) {
-        state.copy(signInState = WebSignInState.SigningIn)
+        state.copy(signInState = WebSignInState.SigningIn(WebAuthMethod.Nip07))
     } else {
-        state.copy(signInState = WebSignInState.Failed(WebAuthCopy.ExtensionMissing))
+        state.copy(signInState = WebSignInState.Failed(WebAuthCopy.ExtensionMissing, WebAuthMethod.Nip07))
     }
 
 fun completeNip07SignIn(state: WebAuthUiState, publicKey: String?): WebAuthUiState =
     when (val result = validateNip07PublicKey(publicKey)) {
         is Nip07PublicKeyResult.Valid ->
-            state.copy(signInState = WebSignInState.SignedIn(WebAccountIdentity(result.publicKeyHex)))
+            state.copy(signInState = WebSignInState.SignedIn(WebAccountIdentity(result.publicKeyHex, WebAuthMethod.Nip07)))
         is Nip07PublicKeyResult.Invalid ->
             state.copy(signInState = WebSignInState.Failed(result.message))
     }
 
 fun failNip07SignIn(state: WebAuthUiState): WebAuthUiState =
-    state.copy(signInState = WebSignInState.Failed(WebAuthCopy.ExtensionRequestFailed))
+    state.copy(signInState = WebSignInState.Failed(WebAuthCopy.ExtensionRequestFailed, WebAuthMethod.Nip07))
+
+fun beginNip46SignIn(state: WebAuthUiState): WebAuthUiState =
+    state.copy(
+        signInState = WebSignInState.SigningIn(WebAuthMethod.Nip46),
+        nip46Status = WebNip46Status.PreparingConnection,
+        nip46Message = "Preparing remote signer connection.",
+    )
+
+fun updateNip46Progress(state: WebAuthUiState, status: WebNip46Status, message: String): WebAuthUiState =
+    state.copy(nip46Status = status, nip46Message = message)
+
+fun completeNip46SignIn(state: WebAuthUiState, publicKey: String?): WebAuthUiState =
+    when (val result = validateNip07PublicKey(publicKey)) {
+        is Nip07PublicKeyResult.Valid ->
+            state.copy(
+                signInState = WebSignInState.SignedIn(WebAccountIdentity(result.publicKeyHex, WebAuthMethod.Nip46)),
+                nip46Status = WebNip46Status.Idle,
+                nip46Message = "",
+            )
+        is Nip07PublicKeyResult.Invalid ->
+            failNip46SignIn(state, result.message)
+    }
+
+fun failNip46SignIn(state: WebAuthUiState, message: String): WebAuthUiState =
+    state.copy(
+        signInState = WebSignInState.Failed(message, WebAuthMethod.Nip46),
+        nip46Status = WebNip46Status.Failed,
+        nip46Message = message,
+    )
 
 fun logoutWebAccount(state: WebAuthUiState): WebAuthUiState =
-    state.copy(signInState = WebSignInState.SignedOut)
+    state.copy(
+        signInState = WebSignInState.SignedOut,
+        nip46Status = WebNip46Status.Idle,
+        nip46Message = "",
+    )
