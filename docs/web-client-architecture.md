@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A static web skeleton exists, but web sign-in, relay sync, encryption/decryption flows, browser persistence, note CRUD, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in held in memory only, but relay sync, encryption/decryption flows, browser persistence, note CRUD, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -164,6 +164,7 @@ Future implementation branches should stay narrow:
   - Request the account pubkey.
   - Establish safe in-memory signed-in state.
   - Add no note writes until signer capabilities are verified.
+  - Current status: implemented for public-key identity only, with no session persistence, note sync, or note writes.
 - `web-client-nip46-signin`
   - Add remote signer token parsing and request flow if browser relay transport is ready.
   - Keep the session non-persistent initially unless a safe persistence design is approved.
