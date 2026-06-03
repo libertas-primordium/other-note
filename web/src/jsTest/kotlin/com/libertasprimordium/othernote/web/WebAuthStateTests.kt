@@ -222,6 +222,28 @@ class WebThemeTests {
 
 class WebDirectKeyFoundationTests {
     @Test
+    fun directNsecInputUsesPasswordStyleAndSafeBrowserHints() {
+        assertEquals("Session-only nsec", DirectNsecInputLabel)
+        assertEquals("password", DirectNsecInputType)
+        assertEquals("off", DirectNsecInputAutocomplete)
+        assertTrue(!DirectNsecInputPlaceholder.lowercase().contains("nsec1"))
+        assertEquals("Use for this session", DirectNsecSubmitLabel)
+    }
+
+    @Test
+    fun directNsecDraftUpdatesWithoutMessageAndClearsOnSubmitAttempt() {
+        val raw = "nsec-like-sensitive-input"
+        val updated = updateWebDirectNsecDraft(WebDirectNsecDraftState(message = "old error"), raw)
+        val cleared = clearWebDirectNsecDraft(WebDirectKeyCopy.InvalidKey)
+
+        assertEquals(raw, updated.input)
+        assertEquals("", updated.message)
+        assertEquals("", cleared.input)
+        assertEquals(WebDirectKeyCopy.InvalidKey, cleared.message)
+        assertTrue(!cleared.message.contains(raw))
+    }
+
+    @Test
     fun validNsecCreatesSessionOnlyDirectKeyIdentity() {
         val result = assertIs<WebDirectKeyLoginResult.Success>(
             createWebDirectKeySession(throwawayNsec(lastByte = 1)),

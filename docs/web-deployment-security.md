@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, select a built-in visual theme, display text-only profile metadata, load encrypted notes, search/sort the currently loaded in-memory note list, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only. A tested direct-key foundation exists for a future session-only `nsec` fallback UI, but no visible direct `nsec` input is exposed yet.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, or a lower-emphasis session-only direct `nsec` fallback; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -52,7 +52,7 @@ Current web auth/session/note/relay state is memory-only. The only browser-persi
 
 - Auth state is not durably restored after refresh.
 - NIP-46 communication keys and session material are not persisted.
-- Direct-key `nsec` sessions are not exposed through UI yet and must remain memory-only when the future UI is added.
+- Direct-key `nsec` sessions are exposed only as a session-only fallback. The pasted key is not saved, the input is cleared on submit, and refresh/logout forgets the session.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
@@ -146,7 +146,7 @@ When testing a production-like host with headers:
 ## Known Limits
 
 - No durable web sessions.
-- No direct `nsec` web flow.
+- Direct `nsec` web flow is session-only and not remembered after refresh/logout.
 - No service worker or offline mode.
 - No durable web note cache.
 - No persistent pending-write queue.

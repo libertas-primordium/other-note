@@ -64,6 +64,7 @@ private var relayStatsState = WebRelayStatsUiState()
 private var relayStatsGuard = WebRelayStatsGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
+private var directNsecDraft = WebDirectNsecDraftState()
 private var webMenuState = WebMenuUiState()
 private var noteLaneCount = webNoteLaneCountForViewport()
 private var noteLoadGuard = WebNoteLoadGuard()
@@ -116,26 +117,24 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(element("section", "hero") {
         appendChild(textElement("p", "eyebrow", "Web client preview"))
         appendChild(textElement("h1", "title", "Other Note"))
-        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07 and NIP-46 sign-in with signer-backed note loading and basic note saves."))
+        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07, NIP-46, and session-only direct-key sign-in with encrypted note loading and basic note saves."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Security boundary"))
-        appendChild(textElement("p", "body", "Your signer keeps your private key. Other Note only asks for your public key in this preview, and signing, encryption, and decryption will remain client-side or signer-delegated."))
+        appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated. Direct nsec fallback is session-only and is forgotten on refresh or logout."))
     })
     appendChild(themeSelectorPanel())
     appendChild(nip07SignInPanel(state))
     appendChild(nip46SignInPanel(state))
+    appendChild(directNsecSignInPanel(state))
     appendChild(element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, relay migration queues, or pending writes. It has no direct nsec input. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
-    })
-    appendChild(element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
+        appendChild(textElement("h2", "section-title", "Sign-in paths"))
         appendChild(element("ul", "method-list") {
             appendChild(textElement("li", "method", "NIP-07 browser extension"))
             appendChild(textElement("li", "method", "NIP-46 remote signer"))
-            appendChild(textElement("li", "method", "Session-only direct nsec fallback later"))
+            appendChild(textElement("li", "method", "Session-only direct nsec fallback"))
         })
+        appendChild(textElement("p", "body small-gap", "This web preview does not persist web sessions, remote signer sessions, direct-key sessions, note caches, drafts, note relay preferences, relay migration queues, or pending writes. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
     })
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
 }
@@ -288,7 +287,7 @@ private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
         appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated."))
         appendChild(textElement("p", "body", "This web preview keeps auth, signer sessions, notes, drafts, relay choices, and pending writes in memory only."))
-        appendChild(textElement("p", "body", "It has no direct nsec input, no durable browser storage for auth, signer, notes, relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
+        appendChild(textElement("p", "body", "Direct nsec fallback is session-only. It has no durable browser storage for auth, signer, direct keys, notes, relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
         appendChild(textElement("p", "body small-gap", "Android and Debian/Linux desktop are the current active native targets."))
     }
 
@@ -627,14 +626,52 @@ private fun nip46SignInPanel(state: WebAuthUiState): WebElement =
         )
     }
 
+private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
+    element("section", "panel fallback-panel") {
+        appendChild(textElement("p", "eyebrow", "Session-only fallback"))
+        appendChild(textElement("h2", "section-title", "Use session-only nsec"))
+        appendChild(textElement("p", "body", "Fallback for this browser session only. Other Note will not save this key. Refreshing the page or logging out forgets it."))
+        appendChild(textElement("p", "body small-gap", "Prefer NIP-07 or a remote signer on shared or untrusted devices. Do not paste an nsec on a shared or untrusted browser."))
+        appendChild(textInputElement(
+            label = DirectNsecInputLabel,
+            value = directNsecDraft.input,
+            enabled = state.signInState !is WebSignInState.SigningIn,
+            inputType = DirectNsecInputType,
+            autocomplete = DirectNsecInputAutocomplete,
+            placeholder = DirectNsecInputPlaceholder,
+            onInput = { value ->
+                directNsecDraft = updateWebDirectNsecDraft(directNsecDraft, value)
+            },
+        ))
+        val failed = state.signInState as? WebSignInState.Failed
+        val message = directNsecDraft.message.takeIf { it.isNotBlank() }
+            ?: failed?.takeIf { it.method == WebAuthMethod.DirectNsec }?.message
+        if (message != null) {
+            appendChild(textElement("p", "body error small-gap", message))
+        }
+        appendChild(
+            buttonElement(
+                text = if (state.signInState is WebSignInState.SigningIn && state.signInState.method == WebAuthMethod.DirectNsec) {
+                    "Direct key sign-in pending"
+                } else {
+                    DirectNsecSubmitLabel
+                },
+                enabled = state.signInState !is WebSignInState.SigningIn,
+                onClick = ::requestDirectNsecSession,
+            ),
+        )
+    }
+
 private fun requestNip07PublicKey() {
     val signer = window.nostr
     if (signer == null) {
+        clearDirectNsecDraft()
         authState = beginNip07SignIn(authState.copy(nip07Available = false))
         render()
         return
     }
 
+    clearDirectNsecDraft()
     authState = beginNip07SignIn(authState.copy(nip07Available = true))
     render()
 
@@ -669,6 +706,7 @@ private fun requestNip07PublicKey() {
 }
 
 private fun requestNip46PublicKey() {
+    clearDirectNsecDraft()
     authState = beginNip46SignIn(authState)
     render()
     clearDirectKeySession()
@@ -707,6 +745,55 @@ private fun requestNip46PublicKey() {
             }
         },
     )
+}
+
+private fun requestDirectNsecSession() {
+    val submitted = directNsecDraft.input
+    clearDirectNsecDraft()
+    clearDirectKeySession()
+    activeNip46RemoteSigner.disconnect()
+    nip46TokenInput = ""
+    authState = authState.copy(
+        signInState = WebSignInState.SigningIn(WebAuthMethod.DirectNsec),
+        nip46Status = WebNip46Status.Idle,
+        nip46Message = "",
+    )
+    render()
+    when (val result = createWebDirectKeySession(submitted)) {
+        is WebDirectKeyLoginResult.Success -> {
+            activeDirectKeySession = result.session
+            noteState = WebNoteLoadState.Idle
+            resetLoadedNotes()
+            resetNoteListControlsState()
+            cancelNoteEdit()
+            resetProfile()
+            resetRelayListState()
+            resetRelayMigrationState()
+            resetRelayStatsState()
+            authState = WebAuthUiState(
+                nip07Available = isNip07Available(),
+                signInState = WebSignInState.SignedIn(result.identity),
+            )
+            render()
+            fetchProfileForSignedInSession()
+            refreshRelayListForSignedInSession(reloadNotesOnImport = true)
+            refreshRelayStatsForSignedInSession()
+            autoLoadNotesForSignedInSession()
+        }
+        is WebDirectKeyLoginResult.Invalid -> failDirectNsecSignIn(result.safeMessage)
+        is WebDirectKeyLoginResult.Unavailable -> failDirectNsecSignIn(result.safeMessage)
+    }
+}
+
+private fun failDirectNsecSignIn(safeMessage: String) {
+    clearDirectKeySession()
+    clearDirectNsecDraft(message = safeMessage)
+    authState = authState.copy(
+        signInState = WebSignInState.Failed(safeMessage, WebAuthMethod.DirectNsec),
+        nip46Status = WebNip46Status.Idle,
+        nip46Message = "",
+    )
+    render()
 }
 
 private fun autoLoadNotesForSignedInSession() {
@@ -970,6 +1057,10 @@ private fun resetRelayStatsState() {
 private fun clearDirectKeySession() {
     activeDirectKeySession?.clear()
     activeDirectKeySession = null
+}
+
+private fun clearDirectNsecDraft(message: String = "") {
+    directNsecDraft = clearWebDirectNsecDraft(message)
 }
 
 private fun updateNoteRelayInput(value: String) {
@@ -1366,6 +1457,7 @@ private fun logout() {
     activeRelayMigrationService = WebRelayMigrationService()
     activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
     nip46TokenInput = ""
+    clearDirectNsecDraft()
     webMenuState = resetWebMenuState()
     resetNoteListControlsState()
     clearNoteDetail()
@@ -1415,6 +1507,7 @@ private fun textInputElement(
     value: String,
     enabled: Boolean,
     inputType: String = Nip46TokenInputType,
+    autocomplete: String = "off",
     placeholder: String = "bunker://...",
     onInput: (String) -> Unit,
 ): WebElement =
@@ -1424,8 +1517,8 @@ private fun textInputElement(
             element("input", "text-input").also { input ->
                 input.value = value
                 input.setAttribute("type", inputType)
-                input.setAttribute("autocomplete", "off")
-                input.setAttribute("autocapitalize", "none")
+                input.setAttribute("autocomplete", autocomplete)
+                input.setAttribute("autocapitalize", "off")
                 input.setAttribute("autocorrect", "off")
                 input.setAttribute("spellcheck", "false")
                 input.setAttribute("placeholder", placeholder)
