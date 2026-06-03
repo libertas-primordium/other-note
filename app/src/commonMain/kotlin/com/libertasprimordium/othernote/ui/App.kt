@@ -1,6 +1,7 @@
 package com.libertasprimordium.othernote.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -82,9 +83,9 @@ import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
+import com.libertasprimordium.othernote.util.noteCardPreview
 import com.libertasprimordium.othernote.util.noteListDisplayNotes
 import com.libertasprimordium.othernote.util.noteSortOptionForId
-import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.launch
 
 sealed class Screen {
@@ -798,9 +799,9 @@ fun NotesListScreen(
             if ((appState.showRelayDiagnostics || appState.showNip55Diagnostics) && diagnostics.isNotBlank()) {
                 Text(diagnostics, color = OtherNoteMuted, fontSize = 12.sp)
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             OtherNoteButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -818,7 +819,7 @@ fun NotesListScreen(
                     }
                 },
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -827,7 +828,7 @@ fun NotesListScreen(
                 Text(
                     "Sort: ${selectedSort.label}",
                     color = OtherNoteMuted,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(
@@ -837,7 +838,7 @@ fun NotesListScreen(
                     Text("Change")
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             if (displayNotes.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp)) {
                     Text(if (searchActive) "No matching notes" else "No notes yet", color = OtherNoteMuted)
@@ -848,8 +849,8 @@ fun NotesListScreen(
                     LazyVerticalStaggeredGrid(
                         columns = StaggeredGridCells.Fixed(columns),
                         modifier = Modifier.fillMaxSize(),
-                        verticalItemSpacing = 8.dp,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalItemSpacing = 6.dp,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         items(displayNotes, key = { it.id }) { note ->
                             NoteCard(
@@ -1109,6 +1110,7 @@ fun NoteCard(
     val editAction = actions.getValue(NoteCardAction.Edit)
     val deleteAction = actions.getValue(NoteCardAction.Delete)
     var showActions by remember(note.id) { mutableStateOf(false) }
+    val preview = remember(note.bodyMarkdown) { noteCardPreview(note.bodyMarkdown) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val actionPresentation = noteCardActionPresentation(platform, maxWidth.value.toInt())
         val cardModifier = when (actionPresentation) {
@@ -1131,13 +1133,40 @@ fun NoteCard(
         Card(
             modifier = cardModifier,
             colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
             shape = RoundedCornerShape(8.dp),
         ) {
-            Column(Modifier.padding(14.dp)) {
-                Text(truncateMarkdown(note.bodyMarkdown).ifBlank { "Untitled note" }, color = OtherNoteText)
-                Text(formatNoteCardUpdatedAt(note.updatedAtMs), color = OtherNoteMuted, fontSize = 12.sp)
+            Column(Modifier.padding(10.dp)) {
+                Text(
+                    preview.title,
+                    color = OtherNoteText,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 17.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (preview.snippet.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        preview.snippet,
+                        color = OtherNoteMuted,
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    formatNoteCardUpdatedAt(note.updatedAtMs),
+                    color = OtherNoteMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (actionPresentation == NoteCardActionPresentation.VisibleButtons) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
                     NoteCardActionButtons(
                         editAction = editAction,
                         deleteAction = deleteAction,
