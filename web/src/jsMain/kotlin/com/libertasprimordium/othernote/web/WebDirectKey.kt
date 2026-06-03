@@ -2,9 +2,26 @@ package com.libertasprimordium.othernote.web
 
 private const val WebDirectKeyByteCount = 32
 
+internal const val DirectNsecInputLabel = "Session-only nsec"
+internal const val DirectNsecInputType = "password"
+internal const val DirectNsecInputAutocomplete = "off"
+internal const val DirectNsecInputPlaceholder = "Paste session-only key"
+internal const val DirectNsecSubmitLabel = "Use for this session"
+
+internal data class WebDirectNsecDraftState(
+    val input: String = "",
+    val message: String = "",
+)
+
+internal fun updateWebDirectNsecDraft(state: WebDirectNsecDraftState, input: String): WebDirectNsecDraftState =
+    state.copy(input = input, message = "")
+
+internal fun clearWebDirectNsecDraft(message: String = ""): WebDirectNsecDraftState =
+    WebDirectNsecDraftState(message = message)
+
 internal object WebDirectKeyCopy {
     const val CryptoUnavailable = "Session-only direct key crypto is unavailable in this web build."
-    const val InvalidKey = "Enter a valid session-only nsec key."
+    const val InvalidKey = "That nsec could not be used. Check the key and try again."
     const val PublicKeyFailed = "Could not derive the direct-key account public key."
     const val SessionCleared = "The session-only direct key is no longer active."
     const val EncryptFailed = "Could not encrypt the note with the session-only direct key."

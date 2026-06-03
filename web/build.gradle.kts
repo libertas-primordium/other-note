@@ -81,9 +81,31 @@ val webSecuritySourceCheck by tasks.registering {
         )
         val directKeyHits = forbiddenDirectKeyPatterns.filter { pattern -> directKeySource.contains(pattern) }
         check(directKeyHits.isEmpty()) {
-            "Direct nsec web foundation must stay memory-only and non-UI; forbidden pattern(s): ${directKeyHits.joinToString()}"
+            "Direct nsec web foundation must stay memory-only and isolated from browser storage/DOM rendering; forbidden pattern(s): ${directKeyHits.joinToString()}"
         }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
+        val directNsecPanel = Regex(
+            """private fun directNsecSignInPanel\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun requestNip07PublicKey""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define directNsecSignInPanel for session-only direct nsec login.")
+        check(directNsecPanel.contains("DirectNsecInputType") && directNsecPanel.contains("DirectNsecInputAutocomplete")) {
+            "Direct nsec input must use the password-style input type and browser-assistance controls."
+        }
+        check(directNsecPanel.contains("Session-only fallback") && directNsecPanel.contains("Other Note will not save this key")) {
+            "Direct nsec sign-in copy must clearly state the session-only, non-persistent boundary."
+        }
+        check(!directNsecPanel.contains("render()")) {
+            "Direct nsec typing must not call render(); replacing the active input on each character drops focus and risks stale DOM values."
+        }
+        val directNsecRequest = Regex(
+            """private fun requestDirectNsecSession\(\)\s*\{(?<body>.*?)private fun failDirectNsecSignIn""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define requestDirectNsecSession.")
+        check(directNsecRequest.indexOf("clearDirectNsecDraft()") in 0 until directNsecRequest.indexOf("createWebDirectKeySession")) {
+            "Direct nsec submit must clear the draft before creating or reporting the session."
+        }
         val relayInputUpdater = Regex(
             """private fun updateNoteRelayInput\(value: String\)\s*\{(?<body>.*?)}""",
             setOf(RegexOption.DOT_MATCHES_ALL),
