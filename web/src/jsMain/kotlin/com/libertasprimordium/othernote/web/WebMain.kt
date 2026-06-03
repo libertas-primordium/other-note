@@ -69,6 +69,7 @@ private var rememberNip46Session = false
 private var rememberedNip46State = loadInitialRememberedNip46State()
 private var directNsecDraft = WebDirectNsecDraftState()
 private var generatedIdentityState = WebGeneratedIdentityState()
+private var activeSignInInfoTopic: WebSignInInfoTopic? = null
 private var webMenuState = WebMenuUiState()
 private var noteLaneCount = webNoteLaneCountForViewport()
 private var noteLoadGuard = WebNoteLoadGuard()
@@ -100,6 +101,13 @@ fun main() {
             render()
         }
     }
+    window.addEventListener("keydown") { event ->
+        val key = event.asDynamic().key as? String
+        if (key == "Escape" && activeSignInInfoTopic != null) {
+            activeSignInInfoTopic = null
+            render()
+        }
+    }
     render()
 }
 
@@ -122,28 +130,15 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(element("section", "hero") {
         appendChild(textElement("p", "eyebrow", "Web client preview"))
         appendChild(textElement("h1", "title", "Other Note"))
-        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07, NIP-46, session-only direct-key sign-in, and session-only fresh identities with encrypted note loading and basic note saves."))
-    })
-    appendChild(element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Security boundary"))
-        appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated. Direct nsec fallback is session-only and is forgotten on refresh or logout."))
+        appendChild(textElement("p", "lede", "Private Nostr-backed notes for this browser session."))
     })
     appendChild(themeSelectorPanel())
     appendChild(nip07SignInPanel(state))
     appendChild(nip46SignInPanel(state))
     appendChild(directNsecSignInPanel(state))
     appendChild(generatedIdentityPanel(state))
-    appendChild(element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Sign-in paths"))
-        appendChild(element("ul", "method-list") {
-            appendChild(textElement("li", "method", "NIP-07 browser extension"))
-            appendChild(textElement("li", "method", "NIP-46 remote signer"))
-            appendChild(textElement("li", "method", "Session-only direct nsec fallback"))
-            appendChild(textElement("li", "method", "Session-only generated identity"))
-        })
-        appendChild(textElement("p", "body small-gap", "This web preview persists only a generic theme choice and, if you opt in, remembered NIP-46 remote-signer communication metadata. It does not persist direct-key sessions, generated identities, note caches, drafts, note relay preferences, relay migration queues, or pending writes."))
-    })
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
+    activeSignInInfoTopic?.let { appendChild(signInInfoModal(it)) }
 }
 
 private fun appShellClass(state: WebAuthUiState): String =
@@ -542,9 +537,54 @@ private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSig
         }
     }
 
+private fun sectionTitleWithInfo(title: String, topic: WebSignInInfoTopic): WebElement =
+    element("div", "section-heading-row") {
+        appendChild(textElement("h2", "section-title", title))
+        appendChild(signInInfoButton(topic))
+    }
+
+private fun signInInfoButton(topic: WebSignInInfoTopic): WebElement {
+    val copy = webSignInInfoCopy(topic)
+    return element("button", "info-button").also { button ->
+        button.setAttribute("type", "button")
+        button.setAttribute("aria-label", "About ${copy.title}")
+        button.textContent = "?"
+        button.addEventListener("click") {
+            activeSignInInfoTopic = topic
+            render()
+        }
+    }
+}
+
+private fun signInInfoModal(topic: WebSignInInfoTopic): WebElement {
+    val copy = webSignInInfoCopy(topic)
+    val titleId = "sign-in-info-${topic.name.lowercase()}-title"
+    return element("div", "modal-backdrop") {
+        appendChild(element("section", "panel modal-panel sign-in-info-panel") {
+            setAttribute("role", "dialog")
+            setAttribute("aria-modal", "true")
+            setAttribute("aria-labelledby", titleId)
+            appendChild(element("div", "modal-header") {
+                appendChild(textElement("h2", "section-title", copy.title).also { it.setAttribute("id", titleId) })
+                appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeSignInInfo))
+            })
+            appendChild(element("div", "panel-content") {
+                copy.body.forEach { line ->
+                    appendChild(textElement("p", "body small-gap", line))
+                }
+            })
+        })
+    }
+}
+
+private fun closeSignInInfo() {
+    activeSignInInfoTopic = null
+    render()
+}
+
 private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
     element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Browser extension sign-in"))
+        appendChild(sectionTitleWithInfo("Browser extension sign-in", WebSignInInfoTopic.Nip07))
         when (val signInState = state.signInState) {
             WebSignInState.SignedOut -> {
                 appendChild(
@@ -552,9 +592,9 @@ private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
                         "p",
                         "body",
                         if (state.nip07Available) {
-                            "NIP-07 signer detected. Sign in to identify the account for this browser session."
+                            "NIP-07 signer detected."
                         } else {
-                            "Install or enable a Nostr browser extension to sign in with NIP-07."
+                            "NIP-07 extension not detected."
                         },
                     ),
                 )
@@ -570,7 +610,7 @@ private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
                 appendChild(textElement("p", "body", "Waiting for the browser extension..."))
                 appendChild(buttonElement(text = "Sign-in request pending", enabled = false))
             } else {
-                appendChild(textElement("p", "body", "Browser extension sign-in is available separately."))
+                appendChild(textElement("p", "body", "Browser extension sign-in is available."))
                 appendChild(buttonElement(text = "Sign in with browser extension", enabled = false))
             }
             is WebSignInState.Failed -> if (signInState.method == WebAuthMethod.Nip07) {
@@ -588,9 +628,9 @@ private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
                         "p",
                         "body",
                         if (state.nip07Available) {
-                            "NIP-07 signer detected. Sign in to identify the account for this browser session."
+                            "NIP-07 signer detected."
                         } else {
-                            "Install or enable a Nostr browser extension to sign in with NIP-07."
+                            "NIP-07 extension not detected."
                         },
                     ),
                 )
@@ -608,8 +648,7 @@ private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
 
 private fun nip46SignInPanel(state: WebAuthUiState): WebElement =
     element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Remote signer / NIP-46"))
-        appendChild(textElement("p", "body", "Your private key stays in the remote signer. New pairings are session-only unless you explicitly remember the signer on this browser."))
+        appendChild(sectionTitleWithInfo("Remote signer / NIP-46", WebSignInInfoTopic.Nip46))
         appendChild(rememberedNip46SessionPanel(state))
         appendChild(textInputElement(
             label = Nip46TokenInputLabel,
@@ -623,9 +662,12 @@ private fun nip46SignInPanel(state: WebAuthUiState): WebElement =
             enabled = state.signInState !is WebSignInState.SigningIn,
             onChange = ::setRememberNip46Session,
         ))
-        appendChild(textElement("p", "body muted small-gap", rememberNip46OptInLabel(rememberNip46Session)))
+        appendChild(element("div", "inline-info-row") {
+            appendChild(textElement("p", "body muted", rememberNip46OptInLabel(rememberNip46Session)))
+            appendChild(signInInfoButton(WebSignInInfoTopic.RememberedNip46))
+        })
         if (rememberNip46Session) {
-            appendChild(textElement("p", "body muted small-gap", "Use only on a trusted browser/device. Use Forget remembered remote signer to remove this reusable session from this browser."))
+            appendChild(textElement("p", "body muted small-gap", "Use only on a trusted browser/device."))
         }
         if (state.nip46Message.isNotBlank()) {
             val style = if (state.nip46Status == WebNip46Status.Failed) "body error small-gap" else "body small-gap"
@@ -648,8 +690,10 @@ private fun rememberedNip46SessionPanel(state: WebAuthUiState): WebElement =
     element("div", "remembered-signer-panel") {
         val record = rememberedNip46State.record
         if (record != null) {
-            appendChild(textElement("p", "body small-gap", "Remembered remote signer: ${WebAccountIdentity(record.userPubkey, WebAuthMethod.Nip46).displayPublicKey}"))
-            appendChild(textElement("p", "body muted small-gap", "This browser stores only the app's NIP-46 communication session and signer transport relays. It does not store your private key."))
+            appendChild(element("div", "inline-info-row remembered-signer-summary") {
+                appendChild(textElement("p", "body small-gap", "Remembered remote signer: ${WebAccountIdentity(record.userPubkey, WebAuthMethod.Nip46).displayPublicKey}"))
+                appendChild(signInInfoButton(WebSignInInfoTopic.RememberedNip46))
+            })
             appendChild(element("div", "inline-actions remembered-signer-actions") {
                 appendChild(buttonElement(
                     text = "Continue with remembered remote signer",
@@ -677,9 +721,8 @@ private fun rememberedNip46SessionPanel(state: WebAuthUiState): WebElement =
 private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
     element("section", "panel fallback-panel") {
         appendChild(textElement("p", "eyebrow", "Session-only fallback"))
-        appendChild(textElement("h2", "section-title", "Use session-only nsec"))
-        appendChild(textElement("p", "body", "Fallback for this browser session only. Other Note will not save this key. Refreshing the page or logging out forgets it."))
-        appendChild(textElement("p", "body small-gap", "Prefer NIP-07 or a remote signer on shared or untrusted devices. Do not paste an nsec on a shared or untrusted browser."))
+        appendChild(sectionTitleWithInfo("Use session-only nsec", WebSignInInfoTopic.DirectNsec))
+        appendChild(textElement("p", "body", "Session-only. Other Note will not save this key."))
         appendChild(textInputElement(
             label = DirectNsecInputLabel,
             value = directNsecDraft.input,
@@ -712,11 +755,9 @@ private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
 
 private fun generatedIdentityPanel(state: WebAuthUiState): WebElement =
     element("section", "panel fallback-panel") {
-        appendChild(textElement("p", "eyebrow", "Deliberate recovery flow"))
-        appendChild(textElement("h2", "section-title", "Create new identity"))
-        appendChild(textElement("p", "body", "This creates a new Nostr identity in this browser. The nsec is your private key."))
-        appendChild(textElement("p", "body small-gap", "Other Note cannot recover this key. If you lose this nsec, you will lose access to encrypted notes for this identity forever."))
-        appendChild(textElement("p", "body small-gap", "Save it in a secure password manager, OS keyring, or signer before continuing. This browser session will forget the key when you refresh or log out."))
+        appendChild(textElement("p", "eyebrow", "Session only"))
+        appendChild(sectionTitleWithInfo("Create new identity", WebSignInInfoTopic.GeneratedIdentity))
+        appendChild(textElement("p", "body", "Generate a fresh session-only Nostr identity."))
         val secret = generatedIdentityState.secret
         if (secret == null) {
             if (generatedIdentityState.message.isNotBlank()) {
@@ -728,6 +769,7 @@ private fun generatedIdentityPanel(state: WebAuthUiState): WebElement =
                 onClick = ::generateFreshIdentity,
             ))
         } else {
+            appendChild(textElement("p", "body small-gap", "Save this nsec before continuing. Other Note cannot recover it."))
             appendChild(textElement("p", "body small-gap", "Generated public identity: ${secret.displayPublicKey}"))
             appendChild(textElement("pre", "generated-secret-display", secret.revealNsec()))
             appendChild(element("div", "checkbox-list") {

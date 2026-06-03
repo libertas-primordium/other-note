@@ -300,6 +300,44 @@
             letter-spacing: 0;
         }
 
+        .section-heading-row {
+            display: flex;
+            min-width: 0;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .section-heading-row .section-title {
+            min-width: 0;
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .info-button {
+            display: inline-flex;
+            flex: 0 0 auto;
+            width: 40px;
+            height: 40px;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--subtle-border);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--accent);
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .info-button:hover,
+        .info-button:focus {
+            border-color: var(--accent);
+            outline: none;
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+        }
+
         .body {
             margin: 0;
             color: var(--muted);
@@ -427,8 +465,31 @@
             margin-top: 0;
         }
 
+        .sign-in-info-panel .body {
+            color: var(--text);
+        }
+
         .panel-content {
             margin-top: 8px;
+        }
+
+        .inline-info-row {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 8px;
+        }
+
+        .inline-info-row .body {
+            min-width: 0;
+        }
+
+        .inline-info-row .info-button {
+            width: 36px;
+            height: 36px;
         }
 
         .field-label {

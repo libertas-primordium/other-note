@@ -222,6 +222,50 @@ class WebThemeTests {
 
 class WebDirectKeyFoundationTests {
     @Test
+    fun signInInfoTopicsCoverSensitiveWebLoginMethods() {
+        assertEquals(
+            listOf(
+                WebSignInInfoTopic.Nip07,
+                WebSignInInfoTopic.Nip46,
+                WebSignInInfoTopic.RememberedNip46,
+                WebSignInInfoTopic.DirectNsec,
+                WebSignInInfoTopic.GeneratedIdentity,
+            ),
+            WebSignInInfoTopics,
+        )
+        WebSignInInfoTopics.forEach { topic ->
+            val copy = webSignInInfoCopy(topic)
+            assertTrue(copy.title.isNotBlank())
+            assertTrue(copy.body.isNotEmpty())
+            assertTrue(copy.body.all { it.isNotBlank() })
+        }
+    }
+
+    @Test
+    fun signInInfoCopyPreservesRequiredSafetyWarnings() {
+        val nip07 = webSignInInfoCopy(WebSignInInfoTopic.Nip07).body.joinToString(" ").lowercase()
+        val nip46 = webSignInInfoCopy(WebSignInInfoTopic.Nip46).body.joinToString(" ").lowercase()
+        val remembered = webSignInInfoCopy(WebSignInInfoTopic.RememberedNip46).body.joinToString(" ").lowercase()
+        val direct = webSignInInfoCopy(WebSignInInfoTopic.DirectNsec).body.joinToString(" ").lowercase()
+        val generated = webSignInInfoCopy(WebSignInInfoTopic.GeneratedIdentity).body.joinToString(" ").lowercase()
+
+        assertTrue(nip07.contains("extension"))
+        assertTrue(nip07.contains("does not receive your private key"))
+        assertTrue(nip46.contains("remote signer"))
+        assertTrue(nip46.contains("separate from note relays"))
+        assertTrue(nip46.contains("plaintext note payloads"))
+        assertTrue(remembered.contains("does not store your private key"))
+        assertTrue(remembered.contains("communication session record"))
+        assertTrue(remembered.contains("sensitive"))
+        assertTrue(direct.contains("nsec is your private key"))
+        assertTrue(direct.contains("does not save"))
+        assertTrue(direct.contains("refreshing or logging out forgets"))
+        assertTrue(generated.contains("generated nsec is the private key"))
+        assertTrue(generated.contains("cannot recover"))
+        assertTrue(generated.contains("losing access"))
+    }
+
+    @Test
     fun directNsecInputUsesPasswordStyleAndSafeBrowserHints() {
         assertEquals("Session-only nsec", DirectNsecInputLabel)
         assertEquals("password", DirectNsecInputType)
