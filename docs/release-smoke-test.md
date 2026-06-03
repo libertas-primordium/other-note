@@ -31,6 +31,7 @@ Expected generated artifact paths:
 
 - Android debug APK: `app/build/outputs/apk/debug/app-debug.apk`
 - Debian package: `app/build/compose/binaries/main/deb/other-note_0.1.0_amd64.deb`
+- Web production distribution: `web/build/dist/js/productionExecutable/`
 
 Generated artifacts must remain untracked.
 
@@ -123,6 +124,29 @@ Manual checks:
 - [ ] Local-only mode does not sign, publish, or sync to relays.
 - [ ] NIP-46 saved session resumes without a fresh pairing handshake.
 
+## Web artifact smoke test
+
+Build and inspect:
+
+```bash
+./gradlew :web:jsBrowserDistribution
+find web/build/dist/js/productionExecutable -maxdepth 2 -type f -printf '%P\n' | sort
+```
+
+Manual/security checks:
+
+- [ ] Production distribution contains `index.html` and the generated `other-note-web.js` bundle.
+- [ ] Production distribution contains no service worker files.
+- [ ] `index.html` loads only self-hosted static assets.
+- [ ] `index.html` includes the static smoke-test CSP meta tag.
+- [ ] Production hosting sends CSP/security headers; see [web-deployment-security.md](web-deployment-security.md).
+- [ ] NIP-07 sign-in works where a compatible extension is available.
+- [ ] NIP-46 sign-in works with a real remote signer if available.
+- [ ] Note load/create/edit/delete and session-only note relay selection still work.
+- [ ] DevTools storage contains no Other Note auth/session/key/note/draft/pending-write data.
+- [ ] DevTools network shows only static assets, expected Nostr relay WebSockets, and expected signer transport behavior.
+- [ ] `git status --short` does not show generated web artifacts.
+
 ## Cleanup
 
 Optional uninstall:
@@ -143,6 +167,6 @@ Do not commit generated APKs, `.deb` packages, logs, screenshots, local key mate
 
 This is a smoke checklist, not full release certification.
 
-Public release still needs real signing decisions, release APK/AAB policy, distribution policy, privacy/security review, and platform-specific work beyond the current Android and Debian/Linux targets.
+Public release still needs real signing decisions, release APK/AAB policy, distribution policy, privacy/security review, web deployment/security review, and platform-specific work beyond the current Android and Debian/Linux targets.
 
-Windows, macOS, iOS, and web are future targets and are not release-ready because this checklist passes.
+Windows, macOS, iOS, and public web deployment are future targets and are not release-ready because this checklist passes.
