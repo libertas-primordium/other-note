@@ -116,6 +116,8 @@ Deployment requirements:
 
 Served JavaScript has a larger trust surface than native binaries because the code can change at deploy time. Any public web deployment must treat build provenance, asset integrity, CSP, and dependency review as release blockers.
 
+The concrete static hosting header template and web smoke checklist live in [web-deployment-security.md](web-deployment-security.md).
+
 ## Code sharing plan
 
 Likely shared common code:
