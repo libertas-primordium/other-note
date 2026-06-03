@@ -421,6 +421,269 @@ class WebProfileMetadataTests {
         )
 }
 
+class WebRelayListImportTests {
+    private val accountPubkey = "aa".repeat(32)
+    private val identity = WebAccountIdentity(accountPubkey, WebAuthMethod.Nip46)
+
+    @Test
+    fun relayListRequestTargetsSignedInPubkeyAndKind10002() {
+        val message = webRelayListRequestMessage(accountPubkey)
+
+        assertTrue(message.contains(""""authors":["$accountPubkey"]"""))
+        assertTrue(message.contains(""""kinds":[10002]"""))
+        assertTrue(message.contains(""""limit":20"""))
+    }
+
+    @Test
+    fun relayListParserImportsWriteAndUnmarkedOutboxRelays() {
+        val parsed = parseWebRelayListEvent(
+            relayListEvent(
+                tags = listOf(
+                    listOf("r", "relay-one.example", "write"),
+                    listOf("r", "relay-two.example"),
+                    listOf("r", "relay-three.example", "outbox"),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf("wss://relay-one.example", "wss://relay-two.example", "wss://relay-three.example"),
+            parsed.writeRelayUrls,
+        )
+    }
+
+    @Test
+    fun relayListParserIgnoresReadAndInboxOnlyRelaysForEditableNoteSettings() {
+        val parsed = parseWebRelayListEvent(
+            relayListEvent(
+                tags = listOf(
+                    listOf("r", "read.example", "read"),
+                    listOf("r", "inbox.example", "inbox"),
+                    listOf("r", "write.example", "write"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("wss://write.example"), parsed.writeRelayUrls)
+    }
+
+    @Test
+    fun relayListParserPreservesUnknownAndNonRelayTagsForFutureMetadataSafety() {
+        val parsed = parseWebRelayListEvent(
+            relayListEvent(
+                tags = listOf(
+                    listOf("client", "other-note"),
+                    listOf("r", "custom.example", "custom", "extra"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf(listOf("client", "other-note")), parsed.preservedTags)
+        assertEquals("custom", parsed.relayEntries.single().marker)
+        assertEquals(listOf("extra"), parsed.relayEntries.single().extraFields)
+        assertTrue(parsed.writeRelayUrls.isEmpty())
+    }
+
+    @Test
+    fun relayListParserRejectsMalformedHttpQueryAndFragmentRelays() {
+        val parsed = parseWebRelayListEvent(
+            relayListEvent(
+                tags = listOf(
+                    listOf("r", "http://relay.example", "write"),
+                    listOf("r", "https://relay.example", "write"),
+                    listOf("r", "wss://relay.example?x=1", "write"),
+                    listOf("r", "wss://relay.example#fragment", "write"),
+                    listOf("r", "wss://valid.example", "write"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("wss://valid.example"), parsed.writeRelayUrls)
+        assertEquals(4, parsed.malformedRelayTagCount)
+    }
+
+    @Test
+    fun relayListParserNormalizesAndDeduplicatesRelays() {
+        val parsed = parseWebRelayListEvent(
+            relayListEvent(
+                tags = listOf(
+                    listOf("r", "Relay.Example/nostr/", "write"),
+                    listOf("r", "wss://relay.example/nostr", "write"),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("wss://relay.example/nostr"), parsed.writeRelayUrls)
+    }
+
+    @Test
+    fun newestValidMatchingRelayListWins() {
+        val older = relayListEvent(
+            id = "01".repeat(32),
+            createdAt = 1,
+            tags = listOf(listOf("r", "older.example", "write")),
+        )
+        val newer = relayListEvent(
+            id = "02".repeat(32),
+            createdAt = 2,
+            tags = listOf(listOf("r", "newer.example", "write")),
+        )
+
+        val selected = selectLatestWebRelayList(listOf(older, newer), accountPubkey, validateEvent = { true })
+
+        assertEquals(listOf("wss://newer.example"), selected?.writeRelayUrls)
+    }
+
+    @Test
+    fun mismatchedPubkeyAndWrongKindRelayListsAreIgnored() {
+        val wrongPubkey = relayListEvent(pubkey = "bb".repeat(32), tags = listOf(listOf("r", "wrong.example", "write")))
+        val wrongKind = relayListEvent(kind = 0, tags = listOf(listOf("r", "profile.example", "write")))
+
+        assertNull(selectLatestWebRelayList(listOf(wrongPubkey, wrongKind), accountPubkey, validateEvent = { true }))
+    }
+
+    @Test
+    fun invalidEventValidationDoesNotSelectRelayList() {
+        val event = relayListEvent(tags = listOf(listOf("r", "relay.example", "write")))
+
+        assertNull(selectLatestWebRelayList(listOf(event), accountPubkey, validateEvent = { false }))
+    }
+
+    @Test
+    fun publishedRelayImportAppliesUsableWriteRelaysToSessionSettings() {
+        val decision = assertIs<WebRelayListImportDecision.Applied>(
+            importPublishedWebNoteRelays(
+                settings = defaultWebNoteRelaySettings(),
+                relayState = WebRelayListUiState(pubkey = accountPubkey),
+                publishedRelays = listOf("relay.example"),
+            ),
+        )
+
+        assertEquals(listOf("wss://relay.example"), selectedWebNoteRelays(decision.settings))
+        assertEquals(WebRelayListCopy.Imported, decision.relayState.message)
+        assertTrue(decision.changed)
+    }
+
+    @Test
+    fun noUsablePublishedWriteRelaysKeepsCurrentSessionSettings() {
+        val current = WebNoteRelaySettingsState(relays = listOf("wss://current.example"))
+        val decision = assertIs<WebRelayListImportDecision.KeptCurrent>(
+            importPublishedWebNoteRelays(
+                settings = current,
+                relayState = WebRelayListUiState(pubkey = accountPubkey),
+                publishedRelays = emptyList(),
+            ),
+        )
+
+        assertEquals(listOf("wss://current.example"), selectedWebNoteRelays(decision.settings))
+        assertEquals(WebRelayListCopy.NoPublishedWriteRelays, decision.relayState.message)
+    }
+
+    @Test
+    fun fetchedRelayListDoesNotClobberUnsavedAddRelayDraft() {
+        val current = WebNoteRelaySettingsState(
+            relays = listOf("wss://current.example"),
+            input = "draft-relay.example",
+        )
+        val decision = assertIs<WebRelayListImportDecision.Deferred>(
+            importPublishedWebNoteRelays(
+                settings = current,
+                relayState = WebRelayListUiState(pubkey = accountPubkey),
+                publishedRelays = listOf("published.example"),
+            ),
+        )
+
+        assertEquals("draft-relay.example", decision.settings.input)
+        assertEquals(listOf("wss://current.example"), selectedWebNoteRelays(decision.settings))
+        assertEquals(listOf("wss://published.example"), decision.relayState.pendingPublishedRelays)
+        assertEquals(WebRelayListCopy.DeferredForLocalDraft, decision.relayState.message)
+    }
+
+    @Test
+    fun explicitPendingRelayListApplyReplacesDraftOnlyWhenChosen() {
+        val settings = WebNoteRelaySettingsState(
+            relays = listOf("wss://current.example"),
+            input = "draft-relay.example",
+        )
+        val relayState = WebRelayListUiState(
+            pubkey = accountPubkey,
+            pendingPublishedRelays = listOf("wss://published.example"),
+        )
+
+        val decision = assertIs<WebRelayListImportDecision.Applied>(
+            applyPendingPublishedWebNoteRelays(settings, relayState),
+        )
+
+        assertEquals("", decision.settings.input)
+        assertEquals(listOf("wss://published.example"), selectedWebNoteRelays(decision.settings))
+        assertEquals(WebRelayListCopy.Imported, decision.relayState.message)
+    }
+
+    @Test
+    fun keepingLocalRelayEditsClearsPendingPublishedListOnly() {
+        val state = keepLocalWebRelayEdits(
+            WebRelayListUiState(
+                pubkey = accountPubkey,
+                pendingPublishedRelays = listOf("wss://published.example"),
+            ),
+        )
+
+        assertTrue(state.pendingPublishedRelays.isEmpty())
+        assertEquals(WebRelayListCopy.KeptLocalEdits, state.message)
+    }
+
+    @Test
+    fun nip46SignerTransportRelaysAreNotImportedWithoutPublishedRelayTags() {
+        val signerRelay = "wss://signer-transport.example"
+        val encodedRelay = signerRelay.replace(":", "%3A").replace("/", "%2F")
+        val parsed = assertIs<WebNip46TokenParseResult.Valid>(
+            parseWebNip46BunkerToken("bunker://${"22".repeat(32)}?relay=$encodedRelay"),
+        )
+        val decision = assertIs<WebRelayListImportDecision.KeptCurrent>(
+            importPublishedWebNoteRelays(
+                settings = defaultWebNoteRelaySettings(),
+                relayState = WebRelayListUiState(pubkey = accountPubkey),
+                publishedRelays = emptyList(),
+            ),
+        )
+
+        assertEquals(listOf(signerRelay), parsed.token.relays)
+        assertTrue(signerRelay !in selectedWebNoteRelays(decision.settings))
+    }
+
+    @Test
+    fun relayListLoadGuardRejectsLogoutAndAccountSwitch() {
+        val started = WebRelayListLoadGuard().start(identity)
+        val signedIn = WebAuthUiState(nip07Available = true, signInState = WebSignInState.SignedIn(identity))
+        val loggedOut = WebAuthUiState(nip07Available = true)
+        val switched = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(WebAccountIdentity("bb".repeat(32), WebAuthMethod.Nip46)),
+        )
+
+        assertTrue(started.guard.accepts(started.request, signedIn))
+        assertTrue(!started.guard.accepts(started.request, loggedOut))
+        assertTrue(!started.guard.accepts(started.request, switched))
+    }
+
+    private fun relayListEvent(
+        id: String = "03".repeat(32),
+        pubkey: String = accountPubkey,
+        createdAt: Long = 1,
+        kind: Int = WebRelayListKind,
+        tags: List<List<String>>,
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id,
+            pubkey = pubkey,
+            createdAt = createdAt,
+            kind = kind,
+            tags = tags,
+            content = "",
+            sig = "04".repeat(64),
+        )
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {
