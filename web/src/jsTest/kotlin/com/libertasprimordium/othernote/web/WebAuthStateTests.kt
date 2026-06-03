@@ -684,6 +684,369 @@ class WebRelayListImportTests {
         )
 }
 
+class WebRelayStatsTests {
+    private val accountPubkey = "ee".repeat(32)
+
+    @Test
+    fun relayStatLabelsAreCompactAndSafe() {
+        assertEquals("unknown", webRelayEventStatLabel(WebRelayEventStat.Unknown))
+        assertEquals("checking...", webRelayEventStatLabel(WebRelayEventStat.Checking))
+        assertEquals("0 events found", webRelayEventStatLabel(WebRelayEventStat.Loaded(0)))
+        assertEquals("1 event found", webRelayEventStatLabel(WebRelayEventStat.Loaded(1)))
+        assertEquals("3 events found", webRelayEventStatLabel(WebRelayEventStat.Loaded(3)))
+        assertEquals("unavailable", webRelayEventStatLabel(WebRelayEventStat.Unavailable))
+    }
+
+    @Test
+    fun relayStatsCountValidMatchingNoteEventsIncludingReplacementsAndTombstones() {
+        val first = statsNoteEvent("first", createdAt = 1, noteId = "same")
+        val edit = statsNoteEvent("edit", createdAt = 2, noteId = "same")
+        val tombstone = statsNoteEvent("delete", createdAt = 3, noteId = "same")
+        val other = statsNoteEvent("other", createdAt = 4, noteId = "other")
+
+        val count = webRelayStatsCountValidEvents(
+            events = listOf(first, edit, tombstone, other),
+            accountPubkey = accountPubkey,
+            validateEvent = { true },
+        )
+
+        assertEquals(4, count)
+    }
+
+    @Test
+    fun relayStatsRejectWrongAccountMalformedAndNonOtherNoteEvents() {
+        val valid = statsNoteEvent("valid", createdAt = 1, noteId = "valid")
+        val wrongAccount = statsNoteEvent("wrong", createdAt = 2, noteId = "wrong", pubkey = "ff".repeat(32))
+        val missingDTag = statsNoteEvent("missing-d", createdAt = 3, noteId = "missing").copy(
+            tags = listOf(listOf("t", WebOtherNoteTag)),
+        )
+        val nonOtherNote = statsNoteEvent("non-other", createdAt = 4, noteId = "non").copy(
+            tags = listOf(listOf("d", webNoteDTag("non"))),
+        )
+
+        val count = webRelayStatsCountValidEvents(
+            events = listOf(valid, wrongAccount, missingDTag, nonOtherNote),
+            accountPubkey = accountPubkey,
+            validateEvent = { it.id != missingDTag.id },
+        )
+
+        assertEquals(1, count)
+    }
+
+    @Test
+    fun relayStatsDeduplicateEventIdsPerRelay() {
+        val event = statsNoteEvent("same", createdAt = 1, noteId = "same")
+
+        assertEquals(
+            1,
+            webRelayStatsCountValidEvents(
+                events = listOf(event, event),
+                accountPubkey = accountPubkey,
+                validateEvent = { true },
+            ),
+        )
+    }
+
+    @Test
+    fun relayStatsPartialFailureDoesNotEraseSuccessfulCounts() {
+        val success = webRelayEventStatForEvents(
+            events = listOf(statsNoteEvent("valid", createdAt = 1, noteId = "valid")),
+            accountPubkey = accountPubkey,
+            validateEvent = { true },
+        )
+        val failed = webRelayEventStatForEvents(
+            events = emptyList(),
+            accountPubkey = accountPubkey,
+            failed = true,
+            validateEvent = { true },
+        )
+
+        assertEquals(WebRelayEventStat.Loaded(1), success)
+        assertEquals(WebRelayEventStat.Unavailable, failed)
+    }
+
+    @Test
+    fun relayStatsGuardRejectsLogoutAccountSwitchAndRelayChange() {
+        val identity = WebAccountIdentity(accountPubkey, WebAuthMethod.Nip46)
+        val started = WebRelayStatsGuard().start(identity, listOf("wss://one.example"))
+        val signedIn = WebAuthUiState(nip07Available = true, signInState = WebSignInState.SignedIn(identity))
+        val loggedOut = WebAuthUiState(nip07Available = true)
+        val switched = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(WebAccountIdentity("ff".repeat(32), WebAuthMethod.Nip46)),
+        )
+
+        assertTrue(started.guard.accepts(started.request, signedIn, listOf("wss://one.example")))
+        assertTrue(!started.guard.accepts(started.request, loggedOut, listOf("wss://one.example")))
+        assertTrue(!started.guard.accepts(started.request, switched, listOf("wss://one.example")))
+        assertTrue(!started.guard.accepts(started.request, signedIn, listOf("wss://two.example")))
+    }
+
+    @Test
+    fun relayStatsDoNotIncludeSignerTransportRelayUnlessItIsAnActiveNoteRelay() {
+        val signerRelay = "wss://signer-transport.example"
+        val started = WebRelayStatsGuard().start(
+            WebAccountIdentity(accountPubkey, WebAuthMethod.Nip46),
+            listOf("wss://note.example"),
+        )
+
+        assertTrue(signerRelay !in started.request.relays)
+        assertEquals(listOf("wss://note.example"), started.request.relays)
+    }
+
+    private fun statsNoteEvent(
+        id: String,
+        createdAt: Long,
+        noteId: String,
+        pubkey: String = accountPubkey,
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id.padEnd(64, '0').take(64),
+            pubkey = pubkey,
+            createdAt = createdAt,
+            kind = WebNoteKind,
+            tags = webNoteEventTags(noteId),
+            content = "cipher-$id",
+            sig = "14".repeat(64),
+        )
+}
+
+class WebRelayMigrationTests {
+    private val accountPubkey = "cc".repeat(32)
+
+    @Test
+    fun migrationPlanDetectsNoChangesAddedRemovedAndRetainedRelays() {
+        val unchanged = planWebRelayMigration(
+            oldRelays = listOf("wss://one.example"),
+            newRelays = listOf("wss://one.example"),
+        )
+        val changed = planWebRelayMigration(
+            oldRelays = listOf("wss://one.example", "wss://two.example"),
+            newRelays = listOf("wss://two.example", "wss://three.example"),
+        )
+
+        assertTrue(!unchanged.migrationRequired)
+        assertEquals(listOf("wss://three.example"), changed.addedRelays)
+        assertEquals(listOf("wss://one.example"), changed.removedRelays)
+        assertEquals(listOf("wss://two.example"), changed.retainedRelays)
+    }
+
+    @Test
+    fun migrationTargetRelaysIncludeAddedAndRetainedRequestedRelays() {
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://old.example", "wss://keep.example"),
+            newRelays = listOf("wss://keep.example", "wss://new.example"),
+        )
+
+        assertEquals(
+            listOf("wss://new.example", "wss://keep.example"),
+            webRelayMigrationTargetRelays(plan),
+        )
+    }
+
+    @Test
+    fun manualSyncTargetRelaysUseCurrentRelaysWithoutRelayChanges() {
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://one.example", "wss://two.example"),
+            newRelays = listOf("wss://one.example", "wss://two.example"),
+        )
+
+        assertTrue(!plan.migrationRequired)
+        assertEquals(
+            listOf("wss://one.example", "wss://two.example"),
+            webRelayMigrationTargetRelays(plan),
+        )
+    }
+
+    @Test
+    fun manualSyncHasNoTargetsWhenNoActiveRelaysExist() {
+        val plan = planWebRelayMigration(oldRelays = emptyList(), newRelays = emptyList())
+
+        assertTrue(!plan.migrationRequired)
+        assertEquals(emptyList(), webRelayMigrationTargetRelays(plan))
+    }
+
+    @Test
+    fun manualSyncNoEventsFoundIsSafeNonFatalStatus() {
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://one.example"),
+            newRelays = listOf("wss://one.example"),
+        )
+        val result = WebRelayMigrationResult(
+            plan = plan,
+            fetchStatuses = listOf(WebNoteRelayStatus("wss://one.example", connected = true)),
+            fetchedEventCount = 0,
+            latestEvents = emptyList(),
+            publishStatusesByEventId = emptyMap(),
+            relayListPublish = null,
+            warnings = listOf("No encrypted note events were found on current relays."),
+        )
+
+        assertTrue(result.onlyNoSourceEventsWarning)
+        assertEquals("No encrypted notes found to migrate", webRelayMigrationWarning(result).title)
+    }
+
+    @Test
+    fun manualSyncTargetsCurrentNoteRelaysNotSignerTransportRelays() {
+        val signerRelay = "wss://signer-transport.example"
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://note-one.example", "wss://note-two.example"),
+            newRelays = listOf("wss://note-one.example", "wss://note-two.example"),
+        )
+
+        assertTrue(signerRelay !in webRelayMigrationTargetRelays(plan))
+    }
+
+    @Test
+    fun latestSignedEncryptedEventSelectionKeepsNewestPerDTagIncludingTombstones() {
+        val old = migrationNoteEvent("old", createdAt = 1, noteId = "same", content = "cipher-old")
+        val replacement = migrationNoteEvent("replacement", createdAt = 2, noteId = "same", content = "cipher-new")
+        val tombstone = migrationNoteEvent("tombstone", createdAt = 3, noteId = "same", content = "cipher-delete")
+
+        val selected = selectLatestSignedEncryptedWebNoteEvents(
+            events = listOf(old, tombstone, replacement),
+            accountPubkey = accountPubkey,
+            validateEvent = { true },
+        )
+
+        assertEquals(listOf(tombstone.id), selected.map { it.id })
+        assertEquals("cipher-delete", selected.single().content)
+    }
+
+    @Test
+    fun latestSignedEncryptedEventSelectionIgnoresWrongAccountMalformedAndInvalidEvents() {
+        val valid = migrationNoteEvent("valid", createdAt = 1, noteId = "valid")
+        val wrongAccount = migrationNoteEvent("wrong", createdAt = 2, noteId = "wrong", pubkey = "dd".repeat(32))
+        val missingDTag = migrationNoteEvent("missing-d", createdAt = 3, noteId = "missing").copy(
+            tags = listOf(listOf("t", "other-note")),
+        )
+
+        val selected = selectLatestSignedEncryptedWebNoteEvents(
+            events = listOf(valid, wrongAccount, missingDTag),
+            accountPubkey = accountPubkey,
+            validateEvent = { it.id != missingDTag.id },
+        )
+
+        assertEquals(listOf(valid.id), selected.map { it.id })
+    }
+
+    @Test
+    fun migrationWarningClassifiesAllTargetWriteFailure() {
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://old.example"),
+            newRelays = listOf("wss://old.example", "wss://new.example"),
+        )
+        val result = WebRelayMigrationResult(
+            plan = plan,
+            fetchStatuses = listOf(WebNoteRelayStatus("wss://old.example", connected = true, returnedEvents = 1)),
+            fetchedEventCount = 1,
+            latestEvents = listOf(migrationNoteEvent("latest", createdAt = 1, noteId = "note")),
+            publishStatusesByEventId = mapOf(
+                "latest" to listOf(WebNoteRelayStatus("wss://new.example", connected = true, failed = true)),
+            ),
+            relayListPublish = null,
+            warnings = listOf("No target relay accepted migrated encrypted events."),
+        )
+
+        val warning = webRelayMigrationWarning(result)
+
+        assertEquals("No target relay accepted migrated notes", warning.title)
+        assertTrue(warning.details.contains("selected_events=1"))
+        assertTrue(!warning.details.contains("cipher"))
+    }
+
+    @Test
+    fun migrationWarningAllowsFreshRelaySetWithNoSourceEvents() {
+        val plan = planWebRelayMigration(
+            oldRelays = listOf("wss://old.example"),
+            newRelays = listOf("wss://new.example"),
+        )
+        val result = WebRelayMigrationResult(
+            plan = plan,
+            fetchStatuses = listOf(WebNoteRelayStatus("wss://old.example", connected = true)),
+            fetchedEventCount = 0,
+            latestEvents = emptyList(),
+            publishStatusesByEventId = emptyMap(),
+            relayListPublish = null,
+            warnings = listOf("No encrypted note events were found on current relays."),
+        )
+
+        assertEquals("No encrypted notes found to migrate", webRelayMigrationWarning(result).title)
+    }
+
+    @Test
+    fun relayListMergeUpdatesWriteRelaysAndPreservesReadCustomAndNonRelayTags() {
+        val existing = parseWebRelayListEvent(
+            WebNostrEvent(
+                id = "11".repeat(32),
+                pubkey = accountPubkey,
+                createdAt = 1,
+                kind = WebRelayListKind,
+                tags = listOf(
+                    listOf("client", "other-note"),
+                    listOf("r", "old-write.example", "write"),
+                    listOf("r", "read.example", "read"),
+                    listOf("r", "custom.example", "custom", "extra"),
+                    listOf("r", "both.example"),
+                ),
+                content = "",
+                sig = "12".repeat(64),
+            ),
+        )
+
+        val tags = mergeWebRelayListTags(existing, listOf("new-write.example", "both.example"))
+
+        assertTrue(listOf("client", "other-note") in tags)
+        assertTrue(listOf("r", "wss://read.example", "read") in tags)
+        assertTrue(listOf("r", "wss://custom.example", "custom", "extra") in tags)
+        assertTrue(listOf("r", "wss://both.example") in tags)
+        assertTrue(listOf("r", "wss://new-write.example", "write") in tags)
+        assertTrue(tags.none { it.getOrNull(1) == "wss://old-write.example" && it.getOrNull(2) == "write" })
+    }
+
+    @Test
+    fun relayListMergeDoesNotIncludeSignerTransportRelaysUnlessRequestedAsNoteRelays() {
+        val signerRelay = "wss://signer-transport.example"
+        val tags = mergeWebRelayListTags(existing = null, appWriteRelays = listOf("wss://note.example"))
+
+        assertTrue(tags.none { it.contains(signerRelay) })
+        assertTrue(listOf("r", "wss://note.example", "write") in tags)
+    }
+
+    @Test
+    fun relayMigrationGuardRejectsLogoutAndAccountSwitch() {
+        val identity = WebAccountIdentity(accountPubkey, WebAuthMethod.Nip07)
+        val started = WebRelayMigrationGuard().start(identity)
+        val signedIn = WebAuthUiState(nip07Available = true, signInState = WebSignInState.SignedIn(identity))
+        val loggedOut = WebAuthUiState(nip07Available = true)
+        val switched = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(WebAccountIdentity("dd".repeat(32), WebAuthMethod.Nip07)),
+        )
+
+        assertTrue(started.guard.accepts(started.request, signedIn))
+        assertTrue(!started.guard.accepts(started.request, loggedOut))
+        assertTrue(!started.guard.accepts(started.request, switched))
+    }
+
+    private fun migrationNoteEvent(
+        id: String,
+        createdAt: Long,
+        noteId: String,
+        pubkey: String = accountPubkey,
+        content: String = "cipher-$id",
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id.padEnd(64, '0').take(64),
+            pubkey = pubkey,
+            createdAt = createdAt,
+            kind = WebNoteKind,
+            tags = webNoteEventTags(noteId),
+            content = content,
+            sig = "13".repeat(64),
+        )
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {

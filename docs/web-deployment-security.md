@@ -150,5 +150,5 @@ When testing a production-like host with headers:
 - No durable web note cache.
 - No persistent pending-write queue.
 - No durable web relay preferences.
-- No web kind `10002` relay-list publishing or native-style relay migration; web relay-list import is session-only.
+- Web kind `10002` relay-list import/publish, relay-change migration, and manual Sync/Migrate are session-only and best-effort; there is no durable migration queue or offline relay migration.
 - User-selected relay URLs require broad `wss:` connection allowance.

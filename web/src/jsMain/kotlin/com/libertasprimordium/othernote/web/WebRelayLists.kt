@@ -42,6 +42,7 @@ internal data class WebRelayListUiState(
     val pubkey: String? = null,
     val message: String = "",
     val pendingPublishedRelays: List<String> = emptyList(),
+    val latestPublishedRelayList: WebPublishedRelayList? = null,
 )
 
 internal object WebRelayListCopy {
@@ -217,6 +218,59 @@ internal fun keepLocalWebRelayEdits(relayState: WebRelayListUiState): WebRelayLi
         message = WebRelayListCopy.KeptLocalEdits,
         pendingPublishedRelays = emptyList(),
     )
+
+internal fun mergeWebRelayListTags(existing: WebPublishedRelayList?, appWriteRelays: List<String>): List<List<String>> {
+    val normalizedWrites = appWriteRelays.mapNotNull { normalizeWebNoteRelayUrl(it).getOrNull() }.distinct()
+    val coveredWrites = mutableSetOf<String>()
+    val output = mutableListOf<List<String>>()
+    existing?.preservedTags.orEmpty().forEach { output += it }
+    existing?.relayEntries.orEmpty().forEach { entry ->
+        when {
+            entry.marker.equals("write", ignoreCase = true) ||
+                entry.marker.equals("outbox", ignoreCase = true) -> Unit
+            entry.marker == null && entry.url in normalizedWrites -> {
+                output += listOf("r", entry.url) + entry.extraFields
+                coveredWrites += entry.url
+            }
+            entry.marker == null -> output += listOf("r", entry.url, "read") + entry.extraFields
+            else -> output += listOf("r", entry.url, entry.marker) + entry.extraFields
+        }
+    }
+    normalizedWrites.filterNot { it in coveredWrites }.forEach { relay ->
+        output += listOf("r", relay, "write")
+    }
+    return output.distinct()
+}
+
+internal fun buildUnsignedWebRelayListEvent(
+    accountPubkey: String,
+    appWriteRelays: List<String>,
+    existing: WebPublishedRelayList?,
+    createdAt: Long,
+): WebUnsignedNoteEvent =
+    WebUnsignedNoteEvent(
+        pubkey = accountPubkey,
+        createdAt = createdAt,
+        kind = WebRelayListKind,
+        tags = mergeWebRelayListTags(existing, appWriteRelays),
+        content = "",
+    )
+
+internal fun validateWebSignedRelayListEvent(
+    requested: WebUnsignedNoteEvent,
+    signed: WebNostrEvent,
+    accountPubkey: String,
+): Boolean =
+    signed.pubkey == accountPubkey &&
+        signed.kind == WebRelayListKind &&
+        signed.tags == requested.tags &&
+        signed.content == "" &&
+        signed.createdAt == requested.createdAt &&
+        validateWebRelayListEventShape(signed) &&
+        runCatching {
+            val dynamicEvent = signed.toDynamicRelayListNostrEvent()
+            NostrTools.validateEvent(dynamicEvent) && NostrTools.verifyEvent(dynamicEvent)
+        }.getOrDefault(false)
 
 internal fun webRelayListRequestMessage(accountPubkey: String): String =
     buildJsonArray {

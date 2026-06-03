@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, basic signer-backed note create/edit/delete, session-only note relay selection, text-only active-account profile metadata display, and session-only kind `10002` write-relay import held in memory only, but browser persistence, durable relay preferences, native-style relay migration, web relay-list publishing, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, basic signer-backed note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only, but browser persistence, durable relay preferences, durable web relay migration queues, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -186,7 +186,7 @@ Future implementation branches should stay narrow:
 - `web-client-relay-settings`
   - Let users add, remove, normalize, deduplicate, and restore session-only note relays for web fetch and publish.
   - Keep NIP-46 signer transport relays separate from note relays.
-  - Current status: implemented as in-memory note relay selection with session-only import of the active user's latest published kind `10002` write relays. It does not persist relay preferences, publish kind `10002` relay-list metadata, or run native-style relay migration.
+  - Current status: implemented as in-memory note relay selection with per-relay encrypted-event stats, session-only import of the active user's latest published kind `10002` write relays, best-effort kind `10002` relay-list publishing, bounded session-only encrypted note event migration when web note relays change, and manual session-only Sync/Migrate for the current web note relay list. It republishes already-signed encrypted kind `30078` events and does not persist relay preferences, decrypted notes, relay events, stats, or migration queues.
 - `web-client-profile-metadata`
   - Fetch the active account's latest public kind `0` profile metadata from the current web note relays.
   - Display safe text fields in the signed-in header.
