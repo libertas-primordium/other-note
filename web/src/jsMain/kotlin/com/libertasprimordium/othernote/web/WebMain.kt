@@ -12,6 +12,8 @@ external interface WebDocument {
 
 external interface WebWindow {
     val nostr: Nip07Signer?
+    val innerWidth: Int
+    fun addEventListener(type: String, listener: (dynamic) -> Unit)
 }
 
 external interface Nip07Signer {
@@ -44,6 +46,7 @@ private var noteEditMessage = ""
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
+private var noteLaneCount = webNoteLaneCountForViewport()
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
@@ -58,6 +61,13 @@ private sealed interface WebNoteEditMode {
 
 fun main() {
     rootElement = document.getElementById("root") ?: return
+    window.addEventListener("resize") {
+        val nextLaneCount = webNoteLaneCountForViewport()
+        if (nextLaneCount != noteLaneCount) {
+            noteLaneCount = nextLaneCount
+            render()
+        }
+    }
     render()
 }
 
@@ -67,7 +77,7 @@ private fun render() {
     rootElement.appendChild(appShell(authState))
 }
 
-private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell") {
+private fun appShell(state: WebAuthUiState): WebElement = element("main", appShellClass(state)) {
     val signedIn = state.signInState as? WebSignInState.SignedIn
     if (signedIn != null) {
         appendChild(signedInHeader(signedIn.identity))
@@ -101,6 +111,9 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     })
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
 }
+
+private fun appShellClass(state: WebAuthUiState): String =
+    if (state.signInState is WebSignInState.SignedIn) WebSignedInShellClass else WebSignedOutShellClass
 
 private fun signedInHeader(identity: WebAccountIdentity): WebElement =
     element("header", "app-header") {
@@ -208,7 +221,7 @@ private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
     }
 
 private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
-    element("section", "panel") {
+    element("section", WebNotesPanelClass) {
         val crudSigner = crudSignerFor(identity)
         val canCrud = crudSigner != null
         appendChild(textElement("h2", "section-title", "Notes"))
@@ -247,10 +260,17 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
             is WebNoteLoadState.SignerUnsupported -> appendChild(textElement("p", "body error small-gap", notes.message))
             is WebNoteLoadState.Loaded -> {
                 notes.status?.let { appendChild(textElement("p", "body muted small-gap", it)) }
-                appendChild(element("div", "note-list") {
-                    notes.notes.forEach { note -> appendChild(noteCard(note, canCrud)) }
-                })
+                appendChild(noteLanes(notes.notes, canCrud, noteLaneCount))
             }
+        }
+    }
+
+private fun noteLanes(notes: List<WebReadOnlyNote>, canCrud: Boolean, laneCount: Int): WebElement =
+    element("div", WebNoteGridClass) {
+        distributeWebNoteLanes(notes, laneCount).forEach { laneNotes ->
+            appendChild(element("div", WebNoteLaneClass) {
+                laneNotes.forEach { note -> appendChild(noteCard(note, canCrud)) }
+            })
         }
     }
 
@@ -263,7 +283,7 @@ private fun noteCard(note: WebReadOnlyNote, canCrud: Boolean): WebElement =
         }
         appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
         if (canCrud) {
-            appendChild(element("div", "inline-actions") {
+            appendChild(element("div", WebNoteCardActionsClass) {
                 appendChild(buttonElement(text = "Edit", enabled = true, onClick = { startEditNote(note) }))
                 appendChild(buttonElement(text = "Delete", enabled = true, onClick = { confirmDeleteNote(note) }))
             })
@@ -669,6 +689,9 @@ private fun logout() {
 }
 
 private fun isNip07Available(): Boolean = window.nostr != null
+
+private fun webNoteLaneCountForViewport(): Int =
+    webNoteLaneCount((window.innerWidth - 32).coerceAtLeast(0))
 
 private fun buttonElement(
     text: String,

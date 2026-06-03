@@ -74,6 +74,55 @@ val webSecuritySourceCheck by tasks.registering {
             "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."
         }
 
+        fun cssBlock(selector: String): String =
+            Regex("""${Regex.escape(selector)}\s*\{([^}]*)}""")
+                .findAll(indexText)
+                .lastOrNull()
+                ?.groups
+                ?.get(1)
+                ?.value
+                ?: error("Web index.html is missing CSS selector $selector")
+
+        fun requireCssDeclaration(selector: String, declaration: String) {
+            check(cssBlock(selector).contains(declaration)) {
+                "Web index.html selector $selector must include `$declaration` to keep long note-card text inside cards."
+            }
+        }
+
+        fun rejectCssDeclaration(selector: String, declaration: String) {
+            check(!cssBlock(selector).contains(declaration)) {
+                "Web index.html selector $selector must not include `$declaration`; note cards must use explicit horizontal lanes, not vertical-first CSS columns."
+            }
+        }
+
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".markdown-view", ".markdown-code-block").forEach { selector ->
+            requireCssDeclaration(selector, "max-width: 100%")
+        }
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".markdown-view", ".markdown-code-block").forEach { selector ->
+            requireCssDeclaration(selector, "min-width: 0")
+        }
+        listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code").forEach { selector ->
+            requireCssDeclaration(selector, "overflow-wrap: anywhere")
+        }
+        requireCssDeclaration(".note-list", "display: flex")
+        requireCssDeclaration(".note-list", "gap: 6px")
+        requireCssDeclaration(".note-lanes", "align-items: flex-start")
+        requireCssDeclaration(".note-lane", "display: grid")
+        requireCssDeclaration(".note-lane", "flex: 1 1 0")
+        requireCssDeclaration(".note-lane", "gap: 6px")
+        requireCssDeclaration(".note-card", "break-inside: avoid")
+        requireCssDeclaration(".note-card", "border: 1px solid var(--subtle-border)")
+        requireCssDeclaration(".note-card", "background: var(--card-surface)")
+        requireCssDeclaration(".notes-panel", "background: transparent")
+        requireCssDeclaration(".notes-panel", "border: 0")
+        rejectCssDeclaration(".note-list", "columns:")
+        rejectCssDeclaration(".note-list", "column-count")
+        rejectCssDeclaration(".note-list", "column-width")
+        rejectCssDeclaration(".note-list", "column-gap")
+        requireCssDeclaration(".markdown-code-block", "overflow-x: auto")
+        requireCssDeclaration(".markdown-code-block", "white-space: pre-wrap")
+        requireCssDeclaration(".inline-code", "word-break: break-word")
+
         val deploymentDoc = deploymentSecurityDoc.asFile.readText()
         val expectedCspDirectives = listOf(
             "default-src 'self'",
