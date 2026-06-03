@@ -44,6 +44,8 @@ private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
 private var noteEditBody = ""
 private var noteEditMessage = ""
 private var noteDetailState = WebNoteDetailUiState()
+private var profileState = WebProfileUiState()
+private var profileLoadGuard = WebProfileLoadGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
@@ -52,6 +54,7 @@ private var noteLoadGuard = WebNoteLoadGuard()
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
+private var activeProfileFetcher = profileFetcherForCurrentRelays()
 
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
@@ -82,7 +85,7 @@ private fun render() {
 private fun appShell(state: WebAuthUiState): WebElement = element("main", appShellClass(state)) {
     val signedIn = state.signInState as? WebSignInState.SignedIn
     if (signedIn != null) {
-        appendChild(signedInHeader(signedIn.identity))
+        appendChild(signedInHeader(signedIn.identity, profileState))
         appendChild(notesPanel(signedIn.identity, noteState))
         activeMenuPanel(signedIn.identity)?.let(::appendChild)
         viewedNoteForCurrentState()?.let { appendChild(noteDetailPanel(it)) }
@@ -118,12 +121,16 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
 private fun appShellClass(state: WebAuthUiState): String =
     if (state.signInState is WebSignInState.SignedIn) WebSignedInShellClass else WebSignedOutShellClass
 
-private fun signedInHeader(identity: WebAccountIdentity): WebElement =
+private fun signedInHeader(identity: WebAccountIdentity, profile: WebProfileUiState): WebElement =
     element("header", "app-header") {
+        val summary = webProfileHeaderSummary(identity, profile)
         appendChild(element("div", "app-header-copy") {
             appendChild(textElement("p", "eyebrow", "Web client preview"))
             appendChild(textElement("h1", "app-title", "Other Note"))
-            appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
+            appendChild(textElement("h2", "profile-name", summary.primary))
+            appendChild(textElement("p", "body", summary.secondary))
+            summary.tertiary?.let { appendChild(textElement("p", "body muted profile-line", it)) }
+            summary.about?.let { appendChild(textElement("p", "body muted profile-about", it)) }
             appendChild(textElement("p", "body muted small-gap", "In-memory web session. Refreshing this page may clear auth, notes, drafts, and relay choices."))
         })
         appendChild(signedInMenu(identity))
@@ -490,8 +497,10 @@ private fun requestNip07PublicKey() {
                 noteState = WebNoteLoadState.Idle
                 resetLoadedNotes()
                 cancelNoteEdit()
+                resetProfile()
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
+                fetchProfileForSignedInSession()
                 autoLoadNotesForSignedInSession()
             },
             {
@@ -523,8 +532,10 @@ private fun requestNip46PublicKey() {
                     noteState = WebNoteLoadState.Idle
                     resetLoadedNotes()
                     cancelNoteEdit()
+                    resetProfile()
                     authState = completeNip46SignIn(authState, result.userPubkey)
                     render()
+                    fetchProfileForSignedInSession()
                     autoLoadNotesForSignedInSession()
                 }
                 is WebNip46ConnectResult.Failed -> {
@@ -539,6 +550,39 @@ private fun requestNip46PublicKey() {
 private fun autoLoadNotesForSignedInSession() {
     val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
     loadReadOnlyNotes(signedIn.identity)
+}
+
+private fun fetchProfileForSignedInSession() {
+    val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
+    loadProfileMetadata(signedIn.identity)
+}
+
+private fun loadProfileMetadata(identity: WebAccountIdentity) {
+    val started = profileLoadGuard.start(identity)
+    profileLoadGuard = started.guard
+    val request = started.request
+    activeProfileFetcher.close()
+    activeProfileFetcher = profileFetcherForCurrentRelays()
+    profileState = WebProfileUiState(
+        loading = true,
+        pubkey = identity.publicKeyHex,
+        metadata = profileState.metadata?.takeIf { it.pubkey == identity.publicKeyHex },
+    )
+    render()
+    activeProfileFetcher.fetch(identity.publicKeyHex) { profile ->
+        if (!profileLoadGuard.accepts(request, authState)) return@fetch
+        profileState = if (profile == null) {
+            WebProfileUiState(
+                loading = false,
+                pubkey = identity.publicKeyHex,
+                metadata = profileState.metadata?.takeIf { it.pubkey == identity.publicKeyHex },
+                safeMessage = WebProfileCopy.Unavailable,
+            )
+        } else {
+            WebProfileUiState(loading = false, pubkey = identity.publicKeyHex, metadata = profile)
+        }
+        render()
+    }
 }
 
 private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
@@ -698,6 +742,10 @@ private fun resetLoadedNotes() {
     loadedNotePlaintexts = emptyMap()
 }
 
+private fun resetProfile() {
+    profileState = WebProfileUiState()
+}
+
 private fun updateNoteRelayInput(value: String) {
     noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
 }
@@ -730,10 +778,13 @@ private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
 
 private fun rebuildNoteRelayClients() {
     noteLoadGuard = noteLoadGuard.invalidate()
+    profileLoadGuard = profileLoadGuard.invalidate()
     activeNoteLoader.close()
     activeNoteCrudService.close()
+    activeProfileFetcher.close()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
+    activeProfileFetcher = profileFetcherForCurrentRelays()
 }
 
 private fun noteLoaderForCurrentRelays(): WebNoteLoader =
@@ -742,17 +793,24 @@ private fun noteLoaderForCurrentRelays(): WebNoteLoader =
 private fun noteCrudServiceForCurrentRelays(): WebNoteCrudService =
     WebNoteCrudService(WebNoteRelayPublisher(selectedWebNoteRelays(noteRelaySettings)))
 
+private fun profileFetcherForCurrentRelays(): WebProfileFetcher =
+    WebProfileFetcher(selectedWebNoteRelays(noteRelaySettings))
+
 private fun logout() {
     noteLoadGuard = noteLoadGuard.invalidate()
+    profileLoadGuard = profileLoadGuard.invalidate()
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
     activeNoteCrudService.close()
+    activeProfileFetcher.close()
     noteRelaySettings = defaultWebNoteRelaySettings()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
+    activeProfileFetcher = profileFetcherForCurrentRelays()
     nip46TokenInput = ""
     webMenuState = resetWebMenuState()
     clearNoteDetail()
+    resetProfile()
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
     cancelNoteEdit()

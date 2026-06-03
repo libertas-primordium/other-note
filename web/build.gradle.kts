@@ -60,6 +60,12 @@ val webSecuritySourceCheck by tasks.registering {
         check(!relayInputUpdater.contains("render()")) {
             "Relay Settings input typing must not call render(); replacing the modal input on each character drops focus."
         }
+        check(!runtimeText.contains("element(\"img\"") && !runtimeText.contains("element(\"image\"")) {
+            "Web runtime must not render profile picture/banner URLs as image elements in this preview."
+        }
+        check(!runtimeText.contains("createElement(\"img\"") && !runtimeText.contains("createElement(\"image\"")) {
+            "Web runtime must not create profile image elements in this preview."
+        }
 
         val serviceWorkerFiles = resourceFiles.filter { file ->
             file.name.equals("sw.js", ignoreCase = true) ||
@@ -78,6 +84,12 @@ val webSecuritySourceCheck by tasks.registering {
         }
         check(indexText.contains("""<script src="other-note-web.js"></script>""")) {
             "Web index.html should load only the self-hosted generated bundle."
+        }
+        check(!indexText.contains("<img", ignoreCase = true)) {
+            "Web index.html must not render remote profile images or other image tags in this preview."
+        }
+        check(!indexText.contains("background-image", ignoreCase = true)) {
+            "Web index.html must not render remote profile images through CSS backgrounds in this preview."
         }
         check(!indexText.contains("""http-equiv="Content-Security-Policy"""")) {
             "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."

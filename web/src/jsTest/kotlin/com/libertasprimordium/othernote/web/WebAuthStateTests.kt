@@ -274,6 +274,153 @@ class WebNoteLoadGuardTests {
     }
 }
 
+class WebProfileMetadataTests {
+    private val accountPubkey = "aa".repeat(32)
+    private val identity = WebAccountIdentity(accountPubkey, WebAuthMethod.Nip46)
+
+    @Test
+    fun displayNameIsPreferredOverNameInHeaderSummary() {
+        val profile = parseWebProfileMetadata(
+            pubkey = accountPubkey,
+            content = """{"display_name":"Display Name","name":"legacy-name","about":"short bio","nip05":"user@example.com"}""",
+            createdAt = 10,
+        )
+
+        val summary = webProfileHeaderSummary(identity, WebProfileUiState(pubkey = accountPubkey, metadata = profile))
+
+        assertEquals("Display Name", summary.primary)
+        assertEquals("user@example.com", summary.tertiary)
+        assertEquals("short bio", summary.about)
+    }
+
+    @Test
+    fun nameIsUsedWhenDisplayNameIsMissing() {
+        val profile = parseWebProfileMetadata(
+            pubkey = accountPubkey,
+            content = """{"name":"legacy-name"}""",
+        )
+
+        val summary = webProfileHeaderSummary(identity, WebProfileUiState(pubkey = accountPubkey, metadata = profile))
+
+        assertEquals("legacy-name", summary.primary)
+    }
+
+    @Test
+    fun headerFallsBackToAbbreviatedPubkeyWhenProfileIsUnavailable() {
+        val summary = webProfileHeaderSummary(identity, WebProfileUiState(pubkey = accountPubkey))
+
+        assertEquals(identity.displayPublicKey, summary.primary)
+        assertTrue(summary.secondary.contains(identity.displayPublicKey))
+    }
+
+    @Test
+    fun loadingStateUsesSafeCompactProfileCopy() {
+        val summary = webProfileHeaderSummary(identity, WebProfileUiState(loading = true, pubkey = accountPubkey))
+
+        assertEquals(WebProfileCopy.Loading, summary.tertiary)
+    }
+
+    @Test
+    fun invalidProfileJsonIsIgnoredSafely() {
+        assertNull(parseWebProfileMetadata(accountPubkey, "{not-json"))
+    }
+
+    @Test
+    fun profileParserKeepsRemoteImagesAsInertStrings() {
+        val profile = parseWebProfileMetadata(
+            pubkey = accountPubkey,
+            content = """{"picture":"https://example.com/avatar.png","banner":"https://example.com/banner.png"}""",
+        )
+
+        assertEquals("https://example.com/avatar.png", profile?.pictureUrl)
+        assertEquals("https://example.com/banner.png", profile?.bannerUrl)
+    }
+
+    @Test
+    fun mismatchedPubkeyIsIgnoredWhenSelectingLatestProfile() {
+        val event = profileEvent(
+            id = "01".repeat(32),
+            pubkey = "bb".repeat(32),
+            createdAt = 1,
+            content = """{"display_name":"Wrong user"}""",
+        )
+
+        assertNull(selectLatestWebProfileMetadata(listOf(event), accountPubkey, validateEvent = { true }))
+    }
+
+    @Test
+    fun newestValidProfileEventWins() {
+        val older = profileEvent(
+            id = "01".repeat(32),
+            pubkey = accountPubkey,
+            createdAt = 1,
+            content = """{"display_name":"Older"}""",
+        )
+        val newer = profileEvent(
+            id = "02".repeat(32),
+            pubkey = accountPubkey,
+            createdAt = 2,
+            content = """{"display_name":"Newer"}""",
+        )
+
+        val selected = selectLatestWebProfileMetadata(listOf(older, newer), accountPubkey, validateEvent = { true })
+
+        assertEquals("Newer", selected?.displayName)
+    }
+
+    @Test
+    fun invalidJsonEventDoesNotBeatOlderValidProfile() {
+        val older = profileEvent(
+            id = "01".repeat(32),
+            pubkey = accountPubkey,
+            createdAt = 1,
+            content = """{"display_name":"Older valid"}""",
+        )
+        val invalidNewer = profileEvent(
+            id = "02".repeat(32),
+            pubkey = accountPubkey,
+            createdAt = 2,
+            content = "{not-json",
+        )
+
+        val selected = selectLatestWebProfileMetadata(listOf(older, invalidNewer), accountPubkey, validateEvent = { true })
+
+        assertEquals("Older valid", selected?.displayName)
+    }
+
+    @Test
+    fun profileLoadGuardRejectsLogoutAndAccountSwitch() {
+        val started = WebProfileLoadGuard().start(identity)
+        val signedIn = WebAuthUiState(nip07Available = true, signInState = WebSignInState.SignedIn(identity))
+        val loggedOut = WebAuthUiState(nip07Available = true)
+        val switched = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(WebAccountIdentity("bb".repeat(32), WebAuthMethod.Nip46)),
+        )
+
+        assertTrue(started.guard.accepts(started.request, signedIn))
+        assertTrue(!started.guard.accepts(started.request, loggedOut))
+        assertTrue(!started.guard.accepts(started.request, switched))
+    }
+
+    private fun profileEvent(
+        id: String,
+        pubkey: String,
+        createdAt: Long,
+        content: String,
+        kind: Int = WebProfileKind,
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id,
+            pubkey = pubkey,
+            createdAt = createdAt,
+            kind = kind,
+            tags = emptyList(),
+            content = content,
+            sig = "03".repeat(64),
+        )
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {

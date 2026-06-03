@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, load encrypted notes, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, display text-only profile metadata, load encrypted notes, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -53,6 +53,7 @@ Current web state is memory-only:
 - Auth state is not durably restored after refresh.
 - NIP-46 communication keys and session material are not persisted.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
+- Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
 - Drafts, pending writes, note relay preferences, and loaded note events are not persisted.
 
 Forbidden for auth/session/key/note/draft/pending-write data:
@@ -103,6 +104,7 @@ Manual checks:
 - [ ] Confirm NIP-07 sign-in works when a compatible extension is available.
 - [ ] Confirm NIP-46 sign-in works with a real remote signer.
 - [ ] Load notes.
+- [ ] Confirm active-account profile text appears when available, and no remote profile images are fetched or rendered.
 - [ ] Create a note.
 - [ ] Edit the note.
 - [ ] Delete/tombstone the note.
@@ -127,6 +129,7 @@ DevTools network checks:
 - [ ] No analytics or telemetry requests.
 - [ ] No backend note API calls.
 - [ ] No unexpected third-party script, font, image, or tracking requests.
+- [ ] No remote profile `picture` or `banner` image requests.
 
 ## CSP Smoke Checklist
 
