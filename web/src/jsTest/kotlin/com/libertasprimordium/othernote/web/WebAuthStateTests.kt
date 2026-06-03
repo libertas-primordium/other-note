@@ -292,6 +292,32 @@ class WebNip46ResponseClassificationTests {
     }
 
     @Test
+    fun remoteSignerSecretErrorDoesNotEchoSensitiveTokenMaterial() {
+        val sensitive = "secret=do-not-display-this-token-value"
+        val result = assertIs<WebNip46ResponseDecodeResult.Response>(
+            decodeNip46ResponsePayload("""{"id":"req-1","error":{"message":"bad $sensitive"}}""", expectedRequestId = "req-1"),
+        )
+        val error = assertIs<WebNip46RelayResponse.Error>(result.response)
+
+        assertEquals("Remote signer rejected the pairing secret.", error.safeMessage)
+        assertTrue(!error.safeMessage.contains("do-not-display"))
+        assertTrue(!error.safeMessage.contains("secret="))
+    }
+
+    @Test
+    fun genericRemoteSignerErrorDoesNotEchoPlaintextOrRawPayload() {
+        val rawError = "failed while handling plaintext note body: # private note"
+        val result = assertIs<WebNip46ResponseDecodeResult.Response>(
+            decodeNip46ResponsePayload("""{"id":"req-1","error":{"message":"$rawError"}}""", expectedRequestId = "req-1"),
+        )
+        val error = assertIs<WebNip46RelayResponse.Error>(result.response)
+
+        assertEquals("Remote signer request failed.", error.safeMessage)
+        assertTrue(!error.safeMessage.contains("private note"))
+        assertTrue(!error.safeMessage.contains("plaintext note body"))
+    }
+
+    @Test
     fun validGetPublicKeyResponseDecodesAsSuccess() {
         val pubkey = "ab".repeat(32)
         val result = assertIs<WebNip46ResponseDecodeResult.Response>(
@@ -589,6 +615,18 @@ class WebReadOnlyNoteTests {
     }
 
     @Test
+    fun signerTransportRelayFromBunkerTokenIsNotAddedToDefaultNoteRelays() {
+        val signerRelay = "wss://signer-transport.example"
+        val encodedRelay = signerRelay.replace(":", "%3A").replace("/", "%2F")
+        val parsed = assertIs<WebNip46TokenParseResult.Valid>(
+            parseWebNip46BunkerToken("bunker://${"22".repeat(32)}?relay=$encodedRelay"),
+        )
+
+        assertEquals(listOf(signerRelay), parsed.token.relays)
+        assertTrue(signerRelay !in DefaultWebNoteRelays)
+    }
+
+    @Test
     fun latestEventWinsAndTombstoneHidesNote() {
         val old = noteEvent("event-old", createdAt = 1, noteId = "same")
         val newer = noteEvent("event-newer", createdAt = 2, noteId = "same")
@@ -638,6 +676,33 @@ class WebReadOnlyNoteTests {
         assertEquals(1, reduced.notes.size)
         assertEquals("# Header\n**raw** markdown", reduced.notes.single().bodyMarkdown)
         assertEquals(1, reduced.payloadRejectedCount)
+    }
+
+    @Test
+    fun singleDecryptFailureDoesNotCrashOrHideOtherReadableNotes() {
+        val readable = noteEvent("event-readable", createdAt = 1, noteId = "readable")
+        val decryptFailed = noteEvent("event-decrypt-failed", createdAt = 2, noteId = "failed")
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = listOf(readable, decryptFailed),
+            decryptedByEventId = mapOf(readable.id to payload("readable", body = "visible", updatedAtMs = 1)),
+        )
+
+        assertEquals(1, reduced.notes.size)
+        assertEquals("visible", reduced.notes.single().bodyMarkdown)
+        assertEquals(1, reduced.decryptRejectedCount)
+        assertEquals(1, reduced.rejectedCount)
+    }
+
+    @Test
+    fun duplicateRelayEventsDoNotDuplicateVisibleNotes() {
+        val event = noteEvent("event-same", createdAt = 1, noteId = "same")
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = listOf(event, event),
+            decryptedByEventId = mapOf(event.id to payload("same", body = "one visible note", updatedAtMs = 1)),
+        )
+
+        assertEquals(1, reduced.notes.size)
+        assertEquals("one visible note", reduced.notes.single().bodyMarkdown)
     }
 
     @Test
@@ -816,6 +881,248 @@ class WebNoteCrudTests {
         assertTrue(!json.contains(""""pubkey""""))
     }
 
+    @Test
+    fun createPublishesSignedEncryptedKind30078EventAndUpdatesInMemoryReducer() {
+        val publisher = FakeNotePublisher(acceptedPublish())
+        val signer = FakeCrudSigner()
+        val service = WebNoteCrudService(
+            publisher = publisher,
+            noteIdGenerator = { "created-note" },
+            nowMs = { 1_700_000_000_000 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = "# Created\nraw markdown",
+            accountPubkey = accountPubkey,
+            signer = signer,
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val published = assertIs<WebNoteSaveResult.Published>(result)
+        val payload = decodeWebNotePayload(published.plaintextPayload).getOrThrow()
+        val reduced = mergePublishedWebNoteEvent(emptyList(), emptyMap(), published.event, published.plaintextPayload)
+
+        assertEquals("created-note", published.note.id)
+        assertEquals("# Created\nraw markdown", payload.bodyMarkdown)
+        assertEquals(30078, published.event.kind)
+        assertEquals(accountPubkey, published.event.pubkey)
+        assertEquals(webNoteEventTags("created-note"), published.event.tags)
+        assertEquals("ciphertext-1", published.event.content)
+        assertEquals(listOf(published.event), publisher.publishedEvents)
+        assertEquals("# Created\nraw markdown", reduced.notes.single().bodyMarkdown)
+    }
+
+    @Test
+    fun editPublishesSameNoteIdentityAndLatestBodyWinsInMemory() {
+        val oldEvent = signedEvent("event-old", createdAt = 1, noteId = "same-note", content = "old-cipher")
+        val oldPayload = payload("same-note", body = "old body", updatedAtMs = 1_000)
+        val existing = WebReadOnlyNote(
+            id = "same-note",
+            createdAtMs = 1_000,
+            updatedAtMs = 1_000,
+            bodyMarkdown = "old body",
+            sourceEventId = oldEvent.id,
+        )
+        val service = WebNoteCrudService(
+            publisher = FakeNotePublisher(acceptedPublish()),
+            noteIdGenerator = { "unused" },
+            nowMs = { 1_001 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = existing,
+            bodyMarkdown = "new body",
+            accountPubkey = accountPubkey,
+            signer = FakeCrudSigner(),
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val published = assertIs<WebNoteSaveResult.Published>(result)
+        val reduced = mergePublishedWebNoteEvent(
+            events = listOf(oldEvent),
+            decryptedByEventId = mapOf(oldEvent.id to oldPayload),
+            event = published.event,
+            plaintextPayload = published.plaintextPayload,
+        )
+
+        assertEquals("same-note", published.note.id)
+        assertEquals(webNoteDTag("same-note"), published.event.dTag())
+        assertEquals(2_000, published.note.updatedAtMs)
+        assertEquals("new body", reduced.notes.single().bodyMarkdown)
+    }
+
+    @Test
+    fun deletePublishesTombstoneAndKeepsOlderEventsHiddenAfterReduction() {
+        val oldEvent = signedEvent("event-old", createdAt = 1, noteId = "same-note", content = "old-cipher")
+        val oldPayload = payload("same-note", body = "visible before delete", updatedAtMs = 1_000)
+        val existing = WebReadOnlyNote(
+            id = "same-note",
+            createdAtMs = 1_000,
+            updatedAtMs = 1_000,
+            bodyMarkdown = "visible before delete",
+            sourceEventId = oldEvent.id,
+        )
+        val service = WebNoteCrudService(
+            publisher = FakeNotePublisher(acceptedPublish()),
+            nowMs = { 1_001 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.delete(
+            note = existing,
+            accountPubkey = accountPubkey,
+            signer = FakeCrudSigner(),
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val published = assertIs<WebNoteSaveResult.Published>(result)
+        val tombstone = decodeWebNotePayload(published.plaintextPayload).getOrThrow()
+        val reduced = mergePublishedWebNoteEvent(
+            events = listOf(oldEvent),
+            decryptedByEventId = mapOf(oldEvent.id to oldPayload),
+            event = published.event,
+            plaintextPayload = published.plaintextPayload,
+        )
+
+        assertEquals("same-note", tombstone.noteId)
+        assertTrue(tombstone.deleted)
+        assertEquals("", tombstone.bodyMarkdown)
+        assertTrue(reduced.notes.isEmpty())
+        assertEquals(setOf("same-note"), reduced.selectedNotes.map { it.id }.toSet())
+    }
+
+    @Test
+    fun allRelayPublishFailureDoesNotClaimSuccessOrUpdateWithPublishedResult() {
+        val service = WebNoteCrudService(
+            publisher = FakeNotePublisher(
+                WebNotePublishResult(
+                    listOf(WebNoteRelayStatus("wss://note-relay.example", connected = true, failed = true)),
+                ),
+            ),
+            noteIdGenerator = { "note-1" },
+            nowMs = { 1_000 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = "body",
+            accountPubkey = accountPubkey,
+            signer = FakeCrudSigner(),
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val failed = assertIs<WebNoteSaveResult.Failed>(result)
+        assertEquals(WebNoteCopy.PublishFailed, failed.safeMessage)
+    }
+
+    @Test
+    fun partialRelayPublishFailureReturnsPublishedResultWithSafePartialStatus() {
+        val service = WebNoteCrudService(
+            publisher = FakeNotePublisher(
+                WebNotePublishResult(
+                    listOf(
+                        WebNoteRelayStatus("wss://accepted-note-relay.example", connected = true, acceptedWrite = true),
+                        WebNoteRelayStatus("wss://failed-note-relay.example", connected = true, failed = true),
+                    ),
+                ),
+            ),
+            noteIdGenerator = { "note-1" },
+            nowMs = { 1_000 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = "body",
+            accountPubkey = accountPubkey,
+            signer = FakeCrudSigner(),
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val published = assertIs<WebNoteSaveResult.Published>(result)
+        assertTrue(published.status.contains(WebNoteCopy.PublishPartial))
+        assertTrue(published.relayStatuses.any { it.acceptedWrite })
+        assertTrue(published.relayStatuses.any { it.failed })
+    }
+
+    @Test
+    fun malformedSignedEventFailsValidationBeforeRelayPublish() {
+        val publisher = FakeNotePublisher(acceptedPublish())
+        val signer = FakeCrudSigner(
+            signFactory = { unsigned ->
+                WebNoteSignResult.Signed(
+                    WebNostrEvent(
+                        id = "bad-event",
+                        pubkey = accountPubkey,
+                        createdAt = unsigned.createdAt,
+                        kind = unsigned.kind,
+                        tags = listOf(listOf("d", "wrong")),
+                        content = unsigned.content,
+                        sig = "sig",
+                    ),
+                )
+            },
+        )
+        val service = WebNoteCrudService(
+            publisher = publisher,
+            noteIdGenerator = { "note-1" },
+            nowMs = { 1_000 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = "body",
+            accountPubkey = accountPubkey,
+            signer = signer,
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val failed = assertIs<WebNoteSaveResult.Failed>(result)
+        assertEquals(WebNoteCopy.EventValidationFailed, failed.safeMessage)
+        assertTrue(publisher.publishedEvents.isEmpty())
+    }
+
+    @Test
+    fun signerCapabilityFailureUsesSafeCopyAndDoesNotExposeDraftText() {
+        val privateDraft = "private draft should stay in memory"
+        val service = WebNoteCrudService(noteIdGenerator = { "note-1" }, nowMs = { 1_000 })
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = privateDraft,
+            accountPubkey = accountPubkey,
+            signer = null,
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val failed = assertIs<WebNoteSaveResult.Failed>(result)
+        assertEquals(WebNoteCopy.CrudCapabilityUnavailable, failed.safeMessage)
+        assertTrue(!failed.safeMessage.contains("private draft"))
+    }
+
+    @Test
+    fun crudServiceCloseClearsActivePublisherStateForLogoutLifecycle() {
+        val publisher = FakeNotePublisher(acceptedPublish())
+        val service = WebNoteCrudService(publisher = publisher)
+
+        service.close()
+
+        assertEquals(1, publisher.closeCount)
+    }
+
     private fun signedEvent(
         id: String,
         createdAt: Long,
@@ -847,4 +1154,55 @@ class WebNoteCrudTests {
                 deleted = deleted,
             ),
         )
+
+    private fun acceptedPublish(): WebNotePublishResult =
+        WebNotePublishResult(
+            listOf(WebNoteRelayStatus("wss://note-relay.example", connected = true, acceptedWrite = true)),
+        )
+
+    private class FakeNotePublisher(
+        private val result: WebNotePublishResult,
+    ) : WebNotePublisher {
+        val publishedEvents = mutableListOf<WebNostrEvent>()
+        var closeCount = 0
+
+        override fun publish(event: WebNostrEvent, onResult: (WebNotePublishResult) -> Unit) {
+            publishedEvents += event
+            onResult(result)
+        }
+
+        override fun close() {
+            closeCount += 1
+        }
+    }
+
+    private class FakeCrudSigner(
+        private val encryptFactory: (String) -> WebSignerOperationResult = { WebSignerOperationResult.Success("ciphertext-1") },
+        private val signFactory: (WebUnsignedNoteEvent) -> WebNoteSignResult = { unsigned ->
+            WebNoteSignResult.Signed(
+                WebNostrEvent(
+                    id = "signed-${unsigned.createdAt}-${unsigned.content}",
+                    pubkey = unsigned.pubkey,
+                    createdAt = unsigned.createdAt,
+                    kind = unsigned.kind,
+                    tags = unsigned.tags,
+                    content = unsigned.content,
+                    sig = "sig",
+                ),
+            )
+        },
+    ) : WebNoteCrudSigner {
+        val encryptedPlaintexts = mutableListOf<String>()
+        val signedRequests = mutableListOf<WebUnsignedNoteEvent>()
+
+        override fun encrypt(plaintext: String, onResult: (WebSignerOperationResult) -> Unit) {
+            encryptedPlaintexts += plaintext
+            onResult(encryptFactory(plaintext))
+        }
+
+        override fun sign(unsignedEvent: WebUnsignedNoteEvent, onResult: (WebNoteSignResult) -> Unit) {
+            signedRequests += unsignedEvent
+            onResult(signFactory(unsignedEvent))
+        }
+    }
 }

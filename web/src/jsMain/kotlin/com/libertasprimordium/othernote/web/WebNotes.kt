@@ -280,7 +280,7 @@ internal sealed interface WebNoteSaveResult {
 }
 
 internal class WebNoteCrudService(
-    private val publisher: WebNoteRelayPublisher = WebNoteRelayPublisher(),
+    private val publisher: WebNotePublisher = WebNoteRelayPublisher(),
     private val noteIdGenerator: () -> String = ::webStableRandomId,
     private val nowMs: () -> Long = ::webNowMs,
 ) {
@@ -374,6 +374,11 @@ internal class WebNoteCrudService(
     }
 }
 
+internal interface WebNotePublisher {
+    fun publish(event: WebNostrEvent, onResult: (WebNotePublishResult) -> Unit)
+    fun close()
+}
+
 internal class WebNoteLoader(
     private val relayFetcher: WebNoteRelayFetcher = WebNoteRelayFetcher(),
 ) {
@@ -433,13 +438,13 @@ internal data class WebNotePublishResult(
 internal class WebNoteRelayPublisher(
     private val relays: List<String> = DefaultWebNoteRelays,
     private val timeoutMs: Int = WebNotePublishTimeoutMs,
-) {
+) : WebNotePublisher {
     private val sockets = mutableListOf<WebSocket>()
     private var completed = false
     private var timeoutHandle: Int? = null
     private var activeGeneration = 0
 
-    fun publish(event: WebNostrEvent, onResult: (WebNotePublishResult) -> Unit) {
+    override fun publish(event: WebNostrEvent, onResult: (WebNotePublishResult) -> Unit) {
         closeSockets()
         completed = false
         val generation = ++activeGeneration
@@ -478,7 +483,7 @@ internal class WebNoteRelayPublisher(
         }
     }
 
-    fun close() {
+    override fun close() {
         activeGeneration += 1
         completed = true
         closeSockets()
