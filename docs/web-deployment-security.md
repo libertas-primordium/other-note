@@ -59,7 +59,7 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 - Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted. The signed-in account header may render the active account's supported HTTPS profile `picture` as a small thumbnail with a same-origin placeholder fallback; remote `banner` URLs remain inert.
-- Full-note view may render user-authored HTTPS inline image URLs from note content. Cards, previews, and editors must not prefetch or render remote images.
+- Full-note view may render the tested Markdown subset and user-authored HTTPS inline image URLs from note content. Raw HTML remains escaped text. Cards, previews, and editors must not prefetch or render remote images or active Markdown.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
 
 Forbidden for auth/session/key/note/draft/pending-write data:

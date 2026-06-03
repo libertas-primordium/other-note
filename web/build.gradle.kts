@@ -241,6 +241,28 @@ val webSecuritySourceCheck by tasks.registering {
         check(!runtimeText.contains("createElement(\"img\"") && !runtimeText.contains("createElement(\"image\"")) {
             "Web runtime must not create profile image elements with raw createElement calls."
         }
+        check(webMainText.contains("is WebMarkdownBlock.ListBlock -> listElement(block)") && webMainText.contains("WebMarkdownBlock.HorizontalRule -> element(\"hr\", \"markdown-rule\")")) {
+            "Web full-note renderer must render the supported Markdown list and horizontal-rule block model."
+        }
+        val noteCardRenderer = Regex(
+            """private fun noteCard\(note: WebReadOnlyNote, canCrud: Boolean\): WebElement\s*=(?<body>.*?)private fun noteDetailPanel""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define noteCard before noteDetailPanel.")
+        check(!noteCardRenderer.contains("renderMarkdown(") && noteCardRenderer.contains("webNotePreview(note.bodyMarkdown)")) {
+            "Web note cards must use raw preview text and must not render active Markdown."
+        }
+        val noteEditorRenderer = Regex(
+            """private fun noteEditorPanel\(identity: WebAccountIdentity, signer: WebNoteCrudSigner\?\): WebElement\s*=(?<body>.*?)private fun sectionTitleWithInfo""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define noteEditorPanel before sectionTitleWithInfo.")
+        check(!noteEditorRenderer.contains("renderMarkdown(") && noteEditorRenderer.contains("textAreaElement(")) {
+            "Web note editors must keep raw Markdown text in a textarea."
+        }
+        check(!Regex("""innerHTML\s*=\s*(markdown|note|body|raw|span)""").containsMatchIn(webMainText)) {
+            "Web Markdown rendering must not route note content through innerHTML."
+        }
 
         val serviceWorkerFiles = resourceFiles.filter { file ->
             file.name.equals("sw.js", ignoreCase = true) ||
@@ -329,10 +351,10 @@ val webSecuritySourceCheck by tasks.registering {
             }
         }
 
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
             requireCssDeclaration(selector, "max-width: 100%")
         }
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
             requireCssDeclaration(selector, "min-width: 0")
         }
         listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code", ".markdown-link").forEach { selector ->
@@ -368,6 +390,10 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".markdown-image", "max-width: 100%")
         requireCssDeclaration(".markdown-image", "height: auto")
         requireCssDeclaration(".markdown-image", "display: block")
+        requireCssDeclaration(".markdown-list", "box-sizing: border-box")
+        requireCssDeclaration(".markdown-list-item", "overflow-wrap: anywhere")
+        requireCssDeclaration(".markdown-list-item", "white-space: pre-wrap")
+        requireCssDeclaration(".markdown-rule", "border-top: 1px solid var(--border)")
         requireCssDeclaration(".markdown-view", "overflow-x: hidden")
         requireCssDeclaration(".notes-panel", "background: transparent")
         requireCssDeclaration(".notes-panel", "border: 0")

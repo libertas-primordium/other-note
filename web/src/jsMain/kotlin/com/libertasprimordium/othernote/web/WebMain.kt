@@ -1997,9 +1997,18 @@ private fun renderMarkdown(markdown: String): WebElement =
                     is WebMarkdownBlock.Heading -> inlineElement("h${block.level.coerceIn(1, 6)}", "markdown-heading", block.text)
                     is WebMarkdownBlock.Paragraph -> inlineElement("p", "markdown-paragraph", block.text)
                     is WebMarkdownBlock.BlockQuote -> inlineElement("blockquote", "markdown-quote", block.text)
+                    is WebMarkdownBlock.ListBlock -> listElement(block)
+                    WebMarkdownBlock.HorizontalRule -> element("hr", "markdown-rule")
                     is WebMarkdownBlock.CodeBlock -> textElement("pre", "markdown-code-block", block.code)
                 },
             )
+        }
+    }
+
+private fun listElement(block: WebMarkdownBlock.ListBlock): WebElement =
+    element(if (block.ordered) "ol" else "ul", "markdown-list") {
+        block.items.forEach { item ->
+            appendChild(inlineElement("li", "markdown-list-item", item))
         }
     }
 
@@ -2011,6 +2020,7 @@ private fun inlineElement(tagName: String, className: String, markdown: String):
                     is WebMarkdownSpan.Text -> textElement("span", "", span.text)
                     is WebMarkdownSpan.Bold -> textElement("strong", "", span.text)
                     is WebMarkdownSpan.Italic -> textElement("em", "", span.text)
+                    is WebMarkdownSpan.BoldItalic -> textElement("strong", "bold-italic", span.text)
                     is WebMarkdownSpan.Strike -> textElement("s", "", span.text)
                     is WebMarkdownSpan.Code -> textElement("code", "inline-code", span.text)
                     is WebMarkdownSpan.Link -> linkElement(span)

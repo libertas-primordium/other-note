@@ -1454,6 +1454,31 @@ fun RenderMarkdown(markdown: String, appState: AppState) {
                 fontFamily = FontFamily.Monospace,
                 modifier = Modifier.fillMaxWidth().background(OtherNoteCodeBackground).padding(10.dp),
             )
+            is MarkdownBlock.ListBlock -> Column(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+                block.items.forEachIndexed { index, item ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text(
+                            if (block.ordered) "${index + 1}." else "-",
+                            color = OtherNoteMuted,
+                            modifier = Modifier.width(28.dp),
+                        )
+                        RenderInlineMarkdown(
+                            markdown = item,
+                            appState = appState,
+                            style = TextStyle(color = OtherNoteText),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            MarkdownBlock.HorizontalRule -> HorizontalDivider(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                color = OtherNoteMuted,
+            )
         }
     }
 }
@@ -1521,6 +1546,11 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownTextS
         }
         is MarkdownSpan.Italic -> {
             pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+            append(span.text)
+            pop()
+        }
+        is MarkdownSpan.BoldItalic -> {
+            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic))
             append(span.text)
             pop()
         }
