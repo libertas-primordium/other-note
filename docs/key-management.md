@@ -146,7 +146,7 @@ Direct `nsec` paste on web is allowed only as a fallback. The key must be kept i
 
 Avoid third-party scripts and analytics where feasible. Use HTTPS only and a strict Content Security Policy. Web delivery has a larger trust surface than native apps because served JavaScript can change.
 
-Current web preview support is still intentionally narrow: NIP-07 and NIP-46 sign-in are in-memory only, and note loading plus basic create/edit/delete may fetch and publish encrypted kind `30078` note events through default note relays when the active signer exposes NIP-44 encrypt/decrypt and event-signing capabilities. The web preview must not persist browser auth sessions, NIP-46 communication keys, encrypted note events, decrypted note bodies, decrypted payload JSON, drafts, pending writes, or direct `nsec` values.
+Current web preview support is still intentionally narrow: NIP-07 and NIP-46 sign-in are in-memory only, and note loading plus basic create/edit/delete may fetch and publish encrypted kind `30078` note events through session-selected note relays when the active signer exposes NIP-44 encrypt/decrypt and event-signing capabilities. Web note relay selection is note-relay-only, session-only, and must not display or edit NIP-46 signer transport relays. The web preview must not persist browser auth sessions, NIP-46 communication keys, encrypted note events, decrypted note bodies, decrypted payload JSON, drafts, note relay preferences, pending writes, or direct `nsec` values.
 
 ## Threat Model And Non-goals
 
@@ -156,7 +156,7 @@ This policy currently does not cover completed implementations for:
 
 - Saved-device Android `nsec` storage.
 - Windows/macOS saved-device key storage.
-- Durable web note caches, persistent web pending writes, full web relay settings, and web release deployment.
+- Durable web note caches, persistent web pending writes, durable web relay preferences, kind `10002` web relay-list sync, native-style web relay migration, and web release deployment.
 - Persisted web sessions, durable browser key storage, or durable web NIP-46 remote-signer sessions.
 - Custom password-vault or password-derived encrypted file storage.
 
