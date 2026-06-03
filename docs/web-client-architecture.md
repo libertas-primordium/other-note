@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, and read-only note loading held in memory only, but browser persistence, note CRUD, note publishing, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, and basic signer-backed note create/edit/delete held in memory only, but browser persistence, full relay settings, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -178,6 +178,7 @@ Future implementation branches should stay narrow:
   - Create, edit, and tombstone notes using existing kind `30078` event semantics.
   - Publish only signed encrypted events to note relays.
   - Keep pending write behavior bounded and visible.
+  - Current status: implemented as an in-memory preview using default note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, browser sessions, or remote-signer sessions.
 
 ## Risks and open questions
 
