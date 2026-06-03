@@ -46,6 +46,43 @@ data class WebMenuUiState(
     val activePanel: WebMenuPanel = WebMenuPanel.None,
 )
 
+data class WebNoteLoadRequest(
+    val generation: Int,
+    val accountPubkey: String,
+    val method: WebAuthMethod,
+)
+
+data class WebNoteLoadStart(
+    val guard: WebNoteLoadGuard,
+    val request: WebNoteLoadRequest,
+)
+
+data class WebNoteLoadGuard(
+    val generation: Int = 0,
+) {
+    fun start(identity: WebAccountIdentity): WebNoteLoadStart {
+        val next = copy(generation = generation + 1)
+        return WebNoteLoadStart(
+            guard = next,
+            request = WebNoteLoadRequest(
+                generation = next.generation,
+                accountPubkey = identity.publicKeyHex,
+                method = identity.method,
+            ),
+        )
+    }
+
+    fun invalidate(): WebNoteLoadGuard =
+        copy(generation = generation + 1)
+
+    fun accepts(request: WebNoteLoadRequest, authState: WebAuthUiState): Boolean {
+        val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return false
+        return request.generation == generation &&
+            request.accountPubkey == signedIn.identity.publicKeyHex &&
+            request.method == signedIn.identity.method
+    }
+}
+
 val WebSignedInMenuItems = listOf(
     "Reload notes",
     "Note relays",
