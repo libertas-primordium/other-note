@@ -4,8 +4,10 @@ import kotlin.js.Promise
 
 external val document: WebDocument
 external val window: WebWindow
+external val localStorage: WebStorage
 
 external interface WebDocument {
+    val documentElement: WebElement
     fun getElementById(id: String): WebElement?
     fun createElement(tagName: String): WebElement
 }
@@ -32,6 +34,11 @@ external interface WebElement {
     fun addEventListener(type: String, listener: (dynamic) -> Unit)
 }
 
+external interface WebStorage {
+    fun getItem(key: String): String?
+    fun setItem(key: String, value: String)
+}
+
 internal const val Nip46TokenInputLabel = "Remote signer token"
 internal const val Nip46TokenInputType = "password"
 private const val WebNotesResultsContainerId = "web-notes-results"
@@ -42,6 +49,7 @@ private var noteState: WebNoteLoadState = WebNoteLoadState.Idle
 private var loadedNoteEvents: List<WebNostrEvent> = emptyList()
 private var loadedNotePlaintexts: Map<String, String> = emptyMap()
 private var noteListControls = WebNoteListControlsState()
+private var selectedThemeId = loadInitialWebThemeId()
 private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
 private var noteEditBody = ""
 private var noteEditMessage = ""
@@ -77,6 +85,7 @@ private sealed interface WebNoteEditMode {
 
 fun main() {
     rootElement = document.getElementById("root") ?: return
+    applyWebTheme(selectedThemeId)
     window.addEventListener("resize") {
         val nextLaneCount = webNoteLaneCountForViewport()
         if (nextLaneCount != noteLaneCount) {
@@ -112,6 +121,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
         appendChild(textElement("h2", "section-title", "Security boundary"))
         appendChild(textElement("p", "body", "Your signer keeps your private key. Other Note only asks for your public key in this preview, and signing, encryption, and decryption will remain client-side or signer-delegated."))
     })
+    appendChild(themeSelectorPanel())
     appendChild(nip07SignInPanel(state))
     appendChild(nip46SignInPanel(state))
     appendChild(element("section", "panel") {
@@ -169,6 +179,10 @@ private fun signedInMenu(identity: WebAccountIdentity): WebElement =
                     refreshRelayListForSignedInSession(reloadNotesOnImport = true)
                     refreshRelayStatsForSignedInSession()
                 })
+                appendChild(menuItemElement("Theme") {
+                    webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.Theme)
+                    render()
+                })
                 appendChild(menuItemElement("About web preview") {
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.About)
                     render()
@@ -187,6 +201,9 @@ private fun activeMenuPanel(identity: WebAccountIdentity): WebElement? =
         WebMenuPanel.None -> null
         WebMenuPanel.NoteRelays -> modalPanel("Note relays", closeEnabled = !relayMigrationState.inProgress) {
             appendChild(noteRelaySettingsContent())
+        }
+        WebMenuPanel.Theme -> modalPanel("Theme") {
+            appendChild(themeSelectorContent())
         }
         WebMenuPanel.About -> modalPanel("About web preview") {
             appendChild(aboutWebPreviewContent(identity))
@@ -270,8 +287,43 @@ private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
         appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated."))
         appendChild(textElement("p", "body", "This web preview keeps auth, signer sessions, notes, drafts, relay choices, and pending writes in memory only."))
-        appendChild(textElement("p", "body", "It has no direct nsec input, no durable browser storage, no service worker, no tracking/reporting services, and no backend note processing."))
+        appendChild(textElement("p", "body", "It has no direct nsec input, no durable browser storage for auth, signer, notes, relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
         appendChild(textElement("p", "body small-gap", "Android and Debian/Linux desktop are the current active native targets."))
+    }
+
+private fun themeSelectorPanel(): WebElement =
+    element("section", "panel theme-panel") {
+        appendChild(textElement("h2", "section-title", "Theme"))
+        appendChild(themeSelectorContent())
+    }
+
+private fun themeSelectorContent(): WebElement =
+    element("div", "panel-content theme-selector") {
+        appendChild(textElement("p", "body", "Choose a built-in visual theme. This stores only a generic theme ID in this browser."))
+        appendChild(themeSelectElement())
+    }
+
+private fun themeSelectElement(): WebElement =
+    element("label", "field-label theme-select-field") {
+        appendChild(textElement("span", "field-label-text", "Visual theme"))
+        appendChild(
+            element("select", "text-input theme-select").also { select ->
+                select.setAttribute("aria-label", "Visual theme")
+                BuiltInWebThemes.forEach { theme ->
+                    select.appendChild(element("option", "") {
+                        setAttribute("value", theme.id)
+                        if (theme.id == selectedThemeId) {
+                            setAttribute("selected", "selected")
+                        }
+                        textContent = theme.label
+                    })
+                }
+                select.value = webThemeForId(selectedThemeId).id
+                select.addEventListener("change") {
+                    selectWebTheme(select.value)
+                }
+            },
+        )
     }
 
 private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
@@ -922,6 +974,33 @@ private fun updateNoteSortOrder(sortId: String) {
     noteListControls = noteListControls.copy(sortId = webNoteSortOptionForId(sortId).id)
     refreshNotesResultsOnly()
 }
+
+private fun selectWebTheme(themeId: String) {
+    selectedThemeId = saveWebThemePreference(webThemeStorageOrNull(), themeId)
+    applyWebTheme(selectedThemeId)
+    render()
+}
+
+private fun applyWebTheme(themeId: String) {
+    val theme = webThemeForId(themeId)
+    document.documentElement.setAttribute("data-theme", theme.id)
+    document.documentElement.setAttribute("data-theme-mode", if (theme.dark) "dark" else "light")
+}
+
+private fun loadInitialWebThemeId(): String =
+    loadWebThemePreference(webThemeStorageOrNull())
+
+private fun webThemeStorageOrNull(): WebThemePreferenceStorage? =
+    runCatching {
+        object : WebThemePreferenceStorage {
+            override fun read(key: String): String? =
+                localStorage.getItem(key)
+
+            override fun write(key: String, value: String) {
+                localStorage.setItem(key, value)
+            }
+        }
+    }.getOrNull()
 
 private fun refreshNotesResultsOnly() {
     val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return

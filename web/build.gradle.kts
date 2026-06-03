@@ -36,11 +36,11 @@ val webSecuritySourceCheck by tasks.registering {
         }.files
 
         val forbiddenRuntimePatterns = listOf(
-            "localStorage",
             "indexedDB",
             "document.cookie",
             "CacheStorage",
             "serviceWorker",
+            "sessionStorage",
             "console.log",
             "println",
             "analytics",
@@ -50,6 +50,20 @@ val webSecuritySourceCheck by tasks.registering {
         val runtimeHits = forbiddenRuntimePatterns.filter { pattern -> runtimeText.contains(pattern) }
         check(runtimeHits.isEmpty()) {
             "Forbidden web runtime pattern(s) found: ${runtimeHits.joinToString()}"
+        }
+        val localStorageFiles = runtimeFiles.filter { file -> file.readText().contains("localStorage") }
+            .map { file -> file.relativeTo(runtimeSourceDir.asFile).invariantSeparatorsPath }
+        check(localStorageFiles == listOf("com/libertasprimordium/othernote/web/WebMain.kt")) {
+            "localStorage may appear only in WebMain.kt for the allowed generic theme preference: ${localStorageFiles.joinToString()}"
+        }
+        val themeSource = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebThemes.kt").asFile.readText()
+        check(themeSource.contains("""WebThemePreferenceKey = "on.web.theme"""")) {
+            "Web theme preference storage must use the documented generic key."
+        }
+        listOf("pubkey", "npub", "nsec", "bunker", "signer", "relay", "note", "event", "profile", "secret").forEach { forbiddenKeyPart ->
+            check(!"on.web.theme".contains(forbiddenKeyPart)) {
+                "Web theme preference key must not include account, relay, note, signer, or profile identifiers."
+            }
         }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
         val relayInputUpdater = Regex(
@@ -165,12 +179,16 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".note-list-controls", "display: grid")
         requireCssDeclaration(".note-list-controls", "grid-template-columns: minmax(0, 1fr) minmax(190px, 260px)")
         requireCssDeclaration(".sort-select", "min-height: 44px")
+        requireCssDeclaration(":root", "--button-background: #8e44ff")
+        requireCssDeclaration(":root[data-theme=\"urban\"]", "--background: #e7e7e3")
+        requireCssDeclaration(":root[data-theme=\"hacker\"]", "--background: #020403")
+        requireCssDeclaration(":root[data-theme=\"papyrus\"]", "--background: #fbf5e7")
         requireCssDeclaration(".note-card-actions", "flex-direction: row")
         requireCssDeclaration(".note-card-actions", "gap: 6px")
         requireCssDeclaration(".note-card-actions .action-button", "min-height: 34px")
-        requireCssDeclaration(".note-card-actions .action-button", "border-color: rgba(142, 68, 255, 0.68)")
+        requireCssDeclaration(".note-card-actions .action-button", "border-color: color-mix(in srgb, var(--accent) 68%, transparent)")
         requireCssDeclaration(".note-card-actions .action-button", "white-space: nowrap")
-        requireCssDeclaration(".note-card-actions .action-button:last-child", "border-color: rgba(255, 139, 139, 0.58)")
+        requireCssDeclaration(".note-card-actions .action-button:last-child", "border-color: var(--danger-border)")
         rejectCssDeclaration(".note-card-actions", "flex-direction: column")
         rejectCssDeclaration(".note-list", "columns:")
         rejectCssDeclaration(".note-list", "column-count")
