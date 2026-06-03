@@ -51,6 +51,15 @@ val webSecuritySourceCheck by tasks.registering {
         check(runtimeHits.isEmpty()) {
             "Forbidden web runtime pattern(s) found: ${runtimeHits.joinToString()}"
         }
+        val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
+        val relayInputUpdater = Regex(
+            """private fun updateNoteRelayInput\(value: String\)\s*\{(?<body>.*?)}""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define updateNoteRelayInput for Relay Settings input handling.")
+        check(!relayInputUpdater.contains("render()")) {
+            "Relay Settings input typing must not call render(); replacing the modal input on each character drops focus."
+        }
 
         val serviceWorkerFiles = resourceFiles.filter { file ->
             file.name.equals("sw.js", ignoreCase = true) ||
@@ -95,10 +104,10 @@ val webSecuritySourceCheck by tasks.registering {
             }
         }
 
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
             requireCssDeclaration(selector, "max-width: 100%")
         }
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
             requireCssDeclaration(selector, "min-width: 0")
         }
         listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code").forEach { selector ->
@@ -113,14 +122,42 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".note-card", "break-inside: avoid")
         requireCssDeclaration(".note-card", "border: 1px solid var(--subtle-border)")
         requireCssDeclaration(".note-card", "background: var(--card-surface)")
+        requireCssDeclaration(".note-card", "display: grid")
+        requireCssDeclaration(".note-card-open", "cursor: pointer")
+        requireCssDeclaration(".note-title", "-webkit-line-clamp: 2")
+        requireCssDeclaration(".note-title", "overflow: hidden")
+        requireCssDeclaration(".note-snippet", "-webkit-line-clamp: 4")
+        requireCssDeclaration(".note-snippet", "overflow: hidden")
+        requireCssDeclaration(".modal-panel", "overflow-x: hidden")
+        requireCssDeclaration(".modal-header .section-title", "overflow-wrap: anywhere")
+        requireCssDeclaration(".note-detail-panel", "overflow-x: hidden")
+        requireCssDeclaration(".note-detail-body", "overflow-x: hidden")
+        requireCssDeclaration(".note-detail-body .markdown-view", "display: block")
+        requireCssDeclaration(".note-detail-body .markdown-view", "overflow-x: hidden")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "overflow-wrap: anywhere")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "word-break: break-word")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "white-space: pre-wrap")
+        requireCssDeclaration(".markdown-view", "overflow-x: hidden")
         requireCssDeclaration(".notes-panel", "background: transparent")
         requireCssDeclaration(".notes-panel", "border: 0")
+        requireCssDeclaration(".note-card-actions", "flex-direction: row")
+        requireCssDeclaration(".note-card-actions", "gap: 6px")
+        requireCssDeclaration(".note-card-actions .action-button", "min-height: 34px")
+        requireCssDeclaration(".note-card-actions .action-button", "border-color: rgba(142, 68, 255, 0.68)")
+        requireCssDeclaration(".note-card-actions .action-button", "white-space: nowrap")
+        requireCssDeclaration(".note-card-actions .action-button:last-child", "border-color: rgba(255, 139, 139, 0.58)")
+        rejectCssDeclaration(".note-card-actions", "flex-direction: column")
         rejectCssDeclaration(".note-list", "columns:")
         rejectCssDeclaration(".note-list", "column-count")
         rejectCssDeclaration(".note-list", "column-width")
         rejectCssDeclaration(".note-list", "column-gap")
-        requireCssDeclaration(".markdown-code-block", "overflow-x: auto")
+        rejectCssDeclaration(".note-detail-body", "overflow-x: auto")
+        rejectCssDeclaration(".note-detail-body .markdown-view", "overflow-x: auto")
+        requireCssDeclaration(".markdown-code-block", "overflow-x: hidden")
+        rejectCssDeclaration(".markdown-code-block", "overflow-x: auto")
         requireCssDeclaration(".markdown-code-block", "white-space: pre-wrap")
+        requireCssDeclaration(".markdown-code-block", "word-break: break-word")
+        requireCssDeclaration(".markdown-paragraph,\n        .markdown-quote", "white-space: pre-wrap")
         requireCssDeclaration(".inline-code", "word-break: break-word")
 
         val deploymentDoc = deploymentSecurityDoc.asFile.readText()
