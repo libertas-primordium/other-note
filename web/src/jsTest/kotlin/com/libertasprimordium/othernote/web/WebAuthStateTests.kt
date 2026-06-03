@@ -94,6 +94,49 @@ class WebAuthStateTests {
     }
 }
 
+class WebLayoutMenuStateTests {
+    @Test
+    fun signedInMenuIncludesSecondaryActionsAndLogout() {
+        assertEquals(listOf("Reload notes", "Note relays", "About web preview", "Logout"), WebSignedInMenuItems)
+    }
+
+    @Test
+    fun relaySettingsPanelIsHiddenByDefault() {
+        val state = WebMenuUiState()
+
+        assertEquals(false, state.open)
+        assertEquals(WebMenuPanel.None, state.activePanel)
+    }
+
+    @Test
+    fun menuOpensAndCanSelectNoteRelaysPanel() {
+        val opened = toggleWebMenu(WebMenuUiState())
+        val panel = openWebMenuPanel(opened, WebMenuPanel.NoteRelays)
+
+        assertEquals(true, opened.open)
+        assertEquals(false, panel.open)
+        assertEquals(WebMenuPanel.NoteRelays, panel.activePanel)
+    }
+
+    @Test
+    fun aboutPanelCanOpenAndClose() {
+        val panel = openWebMenuPanel(WebMenuUiState(open = true), WebMenuPanel.About)
+        val closed = closeWebMenuPanel(panel)
+
+        assertEquals(false, panel.open)
+        assertEquals(WebMenuPanel.About, panel.activePanel)
+        assertEquals(WebMenuPanel.None, closed.activePanel)
+    }
+
+    @Test
+    fun logoutResetsMenuPanelState() {
+        val state = WebMenuUiState(open = true, activePanel = WebMenuPanel.NoteRelays)
+
+        assertEquals(WebMenuUiState(), resetWebMenuState())
+        assertEquals(WebMenuUiState(), closeWebMenuPanel(closeWebMenu(state)))
+    }
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {

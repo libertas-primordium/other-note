@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
     <title>Other Note Web Preview</title>
     <style>
         :root {
@@ -36,6 +35,26 @@
             width: min(760px, calc(100vw - 32px));
             margin: 0 auto;
             padding: 48px 0;
+        }
+
+        .app-header {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 20px 0 18px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .app-header-copy {
+            min-width: 0;
+        }
+
+        .app-title {
+            margin: 0;
+            font-size: clamp(1.75rem, 5vw, 2.75rem);
+            line-height: 1;
+            letter-spacing: 0;
         }
 
         .hero {
@@ -113,6 +132,92 @@
             background: transparent;
             color: var(--muted);
             cursor: not-allowed;
+        }
+
+        .menu-shell {
+            position: relative;
+            flex: 0 0 auto;
+        }
+
+        .menu-shell .action-button {
+            margin-top: 0;
+        }
+
+        .menu-popover {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            z-index: 10;
+            width: min(240px, calc(100vw - 40px));
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #09090d;
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+        }
+
+        .menu-item {
+            display: block;
+            width: 100%;
+            min-height: 40px;
+            padding: 0 10px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text);
+            font: inherit;
+            font-weight: 700;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .menu-item:hover,
+        .menu-item:focus {
+            background: rgba(142, 68, 255, 0.18);
+            outline: none;
+        }
+
+        .menu-item.danger {
+            color: #ffb4b4;
+        }
+
+        .menu-divider {
+            height: 1px;
+            margin: 6px 0;
+            background: var(--border);
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.62);
+        }
+
+        .modal-panel {
+            width: min(680px, 100%);
+            max-height: min(82vh, 720px);
+            overflow-y: auto;
+            box-shadow: 0 22px 60px rgba(0, 0, 0, 0.56);
+        }
+
+        .modal-header {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            justify-content: space-between;
+        }
+
+        .modal-header .action-button {
+            min-height: 38px;
+            margin-top: 0;
+        }
+
+        .panel-content {
+            margin-top: 8px;
         }
 
         .field-label {
@@ -202,6 +307,10 @@
             margin-top: 0;
         }
 
+        .notes-actions {
+            margin-top: 14px;
+        }
+
         .relay-list {
             display: grid;
             gap: 8px;
@@ -288,6 +397,23 @@
             margin: 22px 0 0;
             color: var(--muted);
             font-size: 0.92rem;
+        }
+
+        @media (max-width: 560px) {
+            .shell {
+                width: min(100vw - 24px, 760px);
+                padding: 28px 0;
+            }
+
+            .app-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .menu-popover {
+                left: 0;
+                right: auto;
+            }
         }
     </style>
 </head>

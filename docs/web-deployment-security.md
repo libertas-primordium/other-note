@@ -16,7 +16,7 @@ Use this document with [web-client-architecture.md](web-client-architecture.md) 
 
 ## Production Security Headers
 
-Prefer HTTP response headers over relying on the meta CSP in `index.html`. Meta CSP is useful for local/static smoke checks, but it cannot enforce every deployment header, including `frame-ancestors`.
+Production deployments must set CSP and related controls as HTTP response headers from the static host. Do not rely on a CSP meta tag in `index.html`: it cannot enforce every deployment control, including `frame-ancestors`, and it can break the Kotlin/JS webpack development server.
 
 Recommended production headers:
 
@@ -32,7 +32,19 @@ The current static shell has inline CSS, so the CSP includes `style-src 'self' '
 
 `connect-src 'self' wss:` is a conscious tradeoff. Users can select arbitrary Nostr note relays, and NIP-46 signer transport also uses WebSocket relays. The web client still keeps signing, encryption, and decryption client-side or signer-delegated; relay traffic is expected encrypted Nostr traffic, not server-side note processing.
 
-For local development only, the source `index.html` meta CSP also allows `ws://localhost:*`, `ws://127.0.0.1:*`, and `ws://[::1]:*` so the dev server and local relay testing can work. Do not copy those local `ws://` allowances into a production HTTPS deployment unless a reviewed local-development deployment explicitly needs them.
+Do not copy local `ws://` development allowances into a production HTTPS deployment unless a reviewed local-development deployment explicitly needs them. Do not use invalid bracketed IPv6 wildcard CSP sources.
+
+## Local Development CSP
+
+The command below uses webpack dev server:
+
+```bash
+./gradlew :web:jsBrowserDevelopmentRun
+```
+
+Webpack dev server may use eval-like development code and local WebSocket connections for live reload. A strict production CSP in `index.html` can therefore blank the local page with an `unsafe-eval` violation before Other Note code runs. The source `index.html` intentionally does not include a CSP meta tag; production CSP must be tested through the final static host or a local production-like server that sends HTTP headers.
+
+If a temporary development CSP is needed for local experiments, keep it separate from the production header template. Development-only allowances may include loopback WebSocket sources such as `ws://localhost:*` or `ws://127.0.0.1:*`. Production should continue to use `connect-src 'self' wss:` for Nostr relay traffic.
 
 ## Browser Storage Policy
 
@@ -137,4 +149,3 @@ When testing a production-like host with headers:
 - No durable web relay preferences.
 - No web kind `10002` relay-list sync.
 - User-selected relay URLs require broad `wss:` connection allowance.
-

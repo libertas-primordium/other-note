@@ -35,6 +35,24 @@ data class WebAuthUiState(
     val nip46Message: String = "",
 )
 
+enum class WebMenuPanel {
+    None,
+    NoteRelays,
+    About,
+}
+
+data class WebMenuUiState(
+    val open: Boolean = false,
+    val activePanel: WebMenuPanel = WebMenuPanel.None,
+)
+
+val WebSignedInMenuItems = listOf(
+    "Reload notes",
+    "Note relays",
+    "About web preview",
+    "Logout",
+)
+
 sealed interface Nip07PublicKeyResult {
     data class Valid(val publicKeyHex: String) : Nip07PublicKeyResult
     data class Invalid(val message: String) : Nip07PublicKeyResult
@@ -138,3 +156,18 @@ fun logoutWebAccount(state: WebAuthUiState): WebAuthUiState =
         nip46Status = WebNip46Status.Idle,
         nip46Message = "",
     )
+
+fun toggleWebMenu(state: WebMenuUiState): WebMenuUiState =
+    state.copy(open = !state.open)
+
+fun closeWebMenu(state: WebMenuUiState): WebMenuUiState =
+    state.copy(open = false)
+
+fun openWebMenuPanel(state: WebMenuUiState, panel: WebMenuPanel): WebMenuUiState =
+    state.copy(open = false, activePanel = panel)
+
+fun closeWebMenuPanel(state: WebMenuUiState): WebMenuUiState =
+    state.copy(activePanel = WebMenuPanel.None)
+
+fun resetWebMenuState(): WebMenuUiState =
+    WebMenuUiState()
