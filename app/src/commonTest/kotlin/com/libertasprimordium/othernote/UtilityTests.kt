@@ -40,6 +40,7 @@ import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
+import com.libertasprimordium.othernote.util.noteCardPreview
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -495,6 +496,38 @@ class UtilityTests {
         assertFalse(truncated.contains("#"))
         assertFalse(truncated.contains("~"))
         assertTrue(truncated.startsWith("Heading"))
+    }
+
+    @Test
+    fun noteCardPreviewIgnoresLeadingBlankLinesAndUsesFirstContentLine() {
+        val preview = noteCardPreview("\n\n  # Launch notes  \n\nFollow-up item")
+
+        assertEquals("Launch notes", preview.title)
+        assertEquals("Follow-up item", preview.snippet)
+    }
+
+    @Test
+    fun noteCardPreviewSoftensCommonMarkdownMarkersForDisplayOnly() {
+        val raw = "**Important** update\n> `relay.send` and ~review~"
+        val preview = noteCardPreview(raw)
+
+        assertEquals("Important update", preview.title)
+        assertEquals("relay.send and review", preview.snippet)
+        assertEquals("**Important** update\n> `relay.send` and ~review~", raw)
+    }
+
+    @Test
+    fun noteCardPreviewKeepsFencedCodeStartReadable() {
+        val preview = noteCardPreview("```kotlin\nval count = 2\nprintln(count)\n```")
+
+        assertEquals("Code block", preview.title)
+        assertEquals("val count = 2 println(count)", preview.snippet)
+    }
+
+    @Test
+    fun noteCardPreviewHandlesEmptyOrBlankNotesSafely() {
+        assertEquals("Untitled note", noteCardPreview("").title)
+        assertEquals("", noteCardPreview(" \n\t ").snippet)
     }
 
     @Test

@@ -15,6 +15,11 @@ sealed class MarkdownSpan {
     data class Code(val text: String) : MarkdownSpan()
 }
 
+data class NoteCardPreview(
+    val title: String,
+    val snippet: String,
+)
+
 fun markdownBlocks(markdown: String): List<MarkdownBlock> {
     val blocks = mutableListOf<MarkdownBlock>()
     val paragraph = mutableListOf<String>()
@@ -143,3 +148,56 @@ fun truncateMarkdown(markdown: String, maxChars: Int = 160): String {
         .trim()
     return if (plain.length <= maxChars) plain else plain.take(maxChars).trimEnd() + "..."
 }
+
+fun noteCardPreview(
+    markdown: String,
+    maxTitleChars: Int = 80,
+    maxSnippetChars: Int = 140,
+): NoteCardPreview {
+    val lines = markdown.lines()
+    val firstContentIndex = lines.indexOfFirst { it.isNotBlank() }
+    if (firstContentIndex < 0) return NoteCardPreview(title = "Untitled note", snippet = "")
+
+    val firstLine = lines[firstContentIndex].trim()
+    if (firstLine.startsWith("```")) {
+        val codeLines = lines.drop(firstContentIndex + 1)
+            .takeWhile { !it.trim().startsWith("```") }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        return NoteCardPreview(
+            title = "Code block",
+            snippet = codeLines.joinToString(" ").compactPreviewText(maxSnippetChars),
+        )
+    }
+
+    val title = firstLine.toNoteCardPreviewText().ifBlank { "Untitled note" }.compactPreviewText(maxTitleChars)
+    val snippet = lines.drop(firstContentIndex + 1)
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() && !it.startsWith("```") }
+        .map { it.toNoteCardPreviewText() }
+        .filter { it.isNotBlank() }
+        .take(3)
+        .joinToString(" ")
+        .compactPreviewText(maxSnippetChars)
+    return NoteCardPreview(title = title, snippet = snippet)
+}
+
+private fun String.toNoteCardPreviewText(): String =
+    trim()
+        .removePrefix("> ")
+        .removePrefix(">")
+        .replace(Regex("""^#{1,6}\s+"""), "")
+        .replace(Regex("""^[-*]\s+"""), "")
+        .replace(Regex("""^\d+\.\s+"""), "")
+        .replace(Regex("```.*$"), "")
+        .replace(Regex("""\*\*([^*]+)\*\*"""), "$1")
+        .replace(Regex("""\*([^*]+)\*"""), "$1")
+        .replace(Regex("""~~([^~]+)~~"""), "$1")
+        .replace(Regex("""~([^~]+)~"""), "$1")
+        .replace(Regex("""`([^`]+)`"""), "$1")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+
+private fun String.compactPreviewText(maxChars: Int): String =
+    if (length <= maxChars) this else take(maxChars).trimEnd() + "..."
