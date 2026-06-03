@@ -46,6 +46,8 @@ private var noteEditMessage = ""
 private var noteDetailState = WebNoteDetailUiState()
 private var profileState = WebProfileUiState()
 private var profileLoadGuard = WebProfileLoadGuard()
+private var relayListState = WebRelayListUiState()
+private var relayListLoadGuard = WebRelayListLoadGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
@@ -55,6 +57,7 @@ private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
 private var activeProfileFetcher = profileFetcherForCurrentRelays()
+private var activeRelayListFetcher = relayListFetcherForCurrentRelays()
 
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
@@ -105,7 +108,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(nip46SignInPanel(state))
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, or pending writes. It has no direct nsec input and no full relay-list sync yet."))
+        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, or pending writes. It has no direct nsec input, no relay-list publishing, and no native-style relay migration yet."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
@@ -155,6 +158,7 @@ private fun signedInMenu(identity: WebAccountIdentity): WebElement =
                 appendChild(menuItemElement("Note relays") {
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.NoteRelays)
                     render()
+                    refreshRelayListForSignedInSession(reloadNotesOnImport = true)
                 })
                 appendChild(menuItemElement("About web preview") {
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.About)
@@ -195,6 +199,15 @@ private fun noteRelaySettingsContent(): WebElement =
     element("div", "panel-content") {
         appendChild(textElement("p", "body", "These relays fetch and publish your encrypted notes."))
         appendChild(textElement("p", "body small-gap", "Relay choices are kept in memory for this browser session."))
+        relayListStatusCopy()?.let { copy ->
+            appendChild(textElement("p", relayListStatusClass(), copy))
+        }
+        if (relayListState.pendingPublishedRelays.isNotEmpty()) {
+            appendChild(element("div", "inline-actions") {
+                appendChild(buttonElement(text = "Keep local edits", enabled = true, onClick = ::keepCurrentRelaySettings))
+                appendChild(buttonElement(text = "Reload published list", enabled = true, onClick = ::applyPendingPublishedRelays))
+            })
+        }
         appendChild(element("div", "relay-list") {
             selectedWebNoteRelays(noteRelaySettings).forEach { relay ->
                 appendChild(element("div", "relay-row") {
@@ -498,9 +511,11 @@ private fun requestNip07PublicKey() {
                 resetLoadedNotes()
                 cancelNoteEdit()
                 resetProfile()
+                resetRelayListState()
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
                 fetchProfileForSignedInSession()
+                refreshRelayListForSignedInSession(reloadNotesOnImport = true)
                 autoLoadNotesForSignedInSession()
             },
             {
@@ -533,9 +548,11 @@ private fun requestNip46PublicKey() {
                     resetLoadedNotes()
                     cancelNoteEdit()
                     resetProfile()
+                    resetRelayListState()
                     authState = completeNip46SignIn(authState, result.userPubkey)
                     render()
                     fetchProfileForSignedInSession()
+                    refreshRelayListForSignedInSession(reloadNotesOnImport = true)
                     autoLoadNotesForSignedInSession()
                 }
                 is WebNip46ConnectResult.Failed -> {
@@ -555,6 +572,11 @@ private fun autoLoadNotesForSignedInSession() {
 private fun fetchProfileForSignedInSession() {
     val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
     loadProfileMetadata(signedIn.identity)
+}
+
+private fun refreshRelayListForSignedInSession(reloadNotesOnImport: Boolean) {
+    val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
+    loadPublishedRelayList(signedIn.identity, reloadNotesOnImport)
 }
 
 private fun loadProfileMetadata(identity: WebAccountIdentity) {
@@ -582,6 +604,38 @@ private fun loadProfileMetadata(identity: WebAccountIdentity) {
             WebProfileUiState(loading = false, pubkey = identity.publicKeyHex, metadata = profile)
         }
         render()
+    }
+}
+
+private fun loadPublishedRelayList(identity: WebAccountIdentity, reloadNotesOnImport: Boolean) {
+    val started = relayListLoadGuard.start(identity)
+    relayListLoadGuard = started.guard
+    val request = started.request
+    activeRelayListFetcher.close()
+    activeRelayListFetcher = relayListFetcherForCurrentRelays()
+    relayListState = relayListState.copy(
+        loading = true,
+        pubkey = identity.publicKeyHex,
+        message = WebRelayListCopy.Loading,
+    )
+    render()
+    activeRelayListFetcher.fetch(identity.publicKeyHex) { published ->
+        if (!relayListLoadGuard.accepts(request, authState)) return@fetch
+        if (published == null) {
+            relayListState = relayListState.copy(
+                loading = false,
+                pubkey = identity.publicKeyHex,
+                message = WebRelayListCopy.NoPublishedWriteRelays,
+                pendingPublishedRelays = emptyList(),
+            )
+            render()
+            return@fetch
+        }
+        applyPublishedRelayList(
+            publishedRelays = published.writeRelayUrls,
+            reloadNotesOnImport = reloadNotesOnImport,
+            identity = identity,
+        )
     }
 }
 
@@ -746,6 +800,10 @@ private fun resetProfile() {
     profileState = WebProfileUiState()
 }
 
+private fun resetRelayListState() {
+    relayListState = WebRelayListUiState()
+}
+
 private fun updateNoteRelayInput(value: String) {
     noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
 }
@@ -760,6 +818,20 @@ private fun removeNoteRelay(relay: String) {
 
 private fun restoreDefaultNoteRelays() {
     updateNoteRelaySettings(restoreDefaultWebNoteRelays(noteRelaySettings))
+}
+
+private fun keepCurrentRelaySettings() {
+    relayListState = keepLocalWebRelayEdits(relayListState)
+    render()
+}
+
+private fun applyPendingPublishedRelays() {
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity
+    handleRelayListImportDecision(
+        decision = applyPendingPublishedWebNoteRelays(noteRelaySettings, relayListState),
+        reloadNotesOnImport = true,
+        identity = identity,
+    )
 }
 
 private fun closeActivePanel() {
@@ -779,12 +851,15 @@ private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
 private fun rebuildNoteRelayClients() {
     noteLoadGuard = noteLoadGuard.invalidate()
     profileLoadGuard = profileLoadGuard.invalidate()
+    relayListLoadGuard = relayListLoadGuard.invalidate()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeProfileFetcher.close()
+    activeRelayListFetcher.close()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     activeProfileFetcher = profileFetcherForCurrentRelays()
+    activeRelayListFetcher = relayListFetcherForCurrentRelays()
 }
 
 private fun noteLoaderForCurrentRelays(): WebNoteLoader =
@@ -796,21 +871,83 @@ private fun noteCrudServiceForCurrentRelays(): WebNoteCrudService =
 private fun profileFetcherForCurrentRelays(): WebProfileFetcher =
     WebProfileFetcher(selectedWebNoteRelays(noteRelaySettings))
 
+private fun relayListFetcherForCurrentRelays(): WebRelayListFetcher =
+    WebRelayListFetcher(selectedWebNoteRelays(noteRelaySettings))
+
+private fun applyPublishedRelayList(
+    publishedRelays: List<String>,
+    reloadNotesOnImport: Boolean,
+    identity: WebAccountIdentity?,
+) {
+    handleRelayListImportDecision(
+        decision = importPublishedWebNoteRelays(noteRelaySettings, relayListState, publishedRelays),
+        reloadNotesOnImport = reloadNotesOnImport,
+        identity = identity,
+    )
+}
+
+private fun handleRelayListImportDecision(
+    decision: WebRelayListImportDecision,
+    reloadNotesOnImport: Boolean,
+    identity: WebAccountIdentity?,
+) {
+    when (decision) {
+        is WebRelayListImportDecision.Applied -> {
+            noteRelaySettings = decision.settings
+            relayListState = decision.relayState
+            if (decision.changed) {
+                rebuildNoteRelayClients()
+                if (reloadNotesOnImport && identity != null && isActiveIdentity(identity)) {
+                    loadReadOnlyNotes(identity)
+                    return
+                }
+            }
+        }
+        is WebRelayListImportDecision.Deferred -> {
+            noteRelaySettings = decision.settings
+            relayListState = decision.relayState
+            if (noteRelaySettings.input.isNotBlank() && webMenuState.activePanel == WebMenuPanel.NoteRelays) {
+                return
+            }
+        }
+        is WebRelayListImportDecision.KeptCurrent -> {
+            noteRelaySettings = decision.settings
+            relayListState = decision.relayState
+        }
+    }
+    render()
+}
+
+private fun isActiveIdentity(identity: WebAccountIdentity): Boolean {
+    val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return false
+    return signedIn.identity == identity
+}
+
+private fun relayListStatusCopy(): String? =
+    relayListState.message.takeIf { it.isNotBlank() }
+
+private fun relayListStatusClass(): String =
+    if (relayListState.message == WebRelayListCopy.FetchFailed) "body error small-gap" else "body muted small-gap"
+
 private fun logout() {
     noteLoadGuard = noteLoadGuard.invalidate()
     profileLoadGuard = profileLoadGuard.invalidate()
+    relayListLoadGuard = relayListLoadGuard.invalidate()
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeProfileFetcher.close()
+    activeRelayListFetcher.close()
     noteRelaySettings = defaultWebNoteRelaySettings()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     activeProfileFetcher = profileFetcherForCurrentRelays()
+    activeRelayListFetcher = relayListFetcherForCurrentRelays()
     nip46TokenInput = ""
     webMenuState = resetWebMenuState()
     clearNoteDetail()
     resetProfile()
+    resetRelayListState()
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
     cancelNoteEdit()
