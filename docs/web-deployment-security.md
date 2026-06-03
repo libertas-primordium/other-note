@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, or a lower-emphasis session-only direct `nsec` fallback; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, or a lower-emphasis session-only direct `nsec` fallback; create a fresh identity for the current browser session; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -52,7 +52,7 @@ Current web auth/session/note/relay state is memory-only. The only browser-persi
 
 - Auth state is not durably restored after refresh.
 - NIP-46 communication keys and session material are not persisted.
-- Direct-key `nsec` sessions are exposed only as a session-only fallback. The pasted key is not saved, the input is cleared on submit, and refresh/logout forgets the session.
+- Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.

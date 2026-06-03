@@ -477,6 +477,49 @@
             line-height: 1.45;
         }
 
+        .generated-secret-display {
+            max-width: 100%;
+            margin: 12px 0 0;
+            padding: 12px;
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+            background: var(--code-background);
+            color: var(--code-text);
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 0.86rem;
+            line-height: 1.5;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .checkbox-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .checkbox-label {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 10px;
+            align-items: start;
+            color: var(--text);
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+        }
+
+        .checkbox-input {
+            width: 18px;
+            height: 18px;
+            margin: 2px 0 0;
+            accent-color: var(--accent);
+        }
+
+        .checkbox-text {
+            min-width: 0;
+        }
+
         .note-list {
             display: flex;
             min-width: 0;

@@ -1,12 +1,18 @@
 package com.libertasprimordium.othernote.web
 
 private const val WebDirectKeyByteCount = 32
+private const val WebDirectKeyGenerationAttempts = 8
 
 internal const val DirectNsecInputLabel = "Session-only nsec"
 internal const val DirectNsecInputType = "password"
 internal const val DirectNsecInputAutocomplete = "off"
 internal const val DirectNsecInputPlaceholder = "Paste session-only key"
 internal const val DirectNsecSubmitLabel = "Use for this session"
+internal const val GeneratedIdentitySubmitLabel = "Use for this session"
+
+internal const val GeneratedIdentityRecoverAckLabel = "I understand Other Note cannot recover this key."
+internal const val GeneratedIdentitySavedAckLabel = "I have saved this nsec somewhere secure."
+internal const val GeneratedIdentityLossAckLabel = "I understand losing this nsec means losing access to encrypted notes for this identity."
 
 internal data class WebDirectNsecDraftState(
     val input: String = "",
@@ -19,10 +25,61 @@ internal fun updateWebDirectNsecDraft(state: WebDirectNsecDraftState, input: Str
 internal fun clearWebDirectNsecDraft(message: String = ""): WebDirectNsecDraftState =
     WebDirectNsecDraftState(message = message)
 
+internal class WebGeneratedIdentitySecret private constructor(
+    private val nsecValue: String,
+    val publicKeyHex: String,
+) {
+    val displayPublicKey: String = "${publicKeyHex.take(8)}...${publicKeyHex.takeLast(8)}"
+
+    fun revealNsec(): String = nsecValue
+
+    override fun toString(): String =
+        "WebGeneratedIdentitySecret(nsec=redacted, publicKey=$displayPublicKey)"
+
+    companion object {
+        fun create(nsec: String, publicKeyHex: String): WebGeneratedIdentitySecret =
+            WebGeneratedIdentitySecret(nsec, publicKeyHex.lowercase())
+    }
+}
+
+internal data class WebGeneratedIdentityState(
+    val secret: WebGeneratedIdentitySecret? = null,
+    val recoverAcknowledged: Boolean = false,
+    val savedAcknowledged: Boolean = false,
+    val lossAcknowledged: Boolean = false,
+    val message: String = "",
+) {
+    val canUseForSession: Boolean
+        get() = secret != null && recoverAcknowledged && savedAcknowledged && lossAcknowledged
+}
+
+internal fun acknowledgeWebGeneratedIdentityRecovery(state: WebGeneratedIdentityState, acknowledged: Boolean): WebGeneratedIdentityState =
+    state.copy(recoverAcknowledged = acknowledged, message = "")
+
+internal fun acknowledgeWebGeneratedIdentitySaved(state: WebGeneratedIdentityState, acknowledged: Boolean): WebGeneratedIdentityState =
+    state.copy(savedAcknowledged = acknowledged, message = "")
+
+internal fun acknowledgeWebGeneratedIdentityLoss(state: WebGeneratedIdentityState, acknowledged: Boolean): WebGeneratedIdentityState =
+    state.copy(lossAcknowledged = acknowledged, message = "")
+
+internal fun clearWebGeneratedIdentityState(message: String = ""): WebGeneratedIdentityState =
+    WebGeneratedIdentityState(message = message)
+
+internal sealed interface WebGeneratedIdentityResult {
+    data class Success(val secret: WebGeneratedIdentitySecret) : WebGeneratedIdentityResult
+    data class Failed(val safeMessage: String) : WebGeneratedIdentityResult
+}
+
 internal object WebDirectKeyCopy {
     const val CryptoUnavailable = "Session-only direct key crypto is unavailable in this web build."
     const val InvalidKey = "That nsec could not be used. Check the key and try again."
     const val PublicKeyFailed = "Could not derive the direct-key account public key."
+    const val GenerateUnavailable = "Could not generate a fresh identity in this web build."
+    const val BrowserCryptoMissing = "Browser secure random generation is unavailable."
+    const val GeneratedPrivateKeyInvalid = "Browser generated an invalid identity key."
+    const val GeneratedIdentityReady = "Fresh identity generated. Save the nsec before continuing."
+    const val GeneratedIdentityCancelled = "Fresh identity generation cancelled."
+    const val GeneratedIdentityRequiresAcknowledgement = "Save the generated nsec and acknowledge the recovery warnings before continuing."
     const val SessionCleared = "The session-only direct key is no longer active."
     const val EncryptFailed = "Could not encrypt the note with the session-only direct key."
     const val DecryptFailed = "Could not decrypt the note with the session-only direct key."
@@ -42,6 +99,7 @@ internal sealed interface WebDirectKeyLoginResult {
 
 internal interface WebDirectKeyCrypto {
     val productionReady: Boolean
+    fun generatePrivateKey(): Result<Uint8Array>
     fun decodeNsec(raw: String): Result<Uint8Array>
     fun derivePublicKey(keyBytes: Uint8Array): Result<String>
     fun encryptToSelf(plaintext: String, keyBytes: Uint8Array, publicKeyHex: String): Result<String>
@@ -53,6 +111,12 @@ internal interface WebDirectKeyCrypto {
 internal object WebNostrToolsDirectKeyCrypto : WebDirectKeyCrypto {
     override val productionReady: Boolean
         get() = true
+
+    override fun generatePrivateKey(): Result<Uint8Array> = runCatching {
+        val browserCrypto = runCatching { globalThis.crypto }.getOrNull()
+            ?: throw IllegalStateException(WebDirectKeyCopy.BrowserCryptoMissing)
+        browserCrypto.getRandomValues(Uint8Array(WebDirectKeyByteCount))
+    }
 
     override fun decodeNsec(raw: String): Result<Uint8Array> = runCatching {
         val decoded = WebDirectKeyNip19.decode(raw.trim()) ?: throw IllegalArgumentException("invalid")
@@ -184,6 +248,47 @@ internal fun createWebDirectKeySession(
     )
 }
 
+internal fun generateWebDirectKeyIdentity(
+    crypto: WebDirectKeyCrypto = WebNostrToolsDirectKeyCrypto,
+    attempts: Int = WebDirectKeyGenerationAttempts,
+): WebGeneratedIdentityResult {
+    if (!crypto.productionReady) {
+        return WebGeneratedIdentityResult.Failed(WebDirectKeyCopy.CryptoUnavailable)
+    }
+    repeat(attempts.coerceAtLeast(1)) {
+        val keyBytes = crypto.generatePrivateKey().getOrElse {
+            return WebGeneratedIdentityResult.Failed(WebDirectKeyCopy.GenerateUnavailable)
+        }
+        if (!isUsableDirectPrivateKeyCandidate(keyBytes)) {
+            keyBytes.fillUint8Array(0, WebDirectKeyByteCount)
+            return@repeat
+        }
+        val publicKeyHex = crypto.derivePublicKey(keyBytes).getOrElse {
+            keyBytes.fillUint8Array(0, WebDirectKeyByteCount)
+            return@repeat
+        }.lowercase()
+        if (!isValidDirectKeyPublicKey(publicKeyHex)) {
+            keyBytes.fillUint8Array(0, WebDirectKeyByteCount)
+            return@repeat
+        }
+        val nsec = WebDirectKeyNip19.encode("nsec", keyBytes.toByteArray(WebDirectKeyByteCount))
+        keyBytes.fillUint8Array(0, WebDirectKeyByteCount)
+        if (nsec == null) return@repeat
+        val decoded = crypto.decodeNsec(nsec).getOrElse {
+            return@repeat
+        }
+        val derived = crypto.derivePublicKey(decoded).getOrElse {
+            decoded.fillUint8Array(0, WebDirectKeyByteCount)
+            return@repeat
+        }.lowercase()
+        decoded.fillUint8Array(0, WebDirectKeyByteCount)
+        if (derived == publicKeyHex) {
+            return WebGeneratedIdentityResult.Success(WebGeneratedIdentitySecret.create(nsec, publicKeyHex))
+        }
+    }
+    return WebGeneratedIdentityResult.Failed(WebDirectKeyCopy.GeneratedPrivateKeyInvalid)
+}
+
 internal data class WebDirectKeyNip19Data(
     val hrp: String,
     val data: ByteArray,
@@ -273,8 +378,14 @@ private fun Uint8Array.copyUint8Array(byteCount: Int): Uint8Array =
         repeat(byteCount) { index -> writeUint8ArrayByte(copy, index, readUint8ArrayByte(this, index) and 0xff) }
     }
 
+private fun Uint8Array.toByteArray(byteCount: Int): ByteArray =
+    ByteArray(byteCount) { index -> (readUint8ArrayByte(this, index) and 0xff).toByte() }
+
 private fun isValidDirectKeyPublicKey(value: String): Boolean =
     value.length == 64 && value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+private fun isUsableDirectPrivateKeyCandidate(bytes: Uint8Array): Boolean =
+    (0 until WebDirectKeyByteCount).any { index -> (readUint8ArrayByte(bytes, index) and 0xff) != 0 }
 
 private fun Uint8Array.fillUint8Array(value: Int, byteCount: Int) {
     repeat(byteCount) { index -> writeUint8ArrayByte(this, index, value) }

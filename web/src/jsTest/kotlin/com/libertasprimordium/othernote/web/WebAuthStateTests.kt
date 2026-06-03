@@ -244,6 +244,42 @@ class WebDirectKeyFoundationTests {
     }
 
     @Test
+    fun generatedIdentityAcknowledgementsGateSessionUseAndClearSecrets() {
+        val raw = "generated-sensitive-value"
+        val secret = WebGeneratedIdentitySecret.create(raw, "01".repeat(32))
+        val generated = WebGeneratedIdentityState(secret = secret)
+        val recoverAcknowledged = acknowledgeWebGeneratedIdentityRecovery(generated, true)
+        val savedAcknowledged = acknowledgeWebGeneratedIdentitySaved(recoverAcknowledged, true)
+        val allAcknowledged = acknowledgeWebGeneratedIdentityLoss(savedAcknowledged, true)
+        val cleared = clearWebGeneratedIdentityState(WebDirectKeyCopy.GeneratedIdentityCancelled)
+
+        assertTrue(!generated.canUseForSession)
+        assertTrue(!recoverAcknowledged.canUseForSession)
+        assertTrue(!savedAcknowledged.canUseForSession)
+        assertTrue(allAcknowledged.canUseForSession)
+        assertTrue(!cleared.message.contains(raw))
+        assertNull(cleared.secret)
+        assertTrue(!secret.toString().contains(raw))
+    }
+
+    @Test
+    fun generatedIdentityCreatesValidSessionOnlyDirectKeyIdentity() {
+        val generated = assertIs<WebGeneratedIdentityResult.Success>(
+            generateWebDirectKeyIdentity(),
+        )
+        val raw = generated.secret.revealNsec()
+        val login = assertIs<WebDirectKeyLoginResult.Success>(
+            createWebDirectKeySession(raw),
+        )
+
+        assertTrue(raw.startsWith("nsec1"))
+        assertEquals(generated.secret.publicKeyHex, login.identity.publicKeyHex)
+        assertEquals(WebAuthMethod.DirectNsec, login.identity.method)
+        assertTrue(login.session.active)
+        login.session.clear()
+    }
+
+    @Test
     fun validNsecCreatesSessionOnlyDirectKeyIdentity() {
         val result = assertIs<WebDirectKeyLoginResult.Success>(
             createWebDirectKeySession(throwawayNsec(lastByte = 1)),
@@ -376,6 +412,9 @@ class WebDirectKeyFoundationTests {
 
     private object UnavailableDirectKeyCrypto : WebDirectKeyCrypto {
         override val productionReady: Boolean = false
+
+        override fun generatePrivateKey(): Result<Uint8Array> =
+            Result.failure(UnsupportedOperationException("unavailable"))
 
         override fun decodeNsec(raw: String): Result<Uint8Array> =
             Result.failure(UnsupportedOperationException("unavailable"))
