@@ -15,6 +15,7 @@ external interface WebWindow {
 }
 
 external interface Nip07Signer {
+    val nip44: Nip07Nip44?
     fun getPublicKey(): Promise<String?>
 }
 
@@ -33,8 +34,10 @@ internal const val Nip46TokenInputType = "password"
 
 private lateinit var rootElement: WebElement
 private var authState = WebAuthUiState(nip07Available = isNip07Available())
+private var noteState: WebNoteLoadState = WebNoteLoadState.Idle
 private var nip46TokenInput = ""
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
+private var activeNoteLoader = WebNoteLoader()
 
 fun main() {
     rootElement = document.getElementById("root") ?: return
@@ -58,7 +61,10 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
         appendChild(textElement("p", "body", "Your signer keeps your private key. Other Note only asks for your public key in this preview, and signing, encryption, and decryption will remain client-side or signer-delegated."))
     })
     when (val signInState = state.signInState) {
-        is WebSignInState.SignedIn -> appendChild(accountPanel(signInState.identity))
+        is WebSignInState.SignedIn -> {
+            appendChild(accountPanel(signInState.identity))
+            appendChild(notesPanel(signInState.identity, noteState))
+        }
         else -> {
             appendChild(nip07SignInPanel(state))
             appendChild(nip46SignInPanel(state))
@@ -66,7 +72,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     }
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not fetch, decrypt, edit, or publish notes. It does not persist web sessions or remote signer sessions."))
+        appendChild(textElement("p", "body", "This web preview does not create, edit, delete, or publish notes. It does not persist web sessions, remote signer sessions, or note caches."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
@@ -83,8 +89,51 @@ private fun accountPanel(identity: WebAccountIdentity): WebElement =
     element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Signed in"))
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
-        appendChild(textElement("p", "body small-gap", "Note sync is not implemented for web yet. Refreshing this page may clear this in-memory session."))
+        appendChild(textElement("p", "body small-gap", "Read-only note loading is in memory only. Refreshing this page may clear this session."))
         appendChild(buttonElement(text = "Logout", enabled = true, onClick = ::logout))
+    }
+
+private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
+    element("section", "panel") {
+        appendChild(textElement("h2", "section-title", "Read-only notes"))
+        appendChild(textElement("p", "body", "Loads encrypted Other Note events from note relays and decrypts them through the active signer. No note data is saved in the browser."))
+        appendChild(
+            buttonElement(
+                text = when (notes) {
+                    is WebNoteLoadState.Loading -> "Loading notes..."
+                    else -> "Reload notes"
+                },
+                enabled = notes !is WebNoteLoadState.Loading,
+                onClick = { loadReadOnlyNotes(identity) },
+            ),
+        )
+        when (notes) {
+            WebNoteLoadState.Idle -> appendChild(textElement("p", "body small-gap", "Notes are not loaded yet."))
+            is WebNoteLoadState.Loading -> appendChild(textElement("p", "body small-gap", notes.message))
+            is WebNoteLoadState.Empty -> {
+                appendChild(textElement("p", "body small-gap", WebNoteCopy.NoNotes))
+                notes.status?.let { appendChild(textElement("p", "body muted", it)) }
+            }
+            is WebNoteLoadState.Failed -> appendChild(textElement("p", "body error small-gap", notes.message))
+            is WebNoteLoadState.SignerUnsupported -> appendChild(textElement("p", "body error small-gap", notes.message))
+            is WebNoteLoadState.Loaded -> {
+                notes.status?.let { appendChild(textElement("p", "body muted small-gap", it)) }
+                appendChild(element("div", "note-list") {
+                    notes.notes.forEach { note -> appendChild(noteCard(note)) }
+                })
+            }
+        }
+    }
+
+private fun noteCard(note: WebReadOnlyNote): WebElement =
+    element("article", "note-card") {
+        val preview = webNotePreview(note.bodyMarkdown)
+        appendChild(textElement("h3", "note-title", preview.title))
+        if (preview.snippet.isNotBlank()) {
+            appendChild(textElement("p", "note-snippet", preview.snippet))
+        }
+        appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+        appendChild(renderMarkdown(note.bodyMarkdown))
     }
 
 private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
@@ -192,6 +241,7 @@ private fun requestNip07PublicKey() {
     try {
         signer.getPublicKey().then(
             { publicKey ->
+                noteState = WebNoteLoadState.Idle
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
             },
@@ -221,6 +271,7 @@ private fun requestNip46PublicKey() {
             when (result) {
                 is WebNip46ConnectResult.Connected -> {
                     nip46TokenInput = ""
+                    noteState = WebNoteLoadState.Idle
                     authState = completeNip46SignIn(authState, result.userPubkey)
                 }
                 is WebNip46ConnectResult.Failed -> {
@@ -232,9 +283,46 @@ private fun requestNip46PublicKey() {
     )
 }
 
+private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
+    activeNoteLoader.close()
+    activeNoteLoader = WebNoteLoader()
+    val decryptor = when (identity.method) {
+        WebAuthMethod.Nip46 -> WebNip46NoteDecryptor(activeNip46RemoteSigner, identity.publicKeyHex)
+        WebAuthMethod.Nip07 -> {
+            val nip44 = window.nostr?.nip44
+            if (nip44 == null) null else WebNip07NoteDecryptor(nip44, identity.publicKeyHex)
+        }
+    }
+    noteState = WebNoteLoadState.Loading("Preparing read-only note load.")
+    render()
+    activeNoteLoader.load(
+        accountPubkey = identity.publicKeyHex,
+        decryptor = decryptor,
+        onProgress = { message ->
+            noteState = WebNoteLoadState.Loading(message)
+            render()
+        },
+        onResult = { result ->
+            noteState = when (result) {
+                is WebNoteLoadResult.Loaded ->
+                    if (result.state.notes.isEmpty()) {
+                        WebNoteLoadState.Empty(result.relayStatus)
+                    } else {
+                        WebNoteLoadState.Loaded(result.state.notes, result.relayStatus)
+                    }
+                is WebNoteLoadResult.Failed -> WebNoteLoadState.Failed(result.safeMessage)
+                is WebNoteLoadResult.SignerUnsupported -> WebNoteLoadState.SignerUnsupported(result.safeMessage)
+            }
+            render()
+        },
+    )
+}
+
 private fun logout() {
     activeNip46RemoteSigner.disconnect()
+    activeNoteLoader.close()
     nip46TokenInput = ""
+    noteState = WebNoteLoadState.Idle
     authState = logoutWebAccount(authState)
     render()
 }
@@ -288,3 +376,35 @@ private fun element(tagName: String, className: String, build: WebElement.() -> 
 
 private fun textElement(tagName: String, className: String, text: String): WebElement =
     element(tagName, className).also { it.textContent = text }
+
+private fun renderMarkdown(markdown: String): WebElement =
+    element("div", "markdown-view") {
+        webMarkdownBlocks(markdown).forEach { block ->
+            appendChild(
+                when (block) {
+                    is WebMarkdownBlock.Heading -> inlineElement("h${block.level.coerceIn(1, 6)}", "markdown-heading", block.text)
+                    is WebMarkdownBlock.Paragraph -> inlineElement("p", "markdown-paragraph", block.text)
+                    is WebMarkdownBlock.BlockQuote -> inlineElement("blockquote", "markdown-quote", block.text)
+                    is WebMarkdownBlock.CodeBlock -> textElement("pre", "markdown-code-block", block.code)
+                },
+            )
+        }
+    }
+
+private fun inlineElement(tagName: String, className: String, markdown: String): WebElement =
+    element(tagName, className) {
+        webMarkdownSpans(markdown).forEach { span ->
+            appendChild(
+                when (span) {
+                    is WebMarkdownSpan.Text -> textElement("span", "", span.text)
+                    is WebMarkdownSpan.Bold -> textElement("strong", "", span.text)
+                    is WebMarkdownSpan.Italic -> textElement("em", "", span.text)
+                    is WebMarkdownSpan.Strike -> textElement("s", "", span.text)
+                    is WebMarkdownSpan.Code -> textElement("code", "inline-code", span.text)
+                },
+            )
+        }
+    }
+
+private fun formatWebNoteTimestamp(updatedAtMs: Long): String =
+    if (updatedAtMs <= 0) "unknown" else "${updatedAtMs / 1000}s"

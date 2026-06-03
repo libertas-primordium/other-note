@@ -24,7 +24,7 @@ Important security status:
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android cloud backup and device-transfer extraction are explicitly disabled for app data through the manifest and backup-rule resources. This is privacy hardening, not a backup feature.
 - NIP-46 remote signer foundation support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
-- The web target currently builds a preview shell with NIP-07 public-key sign-in and NIP-46 `bunker://` remote-signer public-key sign-in held in memory only. It has no `nsec` input, no browser persistence, no note sync, and no note CRUD.
+- The web target currently builds a preview shell with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, and read-only note loading held in memory only. It has no `nsec` input, no browser persistence, no note CRUD, and no note publishing.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
 
@@ -300,7 +300,7 @@ Saved-device Android key storage, non-Linux desktop keyring backends, richer cli
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
-The web preview output is generated under `web/build/dist/js/productionExecutable/`. It currently supports NIP-07 public-key sign-in and NIP-46 `bunker://` remote-signer public-key sign-in in memory only; note relay sync, note encryption/decryption, browser session persistence, durable remote-signer sessions, and note CRUD remain future work governed by [docs/web-client-architecture.md](docs/web-client-architecture.md).
+The web preview output is generated under `web/build/dist/js/productionExecutable/`. It currently supports in-memory NIP-07 public-key sign-in, in-memory NIP-46 `bunker://` remote-signer public-key sign-in, and read-only note loading from default note relays when the active signer can decrypt. Browser session persistence, durable remote-signer sessions, direct `nsec` input, note CRUD, and note publishing remain future work governed by [docs/web-client-architecture.md](docs/web-client-architecture.md).
 
 ## Safe Test Commands
 
@@ -378,7 +378,7 @@ Platform code:
 
 - `androidMain`: Android activity, NIP-55 signer adapters, bounded Android relay client, and app-private durable encrypted-event cache/pending-write stores for external-signer sessions.
 - `desktopMain`: Compose Desktop window entry point, bounded WebSocket relay client, and file-backed developer runtime cache/pending-write stores.
-- `web`: standalone Kotlin/JS preview shell. It intentionally does not depend on the native app runtime. Current web auth is limited to in-memory NIP-07 and NIP-46 public-key sign-in; browser storage, note relay sync, and note CRUD are not implemented yet.
+- `web`: standalone Kotlin/JS preview shell. It intentionally does not depend on the native app runtime. Current web auth is limited to in-memory NIP-07 and NIP-46 public-key sign-in, with in-memory read-only note loading from note relays when the active signer supports decrypt. Browser storage, note CRUD, and note publishing are not implemented yet.
 
 ## Known Limitations And TODOs
 

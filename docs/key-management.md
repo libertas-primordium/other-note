@@ -146,6 +146,8 @@ Direct `nsec` paste on web is allowed only as a fallback. The key must be kept i
 
 Avoid third-party scripts and analytics where feasible. Use HTTPS only and a strict Content Security Policy. Web delivery has a larger trust surface than native apps because served JavaScript can change.
 
+Current web preview support is still intentionally narrow: NIP-07 and NIP-46 sign-in are in-memory only, and read-only note loading may fetch encrypted note events from default note relays and decrypt them through the active signer when that signer exposes NIP-44 decrypt. The web preview must not persist browser auth sessions, NIP-46 communication keys, encrypted note events, decrypted note bodies, decrypted payload JSON, or direct `nsec` values.
+
 ## Threat Model And Non-goals
 
 This policy is designed to prevent accidental plaintext private-key persistence, accidental logging, and accidental server/relay exfiltration of keys or decrypted note content.
@@ -154,7 +156,7 @@ This policy currently does not cover completed implementations for:
 
 - Saved-device Android `nsec` storage.
 - Windows/macOS saved-device key storage.
-- Web relay sync, note encryption/decryption, and note CRUD.
+- Web note CRUD, note publishing, durable note caches, and durable browser relay settings.
 - Persisted web sessions, durable browser key storage, or durable web NIP-46 remote-signer sessions.
 - Custom password-vault or password-derived encrypted file storage.
 

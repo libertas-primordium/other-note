@@ -158,6 +158,81 @@
             line-height: 1.45;
         }
 
+        .note-list {
+            display: grid;
+            gap: 14px;
+            margin-top: 18px;
+        }
+
+        .note-card {
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #09090d;
+        }
+
+        .note-title {
+            margin: 0;
+            color: var(--text);
+            font-size: 1.05rem;
+            line-height: 1.25;
+        }
+
+        .note-snippet,
+        .note-meta {
+            margin: 8px 0 0;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .note-meta {
+            font-size: 0.82rem;
+        }
+
+        .markdown-view {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+            color: var(--text);
+        }
+
+        .markdown-heading,
+        .markdown-paragraph,
+        .markdown-quote,
+        .markdown-code-block {
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        .markdown-heading {
+            font-size: 1rem;
+        }
+
+        .markdown-quote {
+            padding-left: 10px;
+            border-left: 3px solid var(--accent);
+            color: var(--muted);
+        }
+
+        .markdown-code-block,
+        .inline-code {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #050508;
+            color: var(--text);
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        }
+
+        .markdown-code-block {
+            overflow-x: auto;
+            padding: 10px;
+            white-space: pre-wrap;
+        }
+
+        .inline-code {
+            padding: 1px 4px;
+        }
+
         .footer {
             margin: 22px 0 0;
             color: var(--muted);
