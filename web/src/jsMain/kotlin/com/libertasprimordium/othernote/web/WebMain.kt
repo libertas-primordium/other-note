@@ -68,6 +68,7 @@ private var webMenuState = WebMenuUiState()
 private var noteLaneCount = webNoteLaneCountForViewport()
 private var noteLoadGuard = WebNoteLoadGuard()
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
+private var activeDirectKeySession: WebDirectKeySession? = null
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
 private var activeProfileFetcher = profileFetcherForCurrentRelays()
@@ -641,6 +642,7 @@ private fun requestNip07PublicKey() {
         signer.getPublicKey().then(
             { publicKey ->
                 noteState = WebNoteLoadState.Idle
+                clearDirectKeySession()
                 resetLoadedNotes()
                 resetNoteListControlsState()
                 cancelNoteEdit()
@@ -669,6 +671,7 @@ private fun requestNip07PublicKey() {
 private fun requestNip46PublicKey() {
     authState = beginNip46SignIn(authState)
     render()
+    clearDirectKeySession()
     activeNip46RemoteSigner.disconnect()
     activeNip46RemoteSigner = WebNip46RemoteSigner()
     activeNip46RemoteSigner.connectWithBunkerToken(
@@ -682,6 +685,7 @@ private fun requestNip46PublicKey() {
                 is WebNip46ConnectResult.Connected -> {
                     nip46TokenInput = ""
                     noteState = WebNoteLoadState.Idle
+                    clearDirectKeySession()
                     resetLoadedNotes()
                     resetNoteListControlsState()
                     cancelNoteEdit()
@@ -794,6 +798,7 @@ private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
             val nip44 = window.nostr?.nip44
             if (nip44 == null) null else WebNip07NoteDecryptor(nip44, identity.publicKeyHex)
         }
+        WebAuthMethod.DirectNsec -> directKeySessionFor(identity)?.let(::WebDirectKeyNoteDecryptor)
     }
     noteState = WebNoteLoadState.Loading("Preparing read-only note load.")
     render()
@@ -833,6 +838,7 @@ private fun crudSignerFor(identity: WebAccountIdentity): WebNoteCrudSigner? =
             val signer = window.nostr
             if (signer.hasWebNoteCrudCapability()) WebNip07NoteCrudSigner(signer, identity.publicKeyHex) else null
         }
+        WebAuthMethod.DirectNsec -> directKeySessionFor(identity)?.let(::WebDirectKeyNoteCrudSigner)
     }
 
 private fun startCreateNote() {
@@ -959,6 +965,11 @@ private fun resetRelayMigrationState() {
 
 private fun resetRelayStatsState() {
     relayStatsState = WebRelayStatsUiState()
+}
+
+private fun clearDirectKeySession() {
+    activeDirectKeySession?.clear()
+    activeDirectKeySession = null
 }
 
 private fun updateNoteRelayInput(value: String) {
@@ -1214,6 +1225,14 @@ private fun relayListSignerFor(identity: WebAccountIdentity): WebNoteCrudSigner?
             val signer = window.nostr
             if (signer.hasNip07SignCapabilityForRelayList()) WebNip07NoteCrudSigner(signer, identity.publicKeyHex) else null
         }
+        WebAuthMethod.DirectNsec -> directKeySessionFor(identity)?.let(::WebDirectKeyNoteCrudSigner)
+    }
+
+private fun directKeySessionFor(identity: WebAccountIdentity): WebDirectKeySession? =
+    activeDirectKeySession?.takeIf { session ->
+        identity.method == WebAuthMethod.DirectNsec &&
+            session.active &&
+            session.publicKeyHex == identity.publicKeyHex
     }
 
 private fun applyPublishedRelayList(
@@ -1332,6 +1351,7 @@ private fun logout() {
     relayMigrationGuard = relayMigrationGuard.invalidate()
     relayStatsGuard = relayStatsGuard.invalidate()
     activeNip46RemoteSigner.disconnect()
+    clearDirectKeySession()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeProfileFetcher.close()

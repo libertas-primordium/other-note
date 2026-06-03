@@ -65,6 +65,24 @@ val webSecuritySourceCheck by tasks.registering {
                 "Web theme preference key must not include account, relay, note, signer, or profile identifiers."
             }
         }
+        val directKeySource = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebDirectKey.kt").asFile.readText()
+        val forbiddenDirectKeyPatterns = listOf(
+            "localStorage",
+            "sessionStorage",
+            "indexedDB",
+            "document.cookie",
+            "CacheStorage",
+            "serviceWorker",
+            "setAttribute",
+            "textContent",
+            "console.log",
+            "println",
+            "WebThemePreferenceKey",
+        )
+        val directKeyHits = forbiddenDirectKeyPatterns.filter { pattern -> directKeySource.contains(pattern) }
+        check(directKeyHits.isEmpty()) {
+            "Direct nsec web foundation must stay memory-only and non-UI; forbidden pattern(s): ${directKeyHits.joinToString()}"
+        }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
         val relayInputUpdater = Regex(
             """private fun updateNoteRelayInput\(value: String\)\s*\{(?<body>.*?)}""",

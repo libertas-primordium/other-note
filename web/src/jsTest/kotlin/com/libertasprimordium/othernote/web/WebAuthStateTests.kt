@@ -220,6 +220,167 @@ class WebThemeTests {
     }
 }
 
+class WebDirectKeyFoundationTests {
+    @Test
+    fun validNsecCreatesSessionOnlyDirectKeyIdentity() {
+        val result = assertIs<WebDirectKeyLoginResult.Success>(
+            createWebDirectKeySession(throwawayNsec(lastByte = 1)),
+        )
+
+        assertEquals(WebAuthMethod.DirectNsec, result.identity.method)
+        assertEquals(result.session.publicKeyHex, result.identity.publicKeyHex)
+        assertEquals(64, result.identity.publicKeyHex.length)
+        assertTrue(result.session.active)
+    }
+
+    @Test
+    fun invalidNsecIsRejectedWithoutEchoingInput() {
+        val raw = "nsec1-this-is-not-a-valid-key"
+        val result = assertIs<WebDirectKeyLoginResult.Invalid>(
+            createWebDirectKeySession(raw),
+        )
+
+        assertEquals(WebDirectKeyCopy.InvalidKey, result.safeMessage)
+        assertTrue(!result.safeMessage.contains(raw))
+    }
+
+    @Test
+    fun directKeyCanSignAndValidateEncryptedNoteEvent() {
+        val session = assertIs<WebDirectKeyLoginResult.Success>(
+            createWebDirectKeySession(throwawayNsec(lastByte = 2)),
+        ).session
+        val note = WebReadOnlyNote(
+            id = "direct-note",
+            createdAtMs = 1_000,
+            updatedAtMs = 2_000,
+            bodyMarkdown = "direct key note",
+        )
+        val plaintextPayload = encodeWebNotePayload(note).getOrThrow()
+        val ciphertext = session.encryptToSelf(plaintextPayload).getOrThrow()
+        val unsigned = buildUnsignedWebNoteEvent(note, session.publicKeyHex, ciphertext)
+        val event = session.sign(unsigned).getOrThrow()
+
+        assertTrue(ciphertext.isNotBlank())
+        assertTrue(ciphertext != plaintextPayload)
+        assertTrue(!ciphertext.contains(note.bodyMarkdown))
+        assertTrue(session.validate(event).getOrThrow())
+        assertTrue(validateWebSignedNoteEvent(note, event, session.publicKeyHex))
+        assertEquals(plaintextPayload, session.decryptFromSelf(event.content).getOrThrow())
+    }
+
+    @Test
+    fun directKeySignerPublishesEncryptedEventsWithoutPlaintextFallback() {
+        val login = assertIs<WebDirectKeyLoginResult.Success>(
+            createWebDirectKeySession(throwawayNsec(lastByte = 3)),
+        )
+        val publisher = CapturingPublisher()
+        val service = WebNoteCrudService(
+            publisher = publisher,
+            noteIdGenerator = { "direct-publish-note" },
+            nowMs = { 5_000 },
+        )
+        var result: WebNoteSaveResult? = null
+
+        service.save(
+            existing = null,
+            bodyMarkdown = "plaintext must not be published",
+            accountPubkey = login.identity.publicKeyHex,
+            signer = WebDirectKeyNoteCrudSigner(login.session),
+            onProgress = {},
+            onResult = { result = it },
+        )
+
+        val published = assertIs<WebNoteSaveResult.Published>(result)
+        val event = publisher.events.single()
+        assertEquals(event, published.event)
+        assertTrue(event.content != published.plaintextPayload)
+        assertTrue(!event.content.contains("plaintext must not be published"))
+        assertEquals(published.plaintextPayload, login.session.decryptFromSelf(event.content).getOrThrow())
+    }
+
+    @Test
+    fun clearedDirectKeySessionCannotEncryptDecryptOrSign() {
+        val login = assertIs<WebDirectKeyLoginResult.Success>(
+            createWebDirectKeySession(throwawayNsec(lastByte = 4)),
+        )
+        val signer = WebDirectKeyNoteCrudSigner(login.session)
+        val decryptor = WebDirectKeyNoteDecryptor(login.session)
+        var encryptResult: WebSignerOperationResult? = null
+        var signResult: WebNoteSignResult? = null
+        var decryptResult: Result<String>? = null
+
+        login.session.clear()
+        signer.encrypt("payload") { encryptResult = it }
+        signer.sign(
+            WebUnsignedNoteEvent(
+                pubkey = login.identity.publicKeyHex,
+                createdAt = 1,
+                kind = WebNoteKind,
+                tags = webNoteEventTags("cleared"),
+                content = "ciphertext",
+            ),
+        ) { signResult = it }
+        decryptor.decrypt("ciphertext") { decryptResult = it }
+
+        assertIs<WebSignerOperationResult.Failed>(encryptResult)
+        assertIs<WebNoteSignResult.Failed>(signResult)
+        assertTrue(decryptResult?.isFailure == true)
+        assertTrue(!login.session.active)
+    }
+
+    @Test
+    fun unavailableDirectKeyCryptoDoesNotCreatePublishableSession() {
+        val result = assertIs<WebDirectKeyLoginResult.Unavailable>(
+            createWebDirectKeySession(throwawayNsec(lastByte = 5), UnavailableDirectKeyCrypto),
+        )
+
+        assertEquals(WebDirectKeyCopy.CryptoUnavailable, result.safeMessage)
+    }
+
+    private class CapturingPublisher : WebNotePublisher {
+        val events = mutableListOf<WebNostrEvent>()
+
+        override fun publish(event: WebNostrEvent, onResult: (WebNotePublishResult) -> Unit) {
+            events += event
+            onResult(
+                WebNotePublishResult(
+                    statuses = listOf(WebNoteRelayStatus(url = "wss://relay.example", acceptedWrite = true)),
+                ),
+            )
+        }
+
+        override fun close() = Unit
+    }
+
+    private object UnavailableDirectKeyCrypto : WebDirectKeyCrypto {
+        override val productionReady: Boolean = false
+
+        override fun decodeNsec(raw: String): Result<Uint8Array> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+
+        override fun derivePublicKey(keyBytes: Uint8Array): Result<String> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+
+        override fun encryptToSelf(plaintext: String, keyBytes: Uint8Array, publicKeyHex: String): Result<String> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+
+        override fun decryptFromSelf(ciphertext: String, keyBytes: Uint8Array, publicKeyHex: String): Result<String> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+
+        override fun sign(unsignedEvent: WebUnsignedNoteEvent, keyBytes: Uint8Array): Result<WebNostrEvent> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+
+        override fun validate(event: WebNostrEvent): Result<Boolean> =
+            Result.failure(UnsupportedOperationException("unavailable"))
+    }
+
+    private fun throwawayNsec(lastByte: Int): String =
+        WebDirectKeyNip19.encode(
+            hrp = "nsec",
+            data = ByteArray(32).also { it[31] = lastByte.toByte() },
+        ) ?: error("Could not encode throwaway test key")
+}
+
 class WebResponsiveNoteGridLayoutTests {
     @Test
     fun signedInShellUsesDistinctWideLayoutClass() {

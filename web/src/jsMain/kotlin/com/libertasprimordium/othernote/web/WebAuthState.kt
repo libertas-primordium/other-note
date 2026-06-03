@@ -11,6 +11,7 @@ data class WebAccountIdentity(
 enum class WebAuthMethod(val displayName: String) {
     Nip07("NIP-07 browser extension"),
     Nip46("NIP-46 remote signer"),
+    DirectNsec("Session-only direct nsec"),
 }
 
 sealed interface WebSignInState {
