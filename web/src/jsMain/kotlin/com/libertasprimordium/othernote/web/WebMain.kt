@@ -48,6 +48,10 @@ private var profileState = WebProfileUiState()
 private var profileLoadGuard = WebProfileLoadGuard()
 private var relayListState = WebRelayListUiState()
 private var relayListLoadGuard = WebRelayListLoadGuard()
+private var relayMigrationState = WebRelayMigrationUiState()
+private var relayMigrationGuard = WebRelayMigrationGuard()
+private var relayStatsState = WebRelayStatsUiState()
+private var relayStatsGuard = WebRelayStatsGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
@@ -58,6 +62,8 @@ private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
 private var activeProfileFetcher = profileFetcherForCurrentRelays()
 private var activeRelayListFetcher = relayListFetcherForCurrentRelays()
+private var activeRelayMigrationService = WebRelayMigrationService()
+private var activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
 
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
@@ -108,7 +114,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     appendChild(nip46SignInPanel(state))
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, or pending writes. It has no direct nsec input, no relay-list publishing, and no native-style relay migration yet."))
+        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, relay migration queues, or pending writes. It has no direct nsec input. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
@@ -159,6 +165,7 @@ private fun signedInMenu(identity: WebAccountIdentity): WebElement =
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.NoteRelays)
                     render()
                     refreshRelayListForSignedInSession(reloadNotesOnImport = true)
+                    refreshRelayStatsForSignedInSession()
                 })
                 appendChild(menuItemElement("About web preview") {
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.About)
@@ -176,7 +183,7 @@ private fun signedInMenu(identity: WebAccountIdentity): WebElement =
 private fun activeMenuPanel(identity: WebAccountIdentity): WebElement? =
     when (webMenuState.activePanel) {
         WebMenuPanel.None -> null
-        WebMenuPanel.NoteRelays -> modalPanel("Note relays") {
+        WebMenuPanel.NoteRelays -> modalPanel("Note relays", closeEnabled = !relayMigrationState.inProgress) {
             appendChild(noteRelaySettingsContent())
         }
         WebMenuPanel.About -> modalPanel("About web preview") {
@@ -184,12 +191,12 @@ private fun activeMenuPanel(identity: WebAccountIdentity): WebElement? =
         }
     }
 
-private fun modalPanel(title: String, build: WebElement.() -> Unit): WebElement =
+private fun modalPanel(title: String, closeEnabled: Boolean = true, build: WebElement.() -> Unit): WebElement =
     element("div", "modal-backdrop") {
         appendChild(element("section", "panel modal-panel") {
             appendChild(element("div", "modal-header") {
                 appendChild(textElement("h2", "section-title", title))
-                appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeActivePanel))
+                appendChild(buttonElement(text = "Close", enabled = closeEnabled, onClick = ::closeActivePanel))
             })
             build()
         })
@@ -202,24 +209,42 @@ private fun noteRelaySettingsContent(): WebElement =
         relayListStatusCopy()?.let { copy ->
             appendChild(textElement("p", relayListStatusClass(), copy))
         }
+        relayMigrationStatusCopy()?.let { copy ->
+            appendChild(textElement("p", relayMigrationStatusClass(), copy))
+        }
+        relayMigrationState.warning?.let { warning ->
+            appendChild(element("section", "editor-panel relay-migration-warning") {
+                appendChild(textElement("h3", "section-title", warning.title))
+                appendChild(textElement("p", "body", warning.body))
+                if (relayMigrationState.pendingSettings != null) {
+                    appendChild(element("div", "inline-actions") {
+                        appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelRelayMigration))
+                        appendChild(buttonElement(text = "Continue", enabled = true, onClick = ::continueRelayMigration))
+                    })
+                }
+            })
+        }
         if (relayListState.pendingPublishedRelays.isNotEmpty()) {
             appendChild(element("div", "inline-actions") {
-                appendChild(buttonElement(text = "Keep local edits", enabled = true, onClick = ::keepCurrentRelaySettings))
-                appendChild(buttonElement(text = "Reload published list", enabled = true, onClick = ::applyPendingPublishedRelays))
+                appendChild(buttonElement(text = "Keep local edits", enabled = !relayMigrationState.inProgress, onClick = ::keepCurrentRelaySettings))
+                appendChild(buttonElement(text = "Reload published list", enabled = !relayMigrationState.inProgress, onClick = ::applyPendingPublishedRelays))
             })
         }
         appendChild(element("div", "relay-list") {
             selectedWebNoteRelays(noteRelaySettings).forEach { relay ->
                 appendChild(element("div", "relay-row") {
-                    appendChild(textElement("span", "relay-url", relay))
-                    appendChild(buttonElement(text = "Remove", enabled = true, onClick = { removeNoteRelay(relay) }))
+                    appendChild(element("div", "relay-row-main") {
+                        appendChild(textElement("span", "relay-url", relay))
+                        appendChild(textElement("span", "relay-stat", webRelayEventStatLabel(relayStatsState.stats[relay])))
+                    })
+                    appendChild(buttonElement(text = "Remove", enabled = !relayMigrationState.inProgress, onClick = { removeNoteRelay(relay) }))
                 })
             }
         })
         appendChild(textInputElement(
             label = "Add note relay",
             value = noteRelaySettings.input,
-            enabled = true,
+            enabled = !relayMigrationState.inProgress,
             inputType = "text",
             placeholder = "relay.example.com",
             onInput = ::updateNoteRelayInput,
@@ -229,9 +254,13 @@ private fun noteRelaySettingsContent(): WebElement =
             appendChild(textElement("p", style, noteRelaySettings.message))
         }
         appendChild(element("div", "inline-actions") {
-            appendChild(buttonElement(text = "Add relay", enabled = true, onClick = ::addNoteRelay))
-            appendChild(buttonElement(text = "Restore defaults", enabled = true, onClick = ::restoreDefaultNoteRelays))
+            appendChild(buttonElement(text = "Add relay", enabled = !relayMigrationState.inProgress, onClick = ::addNoteRelay))
+            appendChild(buttonElement(text = "Restore defaults", enabled = !relayMigrationState.inProgress, onClick = ::restoreDefaultNoteRelays))
+            appendChild(buttonElement(text = "Sync/Migrate", enabled = canRunManualRelaySync(), onClick = ::syncCurrentNoteRelays))
         })
+        manualRelaySyncDisabledCopy()?.let { copy ->
+            appendChild(textElement("p", "body muted small-gap", copy))
+        }
     }
 
 private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
@@ -512,10 +541,13 @@ private fun requestNip07PublicKey() {
                 cancelNoteEdit()
                 resetProfile()
                 resetRelayListState()
+                resetRelayMigrationState()
+                resetRelayStatsState()
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
                 fetchProfileForSignedInSession()
                 refreshRelayListForSignedInSession(reloadNotesOnImport = true)
+                refreshRelayStatsForSignedInSession()
                 autoLoadNotesForSignedInSession()
             },
             {
@@ -549,10 +581,13 @@ private fun requestNip46PublicKey() {
                     cancelNoteEdit()
                     resetProfile()
                     resetRelayListState()
+                    resetRelayMigrationState()
+                    resetRelayStatsState()
                     authState = completeNip46SignIn(authState, result.userPubkey)
                     render()
                     fetchProfileForSignedInSession()
                     refreshRelayListForSignedInSession(reloadNotesOnImport = true)
+                    refreshRelayStatsForSignedInSession()
                     autoLoadNotesForSignedInSession()
                 }
                 is WebNip46ConnectResult.Failed -> {
@@ -627,10 +662,12 @@ private fun loadPublishedRelayList(identity: WebAccountIdentity, reloadNotesOnIm
                 pubkey = identity.publicKeyHex,
                 message = WebRelayListCopy.NoPublishedWriteRelays,
                 pendingPublishedRelays = emptyList(),
+                latestPublishedRelayList = null,
             )
             render()
             return@fetch
         }
+        relayListState = relayListState.copy(latestPublishedRelayList = published)
         applyPublishedRelayList(
             publishedRelays = published.writeRelayUrls,
             reloadNotesOnImport = reloadNotesOnImport,
@@ -743,6 +780,7 @@ private fun saveCurrentDraft(identity: WebAccountIdentity, signer: WebNoteCrudSi
                 is WebNoteSaveResult.Published -> {
                     applyPublishedNote(result)
                     cancelNoteEdit()
+                    refreshRelayStatsForSignedInSession()
                 }
             }
             render()
@@ -770,6 +808,7 @@ private fun deleteConfirmedNote(identity: WebAccountIdentity, note: WebReadOnlyN
                 is WebNoteSaveResult.Published -> {
                     applyPublishedNote(result)
                     cancelNoteEdit()
+                    refreshRelayStatsForSignedInSession()
                 }
             }
             render()
@@ -804,20 +843,28 @@ private fun resetRelayListState() {
     relayListState = WebRelayListUiState()
 }
 
+private fun resetRelayMigrationState() {
+    relayMigrationState = WebRelayMigrationUiState()
+}
+
+private fun resetRelayStatsState() {
+    relayStatsState = WebRelayStatsUiState()
+}
+
 private fun updateNoteRelayInput(value: String) {
     noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
 }
 
 private fun addNoteRelay() {
-    updateNoteRelaySettings(addWebNoteRelay(noteRelaySettings))
+    requestNoteRelaySettingsChange(addWebNoteRelay(noteRelaySettings))
 }
 
 private fun removeNoteRelay(relay: String) {
-    updateNoteRelaySettings(removeWebNoteRelay(noteRelaySettings, relay))
+    requestNoteRelaySettingsChange(removeWebNoteRelay(noteRelaySettings, relay))
 }
 
 private fun restoreDefaultNoteRelays() {
-    updateNoteRelaySettings(restoreDefaultWebNoteRelays(noteRelaySettings))
+    requestNoteRelaySettingsChange(restoreDefaultWebNoteRelays(noteRelaySettings))
 }
 
 private fun keepCurrentRelaySettings() {
@@ -827,11 +874,14 @@ private fun keepCurrentRelaySettings() {
 
 private fun applyPendingPublishedRelays() {
     val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity
-    handleRelayListImportDecision(
-        decision = applyPendingPublishedWebNoteRelays(noteRelaySettings, relayListState),
-        reloadNotesOnImport = true,
-        identity = identity,
-    )
+    when (val decision = applyPendingPublishedWebNoteRelays(noteRelaySettings, relayListState)) {
+        is WebRelayListImportDecision.Applied -> {
+            relayListState = decision.relayState
+            requestNoteRelaySettingsChange(decision.settings)
+        }
+        is WebRelayListImportDecision.Deferred -> handleRelayListImportDecision(decision, reloadNotesOnImport = true, identity = identity)
+        is WebRelayListImportDecision.KeptCurrent -> handleRelayListImportDecision(decision, reloadNotesOnImport = true, identity = identity)
+    }
 }
 
 private fun closeActivePanel() {
@@ -839,11 +889,124 @@ private fun closeActivePanel() {
     render()
 }
 
+private fun requestNoteRelaySettingsChange(next: WebNoteRelaySettingsState) {
+    if (relayMigrationState.inProgress) return
+    val previousRelays = selectedWebNoteRelays(noteRelaySettings)
+    val requestedRelays = selectedWebNoteRelays(next)
+    if (previousRelays == requestedRelays) {
+        noteRelaySettings = next
+        render()
+        return
+    }
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity
+    if (identity == null) {
+        updateNoteRelaySettings(next)
+        return
+    }
+    val started = relayMigrationGuard.start(identity)
+    relayMigrationGuard = started.guard
+    val request = started.request
+    relayMigrationState = WebRelayMigrationUiState(
+        inProgress = true,
+        message = "Migrating encrypted notes before changing note relays.",
+        pendingSettings = next,
+    )
+    render()
+    activeRelayMigrationService.close()
+    activeRelayMigrationService = WebRelayMigrationService()
+    activeRelayMigrationService.migrate(
+        accountPubkey = identity.publicKeyHex,
+        oldRelays = previousRelays,
+        newRelays = requestedRelays,
+        existingRelayList = relayListStateLatest(),
+        relayListSigner = relayListSignerFor(identity),
+        onProgress = { message ->
+            if (!relayMigrationGuard.accepts(request, authState)) return@migrate
+            relayMigrationState = relayMigrationState.copy(inProgress = true, message = message)
+            render()
+        },
+        onResult = { result ->
+            if (!relayMigrationGuard.accepts(request, authState)) return@migrate
+            if (result.fullSuccess) {
+                relayMigrationState = WebRelayMigrationUiState(message = "Relay migration completed.")
+                updateNoteRelaySettings(next)
+                loadReadOnlyNotes(identity)
+            } else {
+                relayMigrationState = WebRelayMigrationUiState(
+                    inProgress = false,
+                    warning = webRelayMigrationWarning(result),
+                    pendingSettings = next,
+                )
+                render()
+            }
+        },
+    )
+}
+
+private fun syncCurrentNoteRelays() {
+    if (!canRunManualRelaySync()) return
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity ?: return
+    val relays = selectedWebNoteRelays(noteRelaySettings)
+    val started = relayMigrationGuard.start(identity)
+    relayMigrationGuard = started.guard
+    val request = started.request
+    relayMigrationState = WebRelayMigrationUiState(
+        inProgress = true,
+        message = "Syncing encrypted note events across current note relays.",
+    )
+    render()
+    activeRelayMigrationService.close()
+    activeRelayMigrationService = WebRelayMigrationService()
+    activeRelayMigrationService.syncCurrentRelays(
+        accountPubkey = identity.publicKeyHex,
+        relays = relays,
+        onProgress = { message ->
+            if (!relayMigrationGuard.accepts(request, authState)) return@syncCurrentRelays
+            relayMigrationState = relayMigrationState.copy(inProgress = true, message = message)
+            render()
+        },
+        onResult = { result ->
+            if (!relayMigrationGuard.accepts(request, authState)) return@syncCurrentRelays
+            relayMigrationState = when {
+                result.fullSuccess -> WebRelayMigrationUiState(message = "Relay sync/migration completed.")
+                result.onlyNoSourceEventsWarning -> WebRelayMigrationUiState(message = "No existing note events found on these relays.")
+                else -> WebRelayMigrationUiState(warning = webRelayMigrationWarning(result))
+            }
+            if (isActiveIdentity(identity)) {
+                refreshRelayStatsForSignedInSession()
+                loadReadOnlyNotes(identity)
+            } else {
+                render()
+            }
+        },
+    )
+}
+
+private fun cancelRelayMigration() {
+    relayMigrationGuard = relayMigrationGuard.invalidate()
+    activeRelayMigrationService.close()
+    relayMigrationState = WebRelayMigrationUiState(message = "Relay settings were not changed.")
+    render()
+}
+
+private fun continueRelayMigration() {
+    val pending = relayMigrationState.pendingSettings ?: return
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity
+    relayMigrationGuard = relayMigrationGuard.invalidate()
+    activeRelayMigrationService.close()
+    relayMigrationState = WebRelayMigrationUiState(message = "Relay settings changed after migration warning.")
+    updateNoteRelaySettings(pending)
+    if (identity != null && isActiveIdentity(identity)) {
+        loadReadOnlyNotes(identity)
+    }
+}
+
 private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
     val previousRelays = selectedWebNoteRelays(noteRelaySettings)
     noteRelaySettings = next
     if (previousRelays != selectedWebNoteRelays(noteRelaySettings)) {
         rebuildNoteRelayClients()
+        refreshRelayStatsForSignedInSession()
     }
     render()
 }
@@ -852,14 +1015,20 @@ private fun rebuildNoteRelayClients() {
     noteLoadGuard = noteLoadGuard.invalidate()
     profileLoadGuard = profileLoadGuard.invalidate()
     relayListLoadGuard = relayListLoadGuard.invalidate()
+    relayMigrationGuard = relayMigrationGuard.invalidate()
+    relayStatsGuard = relayStatsGuard.invalidate()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeProfileFetcher.close()
     activeRelayListFetcher.close()
+    activeRelayMigrationService.close()
+    activeRelayStatsFetcher.close()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     activeProfileFetcher = profileFetcherForCurrentRelays()
     activeRelayListFetcher = relayListFetcherForCurrentRelays()
+    activeRelayMigrationService = WebRelayMigrationService()
+    activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
 }
 
 private fun noteLoaderForCurrentRelays(): WebNoteLoader =
@@ -873,6 +1042,21 @@ private fun profileFetcherForCurrentRelays(): WebProfileFetcher =
 
 private fun relayListFetcherForCurrentRelays(): WebRelayListFetcher =
     WebRelayListFetcher(selectedWebNoteRelays(noteRelaySettings))
+
+private fun relayStatsFetcherForCurrentRelays(): WebRelayStatsFetcher =
+    WebRelayStatsFetcher(selectedWebNoteRelays(noteRelaySettings))
+
+private fun relayListStateLatest(): WebPublishedRelayList? =
+    relayListState.latestPublishedRelayList
+
+private fun relayListSignerFor(identity: WebAccountIdentity): WebNoteCrudSigner? =
+    when (identity.method) {
+        WebAuthMethod.Nip46 -> WebNip46NoteCrudSigner(activeNip46RemoteSigner, identity.publicKeyHex)
+        WebAuthMethod.Nip07 -> {
+            val signer = window.nostr
+            if (signer.hasNip07SignCapabilityForRelayList()) WebNip07NoteCrudSigner(signer, identity.publicKeyHex) else null
+        }
+    }
 
 private fun applyPublishedRelayList(
     publishedRelays: List<String>,
@@ -897,6 +1081,7 @@ private fun handleRelayListImportDecision(
             relayListState = decision.relayState
             if (decision.changed) {
                 rebuildNoteRelayClients()
+                refreshRelayStatsForSignedInSession()
                 if (reloadNotesOnImport && identity != null && isActiveIdentity(identity)) {
                     loadReadOnlyNotes(identity)
                     return
@@ -929,25 +1114,86 @@ private fun relayListStatusCopy(): String? =
 private fun relayListStatusClass(): String =
     if (relayListState.message == WebRelayListCopy.FetchFailed) "body error small-gap" else "body muted small-gap"
 
+private fun relayMigrationStatusCopy(): String? =
+    relayMigrationState.message.takeIf { it.isNotBlank() }
+
+private fun relayMigrationStatusClass(): String =
+    if (relayMigrationState.warning != null) "body error small-gap" else "body muted small-gap"
+
+private fun refreshRelayStatsForSignedInSession() {
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity ?: return
+    val relays = selectedWebNoteRelays(noteRelaySettings)
+    if (relays.isEmpty()) {
+        resetRelayStatsState()
+        render()
+        return
+    }
+    val started = relayStatsGuard.start(identity, relays)
+    relayStatsGuard = started.guard
+    val request = started.request
+    relayStatsState = WebRelayStatsUiState(
+        pubkey = identity.publicKeyHex,
+        stats = relays.associateWith { WebRelayEventStat.Checking },
+    )
+    render()
+    activeRelayStatsFetcher.close()
+    activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
+    activeRelayStatsFetcher.fetch(identity.publicKeyHex) { result ->
+        if (!relayStatsGuard.accepts(request, authState, selectedWebNoteRelays(noteRelaySettings))) return@fetch
+        relayStatsState = WebRelayStatsUiState(
+            pubkey = identity.publicKeyHex,
+            stats = result.stats,
+        )
+        render()
+    }
+}
+
+private fun canRunManualRelaySync(): Boolean {
+    val identity = (authState.signInState as? WebSignInState.SignedIn)?.identity ?: return false
+    return isActiveIdentity(identity) &&
+        !relayMigrationState.inProgress &&
+        relayMigrationState.pendingSettings == null &&
+        noteRelaySettings.input.isBlank() &&
+        selectedWebNoteRelays(noteRelaySettings).isNotEmpty()
+}
+
+private fun manualRelaySyncDisabledCopy(): String? =
+    when {
+        relayMigrationState.inProgress -> "Relay sync or migration is already running."
+        relayMigrationState.pendingSettings != null -> "Finish the pending relay migration decision before syncing."
+        (authState.signInState as? WebSignInState.SignedIn) == null -> "Sign in before syncing note relays."
+        selectedWebNoteRelays(noteRelaySettings).isEmpty() -> "Add at least one note relay before syncing."
+        noteRelaySettings.input.isNotBlank() -> "Add or clear the relay input before syncing current relays."
+        else -> null
+    }
+
 private fun logout() {
     noteLoadGuard = noteLoadGuard.invalidate()
     profileLoadGuard = profileLoadGuard.invalidate()
     relayListLoadGuard = relayListLoadGuard.invalidate()
+    relayMigrationGuard = relayMigrationGuard.invalidate()
+    relayStatsGuard = relayStatsGuard.invalidate()
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeProfileFetcher.close()
     activeRelayListFetcher.close()
+    activeRelayMigrationService.close()
+    activeRelayStatsFetcher.close()
     noteRelaySettings = defaultWebNoteRelaySettings()
     activeNoteLoader = noteLoaderForCurrentRelays()
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     activeProfileFetcher = profileFetcherForCurrentRelays()
     activeRelayListFetcher = relayListFetcherForCurrentRelays()
+    activeRelayMigrationService = WebRelayMigrationService()
+    activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
     nip46TokenInput = ""
     webMenuState = resetWebMenuState()
     clearNoteDetail()
     resetProfile()
     resetRelayListState()
+    resetRelayMigrationState()
+    resetRelayStatsState()
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
     cancelNoteEdit()
@@ -1073,3 +1319,6 @@ private fun inlineElement(tagName: String, className: String, markdown: String):
 
 private fun formatWebNoteTimestamp(updatedAtMs: Long): String =
     if (updatedAtMs <= 0) "unknown" else "${updatedAtMs / 1000}s"
+
+private fun Nip07Signer?.hasNip07SignCapabilityForRelayList(): Boolean =
+    this != null && this.asDynamic().signEvent != undefined

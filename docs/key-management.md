@@ -156,7 +156,7 @@ This policy currently does not cover completed implementations for:
 
 - Saved-device Android `nsec` storage.
 - Windows/macOS saved-device key storage.
-- Durable web note caches, persistent web pending writes, durable web relay preferences, kind `10002` web relay-list publishing, native-style web relay migration, and web release deployment.
+- Durable web note caches, persistent web pending writes, durable web relay preferences, durable web relay migration queues, and web release deployment.
 - Persisted web sessions, durable browser key storage, or durable web NIP-46 remote-signer sessions.
 - Custom password-vault or password-derived encrypted file storage.
 

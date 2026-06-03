@@ -15,7 +15,7 @@ private const val Nip46EventKind = 24133
 private const val ResponseClockSkewSeconds = 60L
 private const val RequestTimeoutMs = 15_000
 private const val RelaySubscriptionId = "other-note-nip46"
-private const val PreviewPermissions = "get_public_key,sign_event:30078,nip44_encrypt,nip44_decrypt,ping"
+private const val PreviewPermissions = "get_public_key,sign_event:30078,sign_event:10002,nip44_encrypt,nip44_decrypt,ping"
 private const val TransportPrivateKeyByteCount = 32
 private const val TransportKeyGenerationAttempts = 8
 

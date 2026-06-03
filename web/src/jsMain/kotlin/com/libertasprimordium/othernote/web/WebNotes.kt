@@ -19,7 +19,7 @@ import kotlinx.serialization.json.longOrNull
 internal const val WebNoteKind = 30078
 internal const val WebOtherNoteTag = "other-note"
 internal const val WebNotePayloadSchema = "com.libertasprimordium.othernote.note.v1"
-private const val WebNoteRelaySubscriptionId = "other-note-web-notes"
+internal const val WebNoteRelaySubscriptionId = "other-note-web-notes"
 private const val WebNoteRelayTimeoutMs = 12_000
 private const val WebNotePublishTimeoutMs = 10_000
 
@@ -717,7 +717,7 @@ private data class WebMutableNoteRelayStatus(
         WebNoteRelayStatus(url, connected, returnedEvents, acceptedWrite, failed, timedOut)
 }
 
-private sealed interface WebNoteRelayMessage {
+internal sealed interface WebNoteRelayMessage {
     data class Event(val subscriptionId: String, val event: WebNostrEvent) : WebNoteRelayMessage
     data class Eose(val subscriptionId: String) : WebNoteRelayMessage
     data object Closed : WebNoteRelayMessage
@@ -1002,7 +1002,7 @@ internal fun webNoteEventMessage(event: WebNostrEvent): String =
         add(webNostrEventObject(event))
     }.toString()
 
-private fun parseWebNoteRelayMessage(raw: String): WebNoteRelayMessage =
+internal fun parseWebNoteRelayMessage(raw: String): WebNoteRelayMessage =
     runCatching {
         val array = WebNoteJson.parseToJsonElement(raw).jsonArrayOrNull() ?: return@runCatching WebNoteRelayMessage.Ignored
         when (array.getOrNull(0)?.stringOrNull()) {
