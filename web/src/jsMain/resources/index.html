@@ -427,6 +427,37 @@
             margin-top: 14px;
         }
 
+        .note-list-controls {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(190px, 260px);
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: end;
+            margin-top: 12px;
+        }
+
+        .note-list-controls .field-label {
+            margin-top: 0;
+        }
+
+        .sort-select {
+            appearance: none;
+            min-height: 44px;
+            padding-right: 34px;
+            cursor: pointer;
+        }
+
+        .notes-results {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .notes-results-content {
+            min-width: 0;
+            max-width: 100%;
+        }
+
         .note-card-actions {
             flex-direction: row;
             justify-content: flex-end;
@@ -651,6 +682,10 @@
                 flex-direction: row;
                 gap: 6px;
                 justify-content: flex-start;
+            }
+
+            .note-list-controls {
+                grid-template-columns: minmax(0, 1fr);
             }
         }
     </style>

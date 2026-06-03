@@ -60,6 +60,14 @@ val webSecuritySourceCheck by tasks.registering {
         check(!relayInputUpdater.contains("render()")) {
             "Relay Settings input typing must not call render(); replacing the modal input on each character drops focus."
         }
+        val searchInputUpdater = Regex(
+            """private fun updateNoteSearchQuery\(value: String\)\s*\{(?<body>.*?)}""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define updateNoteSearchQuery for note search input handling.")
+        check(!searchInputUpdater.contains("render()")) {
+            "Note search typing must not call render(); replacing the active search input on each character drops focus."
+        }
         check(!runtimeText.contains("element(\"img\"") && !runtimeText.contains("element(\"image\"")) {
             "Web runtime must not render profile picture/banner URLs as image elements in this preview."
         }
@@ -95,31 +103,33 @@ val webSecuritySourceCheck by tasks.registering {
             "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."
         }
 
-        fun cssBlock(selector: String): String =
+        fun cssBlocks(selector: String): List<String> =
             Regex("""${Regex.escape(selector)}\s*\{([^}]*)}""")
                 .findAll(indexText)
-                .lastOrNull()
-                ?.groups
-                ?.get(1)
-                ?.value
-                ?: error("Web index.html is missing CSS selector $selector")
+                .map { match -> match.groups.get(1)?.value.orEmpty() }
+                .toList()
+                .also { blocks ->
+                    check(blocks.isNotEmpty()) {
+                        "Web index.html is missing CSS selector $selector"
+                    }
+                }
 
         fun requireCssDeclaration(selector: String, declaration: String) {
-            check(cssBlock(selector).contains(declaration)) {
+            check(cssBlocks(selector).any { block -> block.contains(declaration) }) {
                 "Web index.html selector $selector must include `$declaration` to keep long note-card text inside cards."
             }
         }
 
         fun rejectCssDeclaration(selector: String, declaration: String) {
-            check(!cssBlock(selector).contains(declaration)) {
+            check(cssBlocks(selector).none { block -> block.contains(declaration) }) {
                 "Web index.html selector $selector must not include `$declaration`; note cards must use explicit horizontal lanes, not vertical-first CSS columns."
             }
         }
 
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
             requireCssDeclaration(selector, "max-width: 100%")
         }
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
             requireCssDeclaration(selector, "min-width: 0")
         }
         listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code").forEach { selector ->
@@ -152,6 +162,9 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".markdown-view", "overflow-x: hidden")
         requireCssDeclaration(".notes-panel", "background: transparent")
         requireCssDeclaration(".notes-panel", "border: 0")
+        requireCssDeclaration(".note-list-controls", "display: grid")
+        requireCssDeclaration(".note-list-controls", "grid-template-columns: minmax(0, 1fr) minmax(190px, 260px)")
+        requireCssDeclaration(".sort-select", "min-height: 44px")
         requireCssDeclaration(".note-card-actions", "flex-direction: row")
         requireCssDeclaration(".note-card-actions", "gap: 6px")
         requireCssDeclaration(".note-card-actions .action-button", "min-height: 34px")

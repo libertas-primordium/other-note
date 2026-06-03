@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, display text-only profile metadata, load encrypted notes, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, display text-only profile metadata, load encrypted notes, search/sort the currently loaded in-memory note list, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
