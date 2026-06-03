@@ -15,7 +15,7 @@ private const val Nip46EventKind = 24133
 private const val ResponseClockSkewSeconds = 60L
 private const val RequestTimeoutMs = 15_000
 private const val RelaySubscriptionId = "other-note-nip46"
-private const val PreviewPermissions = "get_public_key,nip44_decrypt,ping"
+private const val PreviewPermissions = "get_public_key,sign_event:30078,nip44_encrypt,nip44_decrypt,ping"
 private const val TransportPrivateKeyByteCount = 32
 private const val TransportKeyGenerationAttempts = 8
 
@@ -80,6 +80,16 @@ sealed interface WebNip46ConnectResult {
 sealed interface WebNip46DecryptResult {
     data class Decrypted(val plaintext: String) : WebNip46DecryptResult
     data class Failed(val safeMessage: String) : WebNip46DecryptResult
+}
+
+internal sealed interface WebNip46EncryptResult {
+    data class Encrypted(val ciphertext: String) : WebNip46EncryptResult
+    data class Failed(val safeMessage: String) : WebNip46EncryptResult
+}
+
+internal sealed interface WebNip46NoteSignResult {
+    data class Signed(val event: WebNostrEvent) : WebNip46NoteSignResult
+    data class Failed(val safeMessage: String) : WebNip46NoteSignResult
 }
 
 sealed interface WebNip46RelayResponse {
@@ -304,6 +314,78 @@ class WebNip46RemoteSigner {
                 is WebNip46RelayResponse.Error -> onResult(WebNip46DecryptResult.Failed(response.safeMessage))
                 is WebNip46RelayResponse.AuthChallenge ->
                     onResult(WebNip46DecryptResult.Failed("Remote signer approval required for decryption."))
+            }
+        }
+    }
+
+    internal fun encryptNotePayload(
+        userPubkey: String,
+        plaintext: String,
+        onResult: (WebNip46EncryptResult) -> Unit,
+    ) {
+        val session = activeSession
+        if (session == null || !isValidHexPublicKey(userPubkey)) {
+            onResult(WebNip46EncryptResult.Failed(WebNoteCopy.CrudCapabilityUnavailable))
+            return
+        }
+        val requestId = when (val generated = secureRandomHex(16)) {
+            is WebNip46RandomHexResult.Success -> generated.hex
+            is WebNip46RandomHexResult.Failed -> {
+                onResult(WebNip46EncryptResult.Failed(generated.safeMessage))
+                return
+            }
+        }
+        val request = WebNip46RequestPayload(
+            id = requestId,
+            method = "nip44_encrypt",
+            params = listOf(userPubkey, plaintext),
+        )
+        val transport = activeTransport ?: WebNip46RelayTransport().also { activeTransport = it }
+        transport.sendRequest(session, request) { response ->
+            when (response) {
+                is WebNip46RelayResponse.Success -> onResult(WebNip46EncryptResult.Encrypted(response.result))
+                is WebNip46RelayResponse.Error -> onResult(WebNip46EncryptResult.Failed(response.safeMessage))
+                is WebNip46RelayResponse.AuthChallenge ->
+                    onResult(WebNip46EncryptResult.Failed("Remote signer approval required for encryption."))
+            }
+        }
+    }
+
+    internal fun signNoteEvent(
+        unsignedEvent: WebUnsignedNoteEvent,
+        onResult: (WebNip46NoteSignResult) -> Unit,
+    ) {
+        val session = activeSession
+        if (session == null || !isValidHexPublicKey(unsignedEvent.pubkey)) {
+            onResult(WebNip46NoteSignResult.Failed(WebNoteCopy.CrudCapabilityUnavailable))
+            return
+        }
+        val requestId = when (val generated = secureRandomHex(16)) {
+            is WebNip46RandomHexResult.Success -> generated.hex
+            is WebNip46RandomHexResult.Failed -> {
+                onResult(WebNip46NoteSignResult.Failed(generated.safeMessage))
+                return
+            }
+        }
+        val request = WebNip46RequestPayload(
+            id = requestId,
+            method = "sign_event",
+            params = listOf(unsignedEvent.toSignEventJson()),
+        )
+        val transport = activeTransport ?: WebNip46RelayTransport().also { activeTransport = it }
+        transport.sendRequest(session, request) { response ->
+            when (response) {
+                is WebNip46RelayResponse.Success -> {
+                    val event = parseWebSignedEventJson(response.result)
+                    if (event == null) {
+                        onResult(WebNip46NoteSignResult.Failed(WebNoteCopy.SignFailed))
+                    } else {
+                        onResult(WebNip46NoteSignResult.Signed(event))
+                    }
+                }
+                is WebNip46RelayResponse.Error -> onResult(WebNip46NoteSignResult.Failed(response.safeMessage))
+                is WebNip46RelayResponse.AuthChallenge ->
+                    onResult(WebNip46NoteSignResult.Failed("Remote signer approval required for signing."))
             }
         }
     }

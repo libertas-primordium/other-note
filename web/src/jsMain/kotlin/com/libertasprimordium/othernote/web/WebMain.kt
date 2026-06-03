@@ -17,6 +17,7 @@ external interface WebWindow {
 external interface Nip07Signer {
     val nip44: Nip07Nip44?
     fun getPublicKey(): Promise<String?>
+    fun signEvent(event: dynamic): Promise<dynamic>
 }
 
 external interface WebElement {
@@ -35,9 +36,23 @@ internal const val Nip46TokenInputType = "password"
 private lateinit var rootElement: WebElement
 private var authState = WebAuthUiState(nip07Available = isNip07Available())
 private var noteState: WebNoteLoadState = WebNoteLoadState.Idle
+private var loadedNoteEvents: List<WebNostrEvent> = emptyList()
+private var loadedNotePlaintexts: Map<String, String> = emptyMap()
+private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
+private var noteEditBody = ""
+private var noteEditMessage = ""
 private var nip46TokenInput = ""
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = WebNoteLoader()
+private var activeNoteCrudService = WebNoteCrudService()
+
+private sealed interface WebNoteEditMode {
+    data object Idle : WebNoteEditMode
+    data object Creating : WebNoteEditMode
+    data class Editing(val note: WebReadOnlyNote) : WebNoteEditMode
+    data class ConfirmingDelete(val note: WebReadOnlyNote) : WebNoteEditMode
+    data class Busy(val message: String) : WebNoteEditMode
+}
 
 fun main() {
     rootElement = document.getElementById("root") ?: return
@@ -51,11 +66,11 @@ private fun render() {
 }
 
 private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell") {
-    appendChild(element("section", "hero") {
-        appendChild(textElement("p", "eyebrow", "Web client preview"))
-        appendChild(textElement("h1", "title", "Other Note"))
-        appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07 and NIP-46 public-key sign-in. Note sync is not enabled yet."))
-    })
+        appendChild(element("section", "hero") {
+            appendChild(textElement("p", "eyebrow", "Web client preview"))
+            appendChild(textElement("h1", "title", "Other Note"))
+            appendChild(textElement("p", "lede", "This web client preview supports in-memory NIP-07 and NIP-46 sign-in with signer-backed note loading and basic note saves."))
+        })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Security boundary"))
         appendChild(textElement("p", "body", "Your signer keeps your private key. Other Note only asks for your public key in this preview, and signing, encryption, and decryption will remain client-side or signer-delegated."))
@@ -72,7 +87,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     }
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not create, edit, delete, or publish notes. It does not persist web sessions, remote signer sessions, or note caches."))
+        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, or pending writes. It has no direct nsec input and no relay settings screen yet."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
@@ -89,14 +104,16 @@ private fun accountPanel(identity: WebAccountIdentity): WebElement =
     element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Signed in"))
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
-        appendChild(textElement("p", "body small-gap", "Read-only note loading is in memory only. Refreshing this page may clear this session."))
+        appendChild(textElement("p", "body small-gap", "Notes, drafts, and signer sessions are in memory only. Refreshing this page may clear this session."))
         appendChild(buttonElement(text = "Logout", enabled = true, onClick = ::logout))
     }
 
 private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
     element("section", "panel") {
-        appendChild(textElement("h2", "section-title", "Read-only notes"))
-        appendChild(textElement("p", "body", "Loads encrypted Other Note events from note relays and decrypts them through the active signer. No note data is saved in the browser."))
+        val crudSigner = crudSignerFor(identity)
+        val canCrud = crudSigner != null
+        appendChild(textElement("h2", "section-title", "Notes"))
+        appendChild(textElement("p", "body", "Loads encrypted Other Note events from note relays and uses the active signer for note encryption, decryption, and signing. No note data is saved in the browser."))
         appendChild(
             buttonElement(
                 text = when (notes) {
@@ -107,6 +124,17 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
                 onClick = { loadReadOnlyNotes(identity) },
             ),
         )
+        appendChild(
+            buttonElement(
+                text = "New note",
+                enabled = canCrud && noteEditMode !is WebNoteEditMode.Busy,
+                onClick = ::startCreateNote,
+            ),
+        )
+        if (!canCrud) {
+            appendChild(textElement("p", "body error small-gap", WebNoteCopy.CrudCapabilityUnavailable))
+        }
+        appendChild(noteEditorPanel(identity, crudSigner))
         when (notes) {
             WebNoteLoadState.Idle -> appendChild(textElement("p", "body small-gap", "Notes are not loaded yet."))
             is WebNoteLoadState.Loading -> appendChild(textElement("p", "body small-gap", notes.message))
@@ -119,13 +147,13 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
             is WebNoteLoadState.Loaded -> {
                 notes.status?.let { appendChild(textElement("p", "body muted small-gap", it)) }
                 appendChild(element("div", "note-list") {
-                    notes.notes.forEach { note -> appendChild(noteCard(note)) }
+                    notes.notes.forEach { note -> appendChild(noteCard(note, canCrud)) }
                 })
             }
         }
     }
 
-private fun noteCard(note: WebReadOnlyNote): WebElement =
+private fun noteCard(note: WebReadOnlyNote, canCrud: Boolean): WebElement =
     element("article", "note-card") {
         val preview = webNotePreview(note.bodyMarkdown)
         appendChild(textElement("h3", "note-title", preview.title))
@@ -133,7 +161,47 @@ private fun noteCard(note: WebReadOnlyNote): WebElement =
             appendChild(textElement("p", "note-snippet", preview.snippet))
         }
         appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+        if (canCrud) {
+            appendChild(element("div", "inline-actions") {
+                appendChild(buttonElement(text = "Edit", enabled = true, onClick = { startEditNote(note) }))
+                appendChild(buttonElement(text = "Delete", enabled = true, onClick = { confirmDeleteNote(note) }))
+            })
+        }
         appendChild(renderMarkdown(note.bodyMarkdown))
+    }
+
+private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSigner?): WebElement =
+    when (val mode = noteEditMode) {
+        WebNoteEditMode.Idle -> element("div", "")
+        WebNoteEditMode.Creating,
+        is WebNoteEditMode.Editing,
+        -> element("section", "editor-panel") {
+            appendChild(textElement("h3", "section-title", if (mode is WebNoteEditMode.Editing) "Edit note" else "New note"))
+            if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
+            appendChild(textAreaElement(
+                label = "Raw Markdown",
+                value = noteEditBody,
+                enabled = signer != null,
+                onInput = { value -> noteEditBody = value },
+            ))
+            appendChild(element("div", "inline-actions") {
+                appendChild(buttonElement(text = "Save note", enabled = signer != null, onClick = { saveCurrentDraft(identity, signer) }))
+                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEdit))
+            })
+        }
+        is WebNoteEditMode.ConfirmingDelete -> element("section", "editor-panel") {
+            appendChild(textElement("h3", "section-title", "Delete note?"))
+            appendChild(textElement("p", "body", "This publishes an encrypted tombstone event for the selected note."))
+            if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
+            appendChild(element("div", "inline-actions") {
+                appendChild(buttonElement(text = "Delete note", enabled = signer != null, onClick = { deleteConfirmedNote(identity, mode.note, signer) }))
+                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEdit))
+            })
+        }
+        is WebNoteEditMode.Busy -> element("section", "editor-panel") {
+            appendChild(textElement("h3", "section-title", "Saving note"))
+            appendChild(textElement("p", "body", mode.message))
+        }
     }
 
 private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
@@ -242,6 +310,8 @@ private fun requestNip07PublicKey() {
         signer.getPublicKey().then(
             { publicKey ->
                 noteState = WebNoteLoadState.Idle
+                resetLoadedNotes()
+                cancelNoteEdit()
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
             },
@@ -272,6 +342,8 @@ private fun requestNip46PublicKey() {
                 is WebNip46ConnectResult.Connected -> {
                     nip46TokenInput = ""
                     noteState = WebNoteLoadState.Idle
+                    resetLoadedNotes()
+                    cancelNoteEdit()
                     authState = completeNip46SignIn(authState, result.userPubkey)
                 }
                 is WebNip46ConnectResult.Failed -> {
@@ -306,8 +378,12 @@ private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
             noteState = when (result) {
                 is WebNoteLoadResult.Loaded ->
                     if (result.state.notes.isEmpty()) {
+                        loadedNoteEvents = result.events
+                        loadedNotePlaintexts = result.decryptedByEventId
                         WebNoteLoadState.Empty(result.relayStatus)
                     } else {
+                        loadedNoteEvents = result.events
+                        loadedNotePlaintexts = result.decryptedByEventId
                         WebNoteLoadState.Loaded(result.state.notes, result.relayStatus)
                     }
                 is WebNoteLoadResult.Failed -> WebNoteLoadState.Failed(result.safeMessage)
@@ -318,11 +394,127 @@ private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
     )
 }
 
+private fun crudSignerFor(identity: WebAccountIdentity): WebNoteCrudSigner? =
+    when (identity.method) {
+        WebAuthMethod.Nip46 -> WebNip46NoteCrudSigner(activeNip46RemoteSigner, identity.publicKeyHex)
+        WebAuthMethod.Nip07 -> {
+            val signer = window.nostr
+            if (signer.hasWebNoteCrudCapability()) WebNip07NoteCrudSigner(signer, identity.publicKeyHex) else null
+        }
+    }
+
+private fun startCreateNote() {
+    noteEditMode = WebNoteEditMode.Creating
+    noteEditBody = ""
+    noteEditMessage = ""
+    render()
+}
+
+private fun startEditNote(note: WebReadOnlyNote) {
+    noteEditMode = WebNoteEditMode.Editing(note)
+    noteEditBody = note.bodyMarkdown
+    noteEditMessage = ""
+    render()
+}
+
+private fun confirmDeleteNote(note: WebReadOnlyNote) {
+    noteEditMode = WebNoteEditMode.ConfirmingDelete(note)
+    noteEditBody = ""
+    noteEditMessage = ""
+    render()
+}
+
+private fun cancelNoteEdit() {
+    noteEditMode = WebNoteEditMode.Idle
+    noteEditBody = ""
+    noteEditMessage = ""
+}
+
+private fun saveCurrentDraft(identity: WebAccountIdentity, signer: WebNoteCrudSigner?) {
+    val existing = (noteEditMode as? WebNoteEditMode.Editing)?.note
+    val body = noteEditBody
+    noteEditMode = WebNoteEditMode.Busy("Preparing note save.")
+    render()
+    activeNoteCrudService.save(
+        existing = existing,
+        bodyMarkdown = body,
+        accountPubkey = identity.publicKeyHex,
+        signer = signer,
+        onProgress = { message ->
+            noteEditMode = WebNoteEditMode.Busy(message)
+            render()
+        },
+        onResult = { result ->
+            when (result) {
+                is WebNoteSaveResult.Failed -> {
+                    noteEditMode = if (existing == null) WebNoteEditMode.Creating else WebNoteEditMode.Editing(existing)
+                    noteEditBody = body
+                    noteEditMessage = result.safeMessage
+                }
+                is WebNoteSaveResult.Published -> {
+                    applyPublishedNote(result)
+                    cancelNoteEdit()
+                }
+            }
+            render()
+        },
+    )
+}
+
+private fun deleteConfirmedNote(identity: WebAccountIdentity, note: WebReadOnlyNote, signer: WebNoteCrudSigner?) {
+    noteEditMode = WebNoteEditMode.Busy("Preparing note tombstone.")
+    render()
+    activeNoteCrudService.delete(
+        note = note,
+        accountPubkey = identity.publicKeyHex,
+        signer = signer,
+        onProgress = { message ->
+            noteEditMode = WebNoteEditMode.Busy(message)
+            render()
+        },
+        onResult = { result ->
+            when (result) {
+                is WebNoteSaveResult.Failed -> {
+                    noteEditMode = WebNoteEditMode.ConfirmingDelete(note)
+                    noteEditMessage = result.safeMessage
+                }
+                is WebNoteSaveResult.Published -> {
+                    applyPublishedNote(result)
+                    cancelNoteEdit()
+                }
+            }
+            render()
+        },
+    )
+}
+
+private fun applyPublishedNote(result: WebNoteSaveResult.Published) {
+    val eventMap = linkedMapOf<String, WebNostrEvent>()
+    loadedNoteEvents.forEach { eventMap[it.id] = it }
+    eventMap[result.event.id] = result.event
+    loadedNoteEvents = eventMap.values.toList()
+    loadedNotePlaintexts = loadedNotePlaintexts + (result.event.id to result.plaintextPayload)
+    val reduced = reduceDecryptedWebNoteEvents(loadedNoteEvents, loadedNotePlaintexts)
+    noteState = if (reduced.notes.isEmpty()) {
+        WebNoteLoadState.Empty(result.status)
+    } else {
+        WebNoteLoadState.Loaded(reduced.notes, result.status)
+    }
+}
+
+private fun resetLoadedNotes() {
+    loadedNoteEvents = emptyList()
+    loadedNotePlaintexts = emptyMap()
+}
+
 private fun logout() {
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
+    activeNoteCrudService.close()
     nip46TokenInput = ""
     noteState = WebNoteLoadState.Idle
+    resetLoadedNotes()
+    cancelNoteEdit()
     authState = logoutWebAccount(authState)
     render()
 }
@@ -360,6 +552,27 @@ private fun textInputElement(
                 input.setAttribute("autocorrect", "off")
                 input.setAttribute("spellcheck", "false")
                 input.setAttribute("placeholder", "bunker://...")
+                if (!enabled) input.setAttribute("disabled", "disabled")
+                input.addEventListener("input") {
+                    onInput(input.value)
+                }
+            },
+        )
+    }
+
+private fun textAreaElement(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onInput: (String) -> Unit,
+): WebElement =
+    element("label", "field-label") {
+        appendChild(textElement("span", "field-label-text", label))
+        appendChild(
+            element("textarea", "text-input note-editor-input").also { input ->
+                input.value = value
+                input.setAttribute("rows", "10")
+                input.setAttribute("spellcheck", "true")
                 if (!enabled) input.setAttribute("disabled", "disabled")
                 input.addEventListener("input") {
                     onInput(input.value)

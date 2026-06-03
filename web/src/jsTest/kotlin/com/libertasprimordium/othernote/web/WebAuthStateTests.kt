@@ -714,3 +714,137 @@ class WebReadOnlyNoteTests {
             ),
         )
 }
+
+class WebNoteCrudTests {
+    private val accountPubkey = "cc".repeat(32)
+    private val noteJson = Json { encodeDefaults = true }
+
+    @Test
+    fun createBuildsStableNotePayloadAndUnsignedEventShape() {
+        val note = buildWebNoteForSave(
+            existing = null,
+            bodyMarkdown = "# Created\nraw",
+            noteIdGenerator = { "note-1" },
+            nowMs = { 1_700_000_000_000 },
+        )
+        val payload = decodeWebNotePayload(encodeWebNotePayload(note).getOrThrow()).getOrThrow()
+        val unsigned = buildUnsignedWebNoteEvent(note, accountPubkey, "ciphertext")
+
+        assertEquals("note-1", note.id)
+        assertEquals("# Created\nraw", payload.bodyMarkdown)
+        assertEquals(30078, unsigned.kind)
+        assertEquals(accountPubkey, unsigned.pubkey)
+        assertEquals(1_700_000_000, unsigned.createdAt)
+        assertEquals(webNoteEventTags("note-1"), unsigned.tags)
+        assertEquals("ciphertext", unsigned.content)
+    }
+
+    @Test
+    fun editPreservesNoteIdentityAndAdvancesTimestamp() {
+        val existing = WebReadOnlyNote(
+            id = "same-note",
+            createdAtMs = 1_000,
+            updatedAtMs = 1_000,
+            bodyMarkdown = "old",
+        )
+        val edited = buildWebNoteForSave(
+            existing = existing,
+            bodyMarkdown = "new",
+            noteIdGenerator = { "should-not-use" },
+            nowMs = { 1_001 },
+        )
+
+        assertEquals("same-note", edited.id)
+        assertEquals(1_000, edited.createdAtMs)
+        assertEquals(2_000, edited.updatedAtMs)
+        assertEquals("new", edited.bodyMarkdown)
+        assertTrue(!edited.deleted)
+    }
+
+    @Test
+    fun tombstoneMergeHidesOlderVisibleNote() {
+        val visible = signedEvent("event-visible", createdAt = 1, noteId = "same", content = "cipher-visible")
+        val tombstone = signedEvent("event-delete", createdAt = 2, noteId = "same", content = "cipher-delete")
+        val reduced = mergePublishedWebNoteEvent(
+            events = listOf(visible),
+            decryptedByEventId = mapOf(visible.id to payload("same", body = "visible", updatedAtMs = 1_000)),
+            event = tombstone,
+            plaintextPayload = payload("same", body = "", updatedAtMs = 2_000, deleted = true),
+        )
+
+        assertTrue(reduced.notes.isEmpty())
+        assertEquals(setOf("same"), reduced.selectedNotes.map { it.id }.toSet())
+    }
+
+    @Test
+    fun signedEventValidationRejectsWrongShape() {
+        val note = WebReadOnlyNote("note-1", createdAtMs = 1_000, updatedAtMs = 1_000, bodyMarkdown = "body")
+        val valid = signedEvent("event", createdAt = 1, noteId = "note-1", content = "cipher")
+
+        assertTrue(validateWebSignedNoteEvent(note, valid, accountPubkey))
+        assertTrue(!validateWebSignedNoteEvent(note, valid.copy(pubkey = "dd".repeat(32)), accountPubkey))
+        assertTrue(!validateWebSignedNoteEvent(note, valid.copy(tags = listOf(listOf("d", "wrong"))), accountPubkey))
+        assertTrue(!validateWebSignedNoteEvent(note, valid.copy(sig = ""), accountPubkey))
+    }
+
+    @Test
+    fun publishStatusDistinguishesPartialAndAllFailed() {
+        val partial = WebNotePublishResult(
+            listOf(
+                WebNoteRelayStatus("wss://one.example", connected = true, acceptedWrite = true),
+                WebNoteRelayStatus("wss://two.example", connected = true, failed = true),
+            ),
+        )
+        val failed = WebNotePublishResult(
+            listOf(WebNoteRelayStatus("wss://one.example", connected = true, failed = true)),
+        )
+
+        assertTrue(partial.anyAccepted)
+        assertTrue(partial.safeStatus.contains("some relays"))
+        assertTrue(!failed.anyAccepted)
+        assertEquals(WebNoteCopy.PublishFailed, failed.safeStatus)
+    }
+
+    @Test
+    fun nip46SignEventJsonUsesUnsignedEventPayloadWithoutUserPubkeyByDefault() {
+        val note = WebReadOnlyNote("note-1", createdAtMs = 1_000, updatedAtMs = 1_000, bodyMarkdown = "body")
+        val unsigned = buildUnsignedWebNoteEvent(note, accountPubkey, "ciphertext")
+        val json = unsigned.toSignEventJson()
+
+        assertTrue(json.contains(""""kind":30078"""))
+        assertTrue(json.contains(""""content":"ciphertext""""))
+        assertTrue(!json.contains(""""pubkey""""))
+    }
+
+    private fun signedEvent(
+        id: String,
+        createdAt: Long,
+        noteId: String,
+        content: String,
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id,
+            pubkey = accountPubkey,
+            createdAt = createdAt,
+            kind = 30078,
+            tags = webNoteEventTags(noteId),
+            content = content,
+            sig = "sig-$id",
+        )
+
+    private fun payload(
+        noteId: String,
+        body: String,
+        updatedAtMs: Long,
+        deleted: Boolean = false,
+    ): String =
+        noteJson.encodeToString(
+            WebNotePayload(
+                noteId = noteId,
+                createdAtMs = 1_000,
+                updatedAtMs = updatedAtMs,
+                bodyMarkdown = body,
+                deleted = deleted,
+            ),
+        )
+}
