@@ -54,16 +54,34 @@ val webSecuritySourceCheck by tasks.registering {
         val localStorageFiles = runtimeFiles.filter { file -> file.readText().contains("localStorage") }
             .map { file -> file.relativeTo(runtimeSourceDir.asFile).invariantSeparatorsPath }
         check(localStorageFiles == listOf("com/libertasprimordium/othernote/web/WebMain.kt")) {
-            "localStorage may appear only in WebMain.kt for the allowed generic theme preference: ${localStorageFiles.joinToString()}"
+            "localStorage may appear only in WebMain.kt for the allowed generic theme preference and explicit remembered NIP-46 session: ${localStorageFiles.joinToString()}"
         }
         val themeSource = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebThemes.kt").asFile.readText()
         check(themeSource.contains("""WebThemePreferenceKey = "on.web.theme"""")) {
             "Web theme preference storage must use the documented generic key."
         }
+        val rememberedNip46Source = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebRememberedNip46.kt").asFile.readText()
+        check(rememberedNip46Source.contains("""WebRememberedNip46StorageKey = "on.web.nip46"""")) {
+            "Remembered web NIP-46 storage must use the documented generic key."
+        }
         listOf("pubkey", "npub", "nsec", "bunker", "signer", "relay", "note", "event", "profile", "secret").forEach { forbiddenKeyPart ->
             check(!"on.web.theme".contains(forbiddenKeyPart)) {
                 "Web theme preference key must not include account, relay, note, signer, or profile identifiers."
             }
+        }
+        listOf("pubkey", "npub", "nsec", "bunker", "signer", "relay", "note", "event", "profile", "secret").forEach { forbiddenKeyPart ->
+            check(!"on.web.nip46".contains(forbiddenKeyPart)) {
+                "Remembered web NIP-46 storage key must not include account, relay, note, signer, or profile identifiers."
+            }
+        }
+        check(rememberedNip46Source.contains("ignoreUnknownKeys = false")) {
+            "Remembered web NIP-46 storage schema must reject unexpected fields."
+        }
+        check(rememberedNip46Source.contains("clientPrivateKey=redacted")) {
+            "Remembered web NIP-46 session string rendering must redact the communication private key."
+        }
+        check(!rememberedNip46Source.contains("bunkerToken") && !rememberedNip46Source.contains("tokenSecret")) {
+            "Remembered web NIP-46 storage must not persist bunker tokens or token secrets."
         }
         val directKeySource = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebDirectKey.kt").asFile.readText()
         val forbiddenDirectKeyPatterns = listOf(
@@ -131,6 +149,25 @@ val webSecuritySourceCheck by tasks.registering {
             ?: error("WebMain.kt must define requestGeneratedIdentitySession.")
         check(generatedIdentityRequest.indexOf("clearGeneratedIdentityState()") in 0 until generatedIdentityRequest.indexOf("startDirectKeySession")) {
             "Generated identity submit must clear generated-key state before session activation."
+        }
+        val rememberedNip46Panel = Regex(
+            """private fun rememberedNip46SessionPanel\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun directNsecSignInPanel""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define rememberedNip46SessionPanel for explicit remembered remote signer sessions.")
+        check(rememberedNip46Panel.contains("Continue with remembered remote signer") && rememberedNip46Panel.contains("Forget remembered remote signer")) {
+            "Remembered NIP-46 UI must expose explicit continue and forget actions."
+        }
+        val nip46Panel = Regex(
+            """private fun nip46SignInPanel\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun rememberedNip46SessionPanel""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define nip46SignInPanel.")
+        check(nip46Panel.contains("RememberNip46CheckboxLabel") && nip46Panel.contains("rememberNip46OptInLabel")) {
+            "NIP-46 sign-in must keep remembered remote signer storage behind explicit opt-in copy."
+        }
+        check(webMainText.contains("rememberNip46Session = false")) {
+            "Remembered NIP-46 opt-in must default to off and clear after session transitions."
         }
         val relayInputUpdater = Regex(
             """private fun updateNoteRelayInput\(value: String\)\s*\{(?<body>.*?)}""",

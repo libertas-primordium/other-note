@@ -1602,6 +1602,129 @@ class WebNip46TransportKeyTests {
         }
 }
 
+class WebRememberedNip46SessionTests {
+    @Test
+    fun validRememberedSessionRecordRoundTripsAndRestoresTransportSession() {
+        val record = testRecord()
+        val encoded = encodeRememberedNip46Record(record)
+        val decoded = decodeRememberedNip46Record(encoded)
+        val session = decoded?.toSession()
+
+        assertEquals(record, decoded)
+        assertEquals(WebRememberedNip46StorageKey, "on.web.nip46")
+        assertTrue(encoded.contains("clientPrivateKeyHex"))
+        assertTrue(!encoded.contains("nsec"))
+        assertTrue(!encoded.contains("bunker://"))
+        assertTrue(!encoded.contains("noteBody"))
+        assertTrue(!record.toString().contains(record.clientPrivateKeyHex))
+        assertEquals(record.clientPubkey, session?.clientPubkey)
+        assertEquals(record.remoteSignerPubkey, session?.remoteSignerPubkey)
+        assertEquals(record.signerRelays, session?.relays)
+    }
+
+    @Test
+    fun rememberedSessionRejectsMalformedOrOverBroadRecords() {
+        val record = testRecord()
+
+        assertNull(decodeRememberedNip46Record("""{"version":999}"""))
+        assertNull(decodeRememberedNip46Record("""{"version":1,"unexpected":"field"}"""))
+        assertNull(validateRememberedNip46Record(record.copy(userPubkey = "not-a-pubkey")))
+        assertNull(validateRememberedNip46Record(record.copy(clientPrivateKeyHex = "00".repeat(32))))
+        assertNull(validateRememberedNip46Record(record.copy(clientPubkey = "01".repeat(32))))
+        assertNull(validateRememberedNip46Record(record.copy(remoteSignerPubkey = "bad")))
+        assertNull(validateRememberedNip46Record(record.copy(signerRelays = listOf("https://relay.example.com"))))
+        assertNull(validateRememberedNip46Record(record.copy(signerRelays = listOf("wss://relay.example.com/#frag"))))
+    }
+
+    @Test
+    fun rememberedSessionStorageUsesOnlyAllowedKeyAndForgetsWithoutTouchingTheme() {
+        val storage = FakeRememberedNip46Storage()
+        val record = testRecord()
+
+        assertTrue(saveRememberedNip46Record(storage, record))
+        val loaded = assertIs<WebRememberedNip46LoadResult.Loaded>(loadRememberedNip46Record(storage))
+        assertEquals(record, loaded.record)
+        assertEquals(listOf(WebRememberedNip46StorageKey), storage.writes.map { it.first })
+
+        assertTrue(forgetRememberedNip46Record(storage))
+        assertEquals(WebRememberedNip46StorageKey, storage.removed.single())
+        assertEquals(WebRememberedNip46LoadResult.Empty, loadRememberedNip46Record(storage))
+        assertEquals(emptyList(), storage.writes.filter { it.first == WebThemePreferenceKey })
+    }
+
+    @Test
+    fun rememberedSessionStateDefaultsToEmptyAndInvalidStorageShowsSafeForgetPath() {
+        val empty = rememberedNip46StateFromStorage(FakeRememberedNip46Storage())
+        val invalid = rememberedNip46StateFromStorage(FakeRememberedNip46Storage("""{"version":999}"""))
+
+        assertNull(empty.record)
+        assertTrue(!empty.invalidStoredSession)
+        assertNull(invalid.record)
+        assertTrue(invalid.invalidStoredSession)
+        assertEquals(WebRememberedNip46Copy.InvalidStoredSession, invalid.message)
+    }
+
+    @Test
+    fun rememberOptInCopyDistinguishesDefaultOffAndSensitiveStoredSession() {
+        assertTrue(rememberNip46OptInLabel(false).contains("session-only"))
+        assertTrue(rememberNip46OptInLabel(true).contains("does not save your private key"))
+        assertEquals("Remember this remote signer on this browser", RememberNip46CheckboxLabel)
+    }
+
+    private fun testRecord(): WebRememberedNip46Record {
+        val user = keyPair(lastByte = 1)
+        val client = keyPair(lastByte = 2)
+        val remote = keyPair(lastByte = 3)
+        return rememberedNip46RecordFromSession(
+            session = WebNip46Session(
+                clientPrivateKey = client.keyPair.clientPrivateKey,
+                clientPubkey = client.keyPair.clientPubkey,
+                remoteSignerPubkey = remote.keyPair.clientPubkey,
+                relays = listOf("wss://relay.example.com/", "wss://relay.example.com"),
+            ),
+            userPubkey = user.keyPair.clientPubkey,
+            nowMs = 123,
+        ) ?: error("Expected valid remembered NIP-46 test record")
+    }
+
+    private fun keyPair(lastByte: Int): WebNip46KeyGenerationResult.Success =
+        assertIs<WebNip46KeyGenerationResult.Success>(
+            generateWebNip46TransportKey(
+                randomBytes = { WebNip46RandomBytesResult.Success(fixedPrivateKey(lastByte)) },
+            ),
+        )
+
+    private fun fixedPrivateKey(lastByte: Int): Uint8Array =
+        Uint8Array(32).also { bytes ->
+            writeUint8ArrayByte(bytes, 31, lastByte)
+        }
+
+    private class FakeRememberedNip46Storage(
+        initialValue: String? = null,
+    ) : WebRememberedNip46Storage {
+        private var value = initialValue
+        val writes = mutableListOf<Pair<String, String>>()
+        val removed = mutableListOf<String>()
+
+        override fun read(key: String): String? {
+            assertEquals(WebRememberedNip46StorageKey, key)
+            return value
+        }
+
+        override fun write(key: String, value: String) {
+            assertEquals(WebRememberedNip46StorageKey, key)
+            writes += key to value
+            this.value = value
+        }
+
+        override fun remove(key: String) {
+            assertEquals(WebRememberedNip46StorageKey, key)
+            removed += key
+            value = null
+        }
+    }
+}
+
 class WebNip46ResponseClassificationTests {
     private val clientPubkey = "11".repeat(32)
     private val remotePubkey = "22".repeat(32)
