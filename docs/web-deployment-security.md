@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, select a built-in visual theme, display text-only profile metadata, load encrypted notes, search/sort the currently loaded in-memory note list, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07 or NIP-46, select a built-in visual theme, display text-only profile metadata, load encrypted notes, search/sort the currently loaded in-memory note list, create/edit/delete notes, and choose session-only note relays, but it remains security-sensitive and intentionally memory-only. A tested direct-key foundation exists for a future session-only `nsec` fallback UI, but no visible direct `nsec` input is exposed yet.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -52,6 +52,7 @@ Current web auth/session/note/relay state is memory-only. The only browser-persi
 
 - Auth state is not durably restored after refresh.
 - NIP-46 communication keys and session material are not persisted.
+- Direct-key `nsec` sessions are not exposed through UI yet and must remain memory-only when the future UI is added.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
