@@ -47,6 +47,7 @@ private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
 private var noteLaneCount = webNoteLaneCountForViewport()
+private var noteLoadGuard = WebNoteLoadGuard()
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
 private var activeNoteLoader = noteLoaderForCurrentRelays()
 private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
@@ -435,6 +436,7 @@ private fun requestNip07PublicKey() {
                 cancelNoteEdit()
                 authState = completeNip07SignIn(authState, publicKey)
                 render()
+                autoLoadNotesForSignedInSession()
             },
             {
                 authState = failNip07SignIn(authState)
@@ -466,17 +468,27 @@ private fun requestNip46PublicKey() {
                     resetLoadedNotes()
                     cancelNoteEdit()
                     authState = completeNip46SignIn(authState, result.userPubkey)
+                    render()
+                    autoLoadNotesForSignedInSession()
                 }
                 is WebNip46ConnectResult.Failed -> {
                     authState = failNip46SignIn(authState, result.safeMessage)
+                    render()
                 }
             }
-            render()
         },
     )
 }
 
+private fun autoLoadNotesForSignedInSession() {
+    val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
+    loadReadOnlyNotes(signedIn.identity)
+}
+
 private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
+    val started = noteLoadGuard.start(identity)
+    noteLoadGuard = started.guard
+    val request = started.request
     activeNoteLoader.close()
     activeNoteLoader = noteLoaderForCurrentRelays()
     val decryptor = when (identity.method) {
@@ -492,10 +504,12 @@ private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
         accountPubkey = identity.publicKeyHex,
         decryptor = decryptor,
         onProgress = { message ->
+            if (!noteLoadGuard.accepts(request, authState)) return@load
             noteState = WebNoteLoadState.Loading(message)
             render()
         },
         onResult = { result ->
+            if (!noteLoadGuard.accepts(request, authState)) return@load
             noteState = when (result) {
                 is WebNoteLoadResult.Loaded ->
                     if (result.state.notes.isEmpty()) {
@@ -660,6 +674,7 @@ private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
 }
 
 private fun rebuildNoteRelayClients() {
+    noteLoadGuard = noteLoadGuard.invalidate()
     activeNoteLoader.close()
     activeNoteCrudService.close()
     activeNoteLoader = noteLoaderForCurrentRelays()
@@ -673,6 +688,7 @@ private fun noteCrudServiceForCurrentRelays(): WebNoteCrudService =
     WebNoteCrudService(WebNoteRelayPublisher(selectedWebNoteRelays(noteRelaySettings)))
 
 private fun logout() {
+    noteLoadGuard = noteLoadGuard.invalidate()
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
     activeNoteCrudService.close()

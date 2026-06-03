@@ -202,6 +202,66 @@ class WebResponsiveNoteGridLayoutTests {
     }
 }
 
+class WebNoteLoadGuardTests {
+    private val nip07Identity = WebAccountIdentity("aa".repeat(32), WebAuthMethod.Nip07)
+    private val nip46Identity = WebAccountIdentity("bb".repeat(32), WebAuthMethod.Nip46)
+
+    @Test
+    fun startedRequestIsAcceptedForMatchingSignedInAccount() {
+        val started = WebNoteLoadGuard().start(nip07Identity)
+        val authState = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(nip07Identity),
+        )
+
+        assertTrue(started.guard.accepts(started.request, authState))
+    }
+
+    @Test
+    fun staleRequestIsRejectedAfterManualReloadStartsNewGeneration() {
+        val first = WebNoteLoadGuard().start(nip07Identity)
+        val second = first.guard.start(nip07Identity)
+        val authState = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(nip07Identity),
+        )
+
+        assertTrue(!second.guard.accepts(first.request, authState))
+        assertTrue(second.guard.accepts(second.request, authState))
+    }
+
+    @Test
+    fun requestIsRejectedAfterLogoutInvalidatesGuard() {
+        val started = WebNoteLoadGuard().start(nip07Identity)
+        val loggedOut = WebAuthUiState(nip07Available = true)
+
+        assertTrue(!started.guard.invalidate().accepts(started.request, loggedOut))
+    }
+
+    @Test
+    fun requestIsRejectedAfterAccountSwitch() {
+        val started = WebNoteLoadGuard().start(nip07Identity)
+        val switchedAccount = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(nip46Identity),
+        )
+
+        assertTrue(!started.guard.accepts(started.request, switchedAccount))
+    }
+
+    @Test
+    fun requestIsRejectedAfterMethodSwitchForSamePubkey() {
+        val samePubkeyNip46 = nip07Identity.copy(method = WebAuthMethod.Nip46)
+        val started = WebNoteLoadGuard().start(nip07Identity)
+        val switchedMethod = WebAuthUiState(
+            nip07Available = true,
+            signInState = WebSignInState.SignedIn(samePubkeyNip46),
+        )
+
+        assertTrue(!started.guard.accepts(started.request, switchedMethod))
+    }
+}
+
 class WebNip46TokenTests {
     @Test
     fun parsesBunkerTokenWithSignerRelays() {
