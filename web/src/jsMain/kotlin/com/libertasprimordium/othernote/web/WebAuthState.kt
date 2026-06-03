@@ -43,6 +43,70 @@ enum class WebMenuPanel {
     About,
 }
 
+enum class WebSignInInfoTopic {
+    Nip07,
+    Nip46,
+    RememberedNip46,
+    DirectNsec,
+    GeneratedIdentity,
+}
+
+data class WebSignInInfoCopy(
+    val title: String,
+    val body: List<String>,
+)
+
+val WebSignInInfoTopics = listOf(
+    WebSignInInfoTopic.Nip07,
+    WebSignInInfoTopic.Nip46,
+    WebSignInInfoTopic.RememberedNip46,
+    WebSignInInfoTopic.DirectNsec,
+    WebSignInInfoTopic.GeneratedIdentity,
+)
+
+fun webSignInInfoCopy(topic: WebSignInInfoTopic): WebSignInInfoCopy =
+    when (topic) {
+        WebSignInInfoTopic.Nip07 -> WebSignInInfoCopy(
+            title = "NIP-07 browser extension",
+            body = listOf(
+                "A NIP-07 browser extension signs, encrypts, and decrypts on your behalf.",
+                "Other Note asks the extension for approved operations and does not receive your private key.",
+            ),
+        )
+        WebSignInInfoTopic.Nip46 -> WebSignInInfoCopy(
+            title = "NIP-46 remote signer",
+            body = listOf(
+                "A remote signer or bunker holds your private key while Other Note sends NIP-46 signer requests.",
+                "Remote signer relays are separate from note relays and are used only for signer request traffic.",
+                "The remote signer may see plaintext note payloads during encryption and decryption operations by design.",
+            ),
+        )
+        WebSignInInfoTopic.RememberedNip46 -> WebSignInInfoCopy(
+            title = "Remembered remote signer",
+            body = listOf(
+                "Remembering a remote signer does not store your private key.",
+                "It stores Other Note's NIP-46 communication session record for this browser.",
+                "That record is still sensitive because it can request approved signer actions until you forget it here or the signer revokes it.",
+            ),
+        )
+        WebSignInInfoTopic.DirectNsec -> WebSignInInfoCopy(
+            title = "Session-only nsec",
+            body = listOf(
+                "The nsec is your private key.",
+                "Other Note does not save it, and refreshing or logging out forgets this session.",
+                "Use this only on trusted devices. Prefer NIP-07 or a remote signer on shared or untrusted browsers.",
+            ),
+        )
+        WebSignInInfoTopic.GeneratedIdentity -> WebSignInInfoCopy(
+            title = "Create new identity",
+            body = listOf(
+                "This creates a new Nostr identity and the generated nsec is the private key.",
+                "Other Note cannot recover it. Losing it means losing access to encrypted notes for that identity forever.",
+                "Save it securely before using the identity for notes.",
+            ),
+        )
+    }
+
 data class WebMenuUiState(
     val open: Boolean = false,
     val activePanel: WebMenuPanel = WebMenuPanel.None,

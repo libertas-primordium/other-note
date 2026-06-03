@@ -102,6 +102,30 @@ val webSecuritySourceCheck by tasks.registering {
             "Direct nsec web foundation must stay memory-only and isolated from browser storage/DOM rendering; forbidden pattern(s): ${directKeyHits.joinToString()}"
         }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
+        val webAuthStateText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebAuthState.kt").asFile.readText()
+        listOf("Nip07", "Nip46", "RememberedNip46", "DirectNsec", "GeneratedIdentity").forEach { topic ->
+            check(webMainText.contains("signInInfoButton(WebSignInInfoTopic.$topic)") || webMainText.contains("sectionTitleWithInfo(\"") && webMainText.contains("WebSignInInfoTopic.$topic")) {
+                "Signed-out login must expose an accessible info button for WebSignInInfoTopic.$topic."
+            }
+        }
+        listOf(
+            "does not receive your private key",
+            "separate from note relays",
+            "plaintext note payloads",
+            "communication session record",
+            "nsec is your private key",
+            "Other Note cannot recover it",
+        ).forEach { requiredCopy ->
+            check(webAuthStateText.contains(requiredCopy)) {
+                "Web sign-in info popups must preserve required safety copy: $requiredCopy"
+            }
+        }
+        check(webMainText.contains("""setAttribute("role", "dialog")""") && webMainText.contains("""setAttribute("aria-modal", "true")""")) {
+            "Sign-in info popups must use dialog semantics."
+        }
+        check(webMainText.contains("activeSignInInfoTopic") && webMainText.contains("""key == "Escape"""")) {
+            "Sign-in info popups must be dismissible with Escape."
+        }
         val directNsecPanel = Regex(
             """private fun directNsecSignInPanel\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun requestNip07PublicKey""",
             setOf(RegexOption.DOT_MATCHES_ALL),
