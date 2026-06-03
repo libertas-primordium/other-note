@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="dark">
+    <meta name="color-scheme" content="dark light">
     <title>Other Note Web Preview</title>
     <style>
         :root {
+            color-scheme: var(--color-scheme);
+            --color-scheme: dark;
             --background: #050507;
             --surface: #111116;
             --card-surface: #111116;
@@ -16,9 +18,154 @@
             --app-bar: #2a0f45;
             --border: #6c4a90;
             --subtle-border: rgba(108, 74, 144, 0.35);
+            --button-background: #8e44ff;
             --button-text: #ffffff;
+            --text-field-background: #111116;
+            --text-field-border: #6c4a90;
+            --error: #ff6b8a;
+            --danger: #ffb4b4;
+            --danger-border: rgba(255, 139, 139, 0.58);
+            --danger-background: rgba(255, 139, 139, 0.06);
             --code-background: #191020;
             --code-text: #e8d7ff;
+        }
+
+        :root[data-theme="urban"] {
+            --color-scheme: light;
+            --background: #e7e7e3;
+            --surface: #f7f7f3;
+            --card-surface: #f7f7f3;
+            --text: #121212;
+            --muted: #525252;
+            --accent: #d96514;
+            --app-bar: #c9cbc7;
+            --border: #4a4d50;
+            --subtle-border: rgba(74, 77, 80, 0.35);
+            --button-background: #d96514;
+            --button-text: #111111;
+            --text-field-background: #f7f7f3;
+            --text-field-border: #4a4d50;
+            --error: #b3261e;
+            --danger: #9b1c18;
+            --danger-border: rgba(179, 38, 30, 0.6);
+            --danger-background: rgba(179, 38, 30, 0.08);
+            --code-background: #2b2d2f;
+            --code-text: #ffd2a8;
+        }
+
+        :root[data-theme="hacker"] {
+            --color-scheme: dark;
+            --background: #020403;
+            --surface: #07100b;
+            --card-surface: #07100b;
+            --text: #d7f9df;
+            --muted: #8ab796;
+            --accent: #3cd45b;
+            --app-bar: #050a07;
+            --border: #2aa847;
+            --subtle-border: rgba(42, 168, 71, 0.35);
+            --button-background: #07100b;
+            --button-text: #3cd45b;
+            --text-field-background: #07100b;
+            --text-field-border: #2aa847;
+            --error: #ff5f5f;
+            --danger: #ff8d8d;
+            --danger-border: rgba(255, 95, 95, 0.62);
+            --danger-background: rgba(255, 95, 95, 0.08);
+            --code-background: #000000;
+            --code-text: #a7ffb8;
+        }
+
+        :root[data-theme="papyrus"] {
+            --color-scheme: light;
+            --background: #fbf5e7;
+            --surface: #fffaef;
+            --card-surface: #fffaef;
+            --text: #17130d;
+            --muted: #574b38;
+            --accent: #d9be82;
+            --app-bar: #e7d2a0;
+            --border: #1f1a12;
+            --subtle-border: rgba(31, 26, 18, 0.3);
+            --button-background: #d9be82;
+            --button-text: #17130d;
+            --text-field-background: #fffaef;
+            --text-field-border: #1f1a12;
+            --error: #9f2d22;
+            --danger: #8e251d;
+            --danger-border: rgba(159, 45, 34, 0.58);
+            --danger-background: rgba(159, 45, 34, 0.08);
+            --code-background: #efe1c0;
+            --code-text: #17130d;
+        }
+
+        :root[data-theme="harbor"] {
+            --color-scheme: dark;
+            --background: #06131a;
+            --surface: #0d2029;
+            --card-surface: #0d2029;
+            --text: #e9f8ff;
+            --muted: #a3c1cc;
+            --accent: #38c6d9;
+            --app-bar: #082531;
+            --border: #338c9c;
+            --subtle-border: rgba(51, 140, 156, 0.35);
+            --button-background: #38c6d9;
+            --button-text: #06131a;
+            --text-field-background: #0d2029;
+            --text-field-border: #338c9c;
+            --error: #ff7b7b;
+            --danger: #ffabab;
+            --danger-border: rgba(255, 123, 123, 0.6);
+            --danger-background: rgba(255, 123, 123, 0.08);
+            --code-background: #021018;
+            --code-text: #b3f4ff;
+        }
+
+        :root[data-theme="daylight"] {
+            --color-scheme: light;
+            --background: #f8fafc;
+            --surface: #ffffff;
+            --card-surface: #ffffff;
+            --text: #111827;
+            --muted: #4b5563;
+            --accent: #2563eb;
+            --app-bar: #e5eaf2;
+            --border: #334155;
+            --subtle-border: rgba(51, 65, 85, 0.3);
+            --button-background: #2563eb;
+            --button-text: #ffffff;
+            --text-field-background: #ffffff;
+            --text-field-border: #334155;
+            --error: #b91c1c;
+            --danger: #991b1b;
+            --danger-border: rgba(185, 28, 28, 0.58);
+            --danger-background: rgba(185, 28, 28, 0.08);
+            --code-background: #e5e7eb;
+            --code-text: #111827;
+        }
+
+        :root[data-theme="burgundy"] {
+            --color-scheme: dark;
+            --background: #16070b;
+            --surface: #251016;
+            --card-surface: #251016;
+            --text: #fff1f3;
+            --muted: #d8a9b1;
+            --accent: #e05264;
+            --app-bar: #3a111b;
+            --border: #a63d50;
+            --subtle-border: rgba(166, 61, 80, 0.35);
+            --button-background: #e05264;
+            --button-text: #16070b;
+            --text-field-background: #251016;
+            --text-field-border: #a63d50;
+            --error: #ffb000;
+            --danger: #ffca52;
+            --danger-border: rgba(255, 176, 0, 0.62);
+            --danger-background: rgba(255, 176, 0, 0.08);
+            --code-background: #120409;
+            --code-text: #ffced6;
         }
 
         * {
@@ -165,7 +312,7 @@
         }
 
         .error {
-            color: #ff8b8b;
+            color: var(--error);
         }
 
         .action-button {
@@ -174,7 +321,7 @@
             padding: 0 14px;
             border: 1px solid var(--accent);
             border-radius: 8px;
-            background: var(--accent);
+            background: var(--button-background);
             color: var(--button-text);
             font: inherit;
             font-weight: 700;
@@ -206,7 +353,7 @@
             padding: 8px;
             border: 1px solid var(--border);
             border-radius: 8px;
-            background: #09090d;
+            background: var(--text-field-background);
             box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
         }
 
@@ -227,12 +374,12 @@
 
         .menu-item:hover,
         .menu-item:focus {
-            background: rgba(142, 68, 255, 0.18);
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
             outline: none;
         }
 
         .menu-item.danger {
-            color: #ffb4b4;
+            color: var(--danger);
         }
 
         .menu-divider {
@@ -302,9 +449,9 @@
             max-width: 100%;
             min-height: 44px;
             padding: 0 12px;
-            border: 1px solid var(--border);
+            border: 1px solid var(--text-field-border);
             border-radius: 8px;
-            background: #09090d;
+            background: var(--text-field-background);
             color: var(--text);
             font: inherit;
         }
@@ -448,6 +595,13 @@
             cursor: pointer;
         }
 
+        .theme-select {
+            appearance: none;
+            min-height: 44px;
+            padding-right: 34px;
+            cursor: pointer;
+        }
+
         .notes-results {
             min-width: 0;
             max-width: 100%;
@@ -472,9 +626,9 @@
             min-width: 60px;
             min-height: 34px;
             padding: 0 10px;
-            border-color: rgba(142, 68, 255, 0.68);
+            border-color: color-mix(in srgb, var(--accent) 68%, transparent);
             border-radius: 7px;
-            background: rgba(142, 68, 255, 0.08);
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
             color: var(--accent);
             font-size: 0.75rem;
             line-height: 1;
@@ -482,15 +636,15 @@
         }
 
         .note-card-actions .action-button:last-child {
-            border-color: rgba(255, 139, 139, 0.58);
-            background: rgba(255, 139, 139, 0.06);
-            color: #ffb4b4;
+            border-color: var(--danger-border);
+            background: var(--danger-background);
+            color: var(--danger);
         }
 
         .note-card-actions .action-button:hover,
         .note-card-actions .action-button:focus {
             border-color: var(--accent);
-            background: rgba(142, 68, 255, 0.18);
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
             outline: none;
         }
 
@@ -509,7 +663,7 @@
             padding: 10px 12px;
             border: 1px solid var(--border);
             border-radius: 8px;
-            background: #09090d;
+            background: var(--text-field-background);
         }
 
         .relay-url {

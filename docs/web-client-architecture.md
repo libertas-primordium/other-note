@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, local in-memory note search/sort, basic signer-backed note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only, but browser persistence, durable relay preferences, durable web relay migration queues, durable note search/sort preferences, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web value is the generic theme ID under `on.web.theme`; browser persistence for sessions, relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -78,7 +78,7 @@ Relay-list behavior should mirror native semantics where feasible:
 
 ## Storage policy
 
-Initial web storage should be conservative. The first implementation should prefer in-memory state plus non-secret preferences only.
+Initial web storage should be conservative. The implementation currently persists only the generic selected theme ID under `on.web.theme`. All auth, signer, note, relay, profile, search, sort, draft, migration, stats, and pending-write state remains in memory only.
 
 Allowed browser storage, if needed:
 
@@ -98,6 +98,7 @@ Forbidden browser storage:
 - Raw decrypted NIP-44 payloads.
 - Raw sensitive diagnostics.
 - Browser-persisted profile metadata or profile image caches.
+- Browser-persisted search queries or sort preferences in the current web preview.
 
 Direct `nsec` fallback must not write the key to `localStorage`, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs. If browser durable storage is introduced later for non-secret data, it must be audited so secrets cannot be accidentally routed into it.
 

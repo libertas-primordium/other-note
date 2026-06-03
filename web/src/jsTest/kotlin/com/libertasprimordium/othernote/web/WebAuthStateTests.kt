@@ -97,7 +97,7 @@ class WebAuthStateTests {
 class WebLayoutMenuStateTests {
     @Test
     fun signedInMenuIncludesSecondaryActionsAndLogout() {
-        assertEquals(listOf("Reload notes", "Note relays", "About web preview", "Logout"), WebSignedInMenuItems)
+        assertEquals(listOf("Reload notes", "Note relays", "Theme", "About web preview", "Logout"), WebSignedInMenuItems)
     }
 
     @Test
@@ -134,6 +134,89 @@ class WebLayoutMenuStateTests {
 
         assertEquals(WebMenuUiState(), resetWebMenuState())
         assertEquals(WebMenuUiState(), closeWebMenuPanel(closeWebMenu(state)))
+    }
+}
+
+class WebThemeTests {
+    @Test
+    fun builtInThemesUseStableNativeIdsAndLabels() {
+        assertEquals(
+            listOf("nostr-classic", "urban", "hacker", "papyrus", "harbor", "daylight", "burgundy"),
+            BuiltInWebThemes.map { it.id },
+        )
+        assertEquals("Nostr Classic", DefaultWebTheme.label)
+        assertTrue(BuiltInWebThemes.all { it.label.isNotBlank() })
+    }
+
+    @Test
+    fun validThemeIdsAreAcceptedAndInvalidIdsDefaultSafely() {
+        assertEquals("urban", validWebThemeIdOrNull(" urban "))
+        assertEquals("hacker", webThemeForId("hacker").id)
+        assertEquals(DefaultWebTheme.id, webThemeForId("missing").id)
+        assertNull(validWebThemeIdOrNull(""))
+        assertNull(validWebThemeIdOrNull(null))
+        assertNull(validWebThemeIdOrNull("nsec-or-pubkey-like-value"))
+    }
+
+    @Test
+    fun themePreferenceKeyIsGenericAndNotAccountScoped() {
+        assertEquals("on.web.theme", WebThemePreferenceKey)
+        listOf("pubkey", "npub", "nsec", "bunker", "signer", "relay", "note", "event", "profile", "secret").forEach { forbidden ->
+            assertTrue(!WebThemePreferenceKey.contains(forbidden))
+        }
+    }
+
+    @Test
+    fun themePreferenceLoadsValidStoredValueAndDefaultsInvalidOrBlankValues() {
+        assertEquals("papyrus", loadWebThemePreference(FakeThemeStorage(readValue = "papyrus")))
+        assertEquals(DefaultWebTheme.id, loadWebThemePreference(FakeThemeStorage(readValue = "invalid")))
+        assertEquals(DefaultWebTheme.id, loadWebThemePreference(FakeThemeStorage(readValue = "")))
+        assertEquals(DefaultWebTheme.id, loadWebThemePreference(null))
+    }
+
+    @Test
+    fun themePreferenceStorageFailuresFallBackWithoutCrashing() {
+        assertEquals(DefaultWebTheme.id, loadWebThemePreference(ThrowingThemeStorage))
+        assertEquals("urban", saveWebThemePreference(ThrowingThemeStorage, "urban"))
+    }
+
+    @Test
+    fun saveThemePreferenceWritesOnlyTheAllowedKeyAndValidThemeIds() {
+        val validStorage = FakeThemeStorage()
+        val invalidStorage = FakeThemeStorage()
+
+        assertEquals("hacker", saveWebThemePreference(validStorage, "hacker"))
+        assertEquals(DefaultWebTheme.id, saveWebThemePreference(invalidStorage, "not-a-theme"))
+
+        assertEquals(listOf(WebThemePreferenceKey to "hacker"), validStorage.writes)
+        assertEquals(listOf(WebThemePreferenceKey to DefaultWebTheme.id), invalidStorage.writes)
+    }
+
+    private class FakeThemeStorage(
+        private val readValue: String? = null,
+    ) : WebThemePreferenceStorage {
+        val writes = mutableListOf<Pair<String, String>>()
+
+        override fun read(key: String): String? {
+            assertEquals(WebThemePreferenceKey, key)
+            return readValue
+        }
+
+        override fun write(key: String, value: String) {
+            assertEquals(WebThemePreferenceKey, key)
+            assertTrue(value in AllowedWebThemeIds)
+            writes += key to value
+        }
+    }
+
+    private object ThrowingThemeStorage : WebThemePreferenceStorage {
+        override fun read(key: String): String? {
+            throw IllegalStateException("storage unavailable")
+        }
+
+        override fun write(key: String, value: String) {
+            throw IllegalStateException("storage unavailable")
+        }
     }
 }
 

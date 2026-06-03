@@ -38,6 +38,7 @@ data class WebAuthUiState(
 enum class WebMenuPanel {
     None,
     NoteRelays,
+    Theme,
     About,
 }
 
@@ -96,6 +97,7 @@ fun closeWebNoteDetail(): WebNoteDetailUiState =
 val WebSignedInMenuItems = listOf(
     "Reload notes",
     "Note relays",
+    "Theme",
     "About web preview",
     "Logout",
 )
