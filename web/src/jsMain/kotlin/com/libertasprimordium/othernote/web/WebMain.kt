@@ -34,12 +34,14 @@ external interface WebElement {
 
 internal const val Nip46TokenInputLabel = "Remote signer token"
 internal const val Nip46TokenInputType = "password"
+private const val WebNotesResultsContainerId = "web-notes-results"
 
 private lateinit var rootElement: WebElement
 private var authState = WebAuthUiState(nip07Available = isNip07Available())
 private var noteState: WebNoteLoadState = WebNoteLoadState.Idle
 private var loadedNoteEvents: List<WebNostrEvent> = emptyList()
 private var loadedNotePlaintexts: Map<String, String> = emptyMap()
+private var noteListControls = WebNoteListControlsState()
 private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
 private var noteEditBody = ""
 private var noteEditMessage = ""
@@ -300,7 +302,52 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
         if (!canCrud) {
             appendChild(textElement("p", "body error small-gap", WebNoteCopy.CrudCapabilityUnavailable))
         }
+        appendChild(noteListControlsPanel())
         appendChild(noteEditorPanel(identity, crudSigner))
+        appendChild(element("div", "notes-results") {
+            setAttribute("id", WebNotesResultsContainerId)
+            appendChild(notesResultsContent(notes, canCrud))
+        })
+    }
+
+private fun noteListControlsPanel(): WebElement =
+    element("div", "note-list-controls") {
+        appendChild(textInputElement(
+            label = "Search notes",
+            value = noteListControls.searchQuery,
+            enabled = true,
+            inputType = "text",
+            placeholder = "Search loaded notes",
+            onInput = ::updateNoteSearchQuery,
+        ))
+        appendChild(noteSortSelectElement())
+    }
+
+private fun noteSortSelectElement(): WebElement =
+    element("label", "field-label note-sort-field") {
+        appendChild(textElement("span", "field-label-text", "Sort notes"))
+        appendChild(
+            element("select", "text-input sort-select").also { select ->
+                select.setAttribute("aria-label", "Sort notes")
+                BuiltInWebNoteSortOptions.forEach { option ->
+                    select.appendChild(element("option", "") {
+                        setAttribute("value", option.id)
+                        if (option.id == noteListControls.sortId) {
+                            setAttribute("selected", "selected")
+                        }
+                        textContent = option.label
+                    })
+                }
+                select.value = webNoteSortOptionForId(noteListControls.sortId).id
+                select.addEventListener("change") {
+                    updateNoteSortOrder(select.value)
+                }
+            },
+        )
+    }
+
+private fun notesResultsContent(notes: WebNoteLoadState, canCrud: Boolean): WebElement =
+    element("div", "notes-results-content") {
         when (notes) {
             WebNoteLoadState.Idle -> appendChild(textElement("p", "body small-gap", "Notes are not loaded yet."))
             is WebNoteLoadState.Loading -> appendChild(textElement("p", "body small-gap", notes.message))
@@ -312,7 +359,12 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
             is WebNoteLoadState.SignerUnsupported -> appendChild(textElement("p", "body error small-gap", notes.message))
             is WebNoteLoadState.Loaded -> {
                 notes.status?.let { appendChild(textElement("p", "body muted small-gap", it)) }
-                appendChild(noteLanes(notes.notes, canCrud, noteLaneCount))
+                val displayNotes = webNoteListDisplayNotes(notes.notes, noteListControls)
+                if (displayNotes.isEmpty() && noteListControls.searchQuery.trim().isNotEmpty()) {
+                    appendChild(textElement("p", "body muted small-gap", "No matching notes."))
+                } else {
+                    appendChild(noteLanes(displayNotes, canCrud, noteLaneCount))
+                }
             }
         }
     }
@@ -538,6 +590,7 @@ private fun requestNip07PublicKey() {
             { publicKey ->
                 noteState = WebNoteLoadState.Idle
                 resetLoadedNotes()
+                resetNoteListControlsState()
                 cancelNoteEdit()
                 resetProfile()
                 resetRelayListState()
@@ -578,6 +631,7 @@ private fun requestNip46PublicKey() {
                     nip46TokenInput = ""
                     noteState = WebNoteLoadState.Idle
                     resetLoadedNotes()
+                    resetNoteListControlsState()
                     cancelNoteEdit()
                     resetProfile()
                     resetRelayListState()
@@ -835,6 +889,10 @@ private fun resetLoadedNotes() {
     loadedNotePlaintexts = emptyMap()
 }
 
+private fun resetNoteListControlsState() {
+    noteListControls = resetWebNoteListControls()
+}
+
 private fun resetProfile() {
     profileState = WebProfileUiState()
 }
@@ -853,6 +911,27 @@ private fun resetRelayStatsState() {
 
 private fun updateNoteRelayInput(value: String) {
     noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
+}
+
+private fun updateNoteSearchQuery(value: String) {
+    noteListControls = noteListControls.copy(searchQuery = value)
+    refreshNotesResultsOnly()
+}
+
+private fun updateNoteSortOrder(sortId: String) {
+    noteListControls = noteListControls.copy(sortId = webNoteSortOptionForId(sortId).id)
+    refreshNotesResultsOnly()
+}
+
+private fun refreshNotesResultsOnly() {
+    val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
+    val container = document.getElementById(WebNotesResultsContainerId)
+    if (container == null) {
+        render()
+        return
+    }
+    container.innerHTML = ""
+    container.appendChild(notesResultsContent(noteState, crudSignerFor(signedIn.identity) != null))
 }
 
 private fun addNoteRelay() {
@@ -1189,6 +1268,7 @@ private fun logout() {
     activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
     nip46TokenInput = ""
     webMenuState = resetWebMenuState()
+    resetNoteListControlsState()
     clearNoteDetail()
     resetProfile()
     resetRelayListState()

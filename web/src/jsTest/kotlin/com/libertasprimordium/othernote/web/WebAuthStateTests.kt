@@ -202,6 +202,146 @@ class WebResponsiveNoteGridLayoutTests {
     }
 }
 
+class WebNoteListControlsTests {
+    @Test
+    fun emptyAndWhitespaceSearchShowAllVisibleNotes() {
+        val notes = listOf(
+            note(id = "alpha", body = "Alpha"),
+            note(id = "deleted", body = "Deleted", deleted = true),
+            note(id = "bravo", body = "Bravo"),
+        )
+
+        assertEquals(listOf("alpha", "bravo"), filterVisibleWebNotesBySearchQuery(notes, "").map { it.id })
+        assertEquals(listOf("alpha", "bravo"), filterVisibleWebNotesBySearchQuery(notes, "   ").map { it.id })
+    }
+
+    @Test
+    fun searchIsTrimmedAndMatchesTitleCaseInsensitively() {
+        val notes = listOf(
+            note(id = "alpha", body = "Project Plan\nsecond line"),
+            note(id = "bravo", body = "Other note"),
+        )
+
+        val result = filterVisibleWebNotesBySearchQuery(notes, "  project plan  ")
+
+        assertEquals(listOf("alpha"), result.map { it.id })
+    }
+
+    @Test
+    fun searchMatchesFullBodyIncludingLongUrlsAndJson() {
+        val notes = listOf(
+            note(id = "json", body = """{"version":"vpn-marketplace/1","listing":"30402:d9b129"}"""),
+            note(id = "url", body = "remote signer\nbunker://token.example?relay=wss://relay.ditto.pub/&secret=redacted"),
+            note(id = "plain", body = "ordinary prose"),
+        )
+
+        assertEquals(listOf("json"), filterVisibleWebNotesBySearchQuery(notes, "VPN-MARKETPLACE").map { it.id })
+        assertEquals(listOf("url"), filterVisibleWebNotesBySearchQuery(notes, "relay.ditto.pub").map { it.id })
+    }
+
+    @Test
+    fun noMatchSearchReturnsEmptyWithoutMutatingSourceList() {
+        val notes = listOf(note(id = "alpha", body = "Alpha"))
+
+        val result = filterVisibleWebNotesBySearchQuery(notes, "missing")
+
+        assertTrue(result.isEmpty())
+        assertEquals(listOf("alpha"), notes.map { it.id })
+    }
+
+    @Test
+    fun lastEditedSortOrdersNewestAndOldestWithStableTies() {
+        val notes = listOf(
+            note(id = "first-tie", updatedAtMs = 10),
+            note(id = "newest", updatedAtMs = 20),
+            note(id = "second-tie", updatedAtMs = 10),
+        )
+
+        assertEquals(
+            listOf("newest", "first-tie", "second-tie"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("last-edited-newest")).map { it.id },
+        )
+        assertEquals(
+            listOf("first-tie", "second-tie", "newest"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("last-edited-oldest")).map { it.id },
+        )
+    }
+
+    @Test
+    fun createdSortOrdersNewestAndOldest() {
+        val notes = listOf(
+            note(id = "older", createdAtMs = 1),
+            note(id = "newer", createdAtMs = 2),
+        )
+
+        assertEquals(
+            listOf("newer", "older"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("created-newest")).map { it.id },
+        )
+        assertEquals(
+            listOf("older", "newer"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("created-oldest")).map { it.id },
+        )
+    }
+
+    @Test
+    fun titleSortOrdersBlankTitlesLastAndSupportsDescending() {
+        val notes = listOf(
+            note(id = "zulu", body = "Zulu"),
+            note(id = "blank", body = "\n\n"),
+            note(id = "alpha", body = "Alpha"),
+        )
+
+        assertEquals(
+            listOf("alpha", "zulu", "blank"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("title-a-z")).map { it.id },
+        )
+        assertEquals(
+            listOf("zulu", "alpha", "blank"),
+            sortVisibleWebNotes(notes, webNoteSortOptionForId("title-z-a")).map { it.id },
+        )
+    }
+
+    @Test
+    fun searchAndSortComposeWithoutChangingSourceOrder() {
+        val notes = listOf(
+            note(id = "older", body = "Match older", updatedAtMs = 1),
+            note(id = "other", body = "Other", updatedAtMs = 3),
+            note(id = "newer", body = "Match newer", updatedAtMs = 2),
+        )
+        val controls = WebNoteListControlsState(searchQuery = "match", sortId = "last-edited-newest")
+
+        val result = webNoteListDisplayNotes(notes, controls)
+
+        assertEquals(listOf("newer", "older"), result.map { it.id })
+        assertEquals(listOf("older", "other", "newer"), notes.map { it.id })
+    }
+
+    @Test
+    fun resetControlsClearsSearchAndRestoresDefaultSort() {
+        val reset = resetWebNoteListControls()
+
+        assertEquals("", reset.searchQuery)
+        assertEquals(DefaultWebNoteSortOption.id, reset.sortId)
+        assertEquals("Last edited: newest first", webNoteSortOptionForId(reset.sortId).label)
+    }
+
+    private fun note(
+        id: String,
+        body: String = id,
+        createdAtMs: Long = 1,
+        updatedAtMs: Long = createdAtMs,
+        deleted: Boolean = false,
+    ): WebReadOnlyNote =
+        WebReadOnlyNote(
+            id = id,
+            createdAtMs = createdAtMs,
+            updatedAtMs = updatedAtMs,
+            bodyMarkdown = body,
+            deleted = deleted,
+        )
+}
+
 class WebNoteDetailStateTests {
     @Test
     fun openDetailStoresSelectedNoteId() {
