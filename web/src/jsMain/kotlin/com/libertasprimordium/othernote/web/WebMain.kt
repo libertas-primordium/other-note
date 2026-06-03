@@ -43,6 +43,7 @@ private var loadedNotePlaintexts: Map<String, String> = emptyMap()
 private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
 private var noteEditBody = ""
 private var noteEditMessage = ""
+private var noteDetailState = WebNoteDetailUiState()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var webMenuState = WebMenuUiState()
@@ -84,6 +85,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
         appendChild(signedInHeader(signedIn.identity))
         appendChild(notesPanel(signedIn.identity, noteState))
         activeMenuPanel(signedIn.identity)?.let(::appendChild)
+        viewedNoteForCurrentState()?.let { appendChild(noteDetailPanel(it)) }
         return@element
     }
 
@@ -278,19 +280,73 @@ private fun noteLanes(notes: List<WebReadOnlyNote>, canCrud: Boolean, laneCount:
 private fun noteCard(note: WebReadOnlyNote, canCrud: Boolean): WebElement =
     element("article", "note-card") {
         val preview = webNotePreview(note.bodyMarkdown)
-        appendChild(textElement("h3", "note-title", preview.title))
-        if (preview.snippet.isNotBlank()) {
-            appendChild(textElement("p", "note-snippet", preview.snippet))
-        }
-        appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+        appendChild(element("div", "note-card-open") {
+            setAttribute("role", "button")
+            setAttribute("tabindex", "0")
+            setAttribute("aria-label", "Open note ${preview.title}")
+            appendChild(textElement("h3", "note-title", preview.title))
+            if (preview.snippet.isNotBlank()) {
+                appendChild(textElement("p", "note-snippet", preview.snippet))
+            }
+            appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+            addEventListener("click") {
+                openNoteDetail(note)
+            }
+            addEventListener("keydown") { event ->
+                val key = event.asDynamic().key as? String
+                if (key == "Enter" || key == " ") {
+                    event.asDynamic().preventDefault()
+                    openNoteDetail(note)
+                }
+            }
+        })
         if (canCrud) {
             appendChild(element("div", WebNoteCardActionsClass) {
                 appendChild(buttonElement(text = "Edit", enabled = true, onClick = { startEditNote(note) }))
                 appendChild(buttonElement(text = "Delete", enabled = true, onClick = { confirmDeleteNote(note) }))
             })
         }
-        appendChild(renderMarkdown(note.bodyMarkdown))
     }
+
+private fun noteDetailPanel(note: WebReadOnlyNote): WebElement =
+    element("div", "modal-backdrop") {
+        val preview = webNotePreview(note.bodyMarkdown)
+        appendChild(element("section", "panel modal-panel note-detail-panel") {
+            appendChild(element("div", "modal-header") {
+                appendChild(textElement("h2", "section-title", preview.title))
+                appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeNoteDetail))
+            })
+            appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+            appendChild(element("div", "note-detail-body") {
+                appendChild(renderMarkdown(note.bodyMarkdown))
+            })
+        })
+    }
+
+private fun viewedNoteForCurrentState(): WebReadOnlyNote? {
+    val noteId = noteDetailState.openNoteId ?: return null
+    val loaded = noteState as? WebNoteLoadState.Loaded ?: return null
+    return loaded.notes.firstOrNull { it.id == noteId }
+}
+
+private fun openNoteDetail(note: WebReadOnlyNote) {
+    noteDetailState = openWebNoteDetail(note.id)
+    render()
+}
+
+private fun closeNoteDetail() {
+    noteDetailState = closeWebNoteDetail()
+    render()
+}
+
+private fun cancelNoteEditAndRender() {
+    cancelNoteEdit()
+    render()
+}
+
+private fun clearNoteDetail() {
+    noteDetailState = closeWebNoteDetail()
+}
 
 private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSigner?): WebElement =
     when (val mode = noteEditMode) {
@@ -308,7 +364,7 @@ private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSig
             ))
             appendChild(element("div", "inline-actions") {
                 appendChild(buttonElement(text = "Save note", enabled = signer != null, onClick = { saveCurrentDraft(identity, signer) }))
-                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEdit))
+                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
             })
         }
         is WebNoteEditMode.ConfirmingDelete -> element("section", "editor-panel") {
@@ -317,7 +373,7 @@ private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSig
             if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
             appendChild(element("div", "inline-actions") {
                 appendChild(buttonElement(text = "Delete note", enabled = signer != null, onClick = { deleteConfirmedNote(identity, mode.note, signer) }))
-                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEdit))
+                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
             })
         }
         is WebNoteEditMode.Busy -> element("section", "editor-panel") {
@@ -644,7 +700,6 @@ private fun resetLoadedNotes() {
 
 private fun updateNoteRelayInput(value: String) {
     noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
-    render()
 }
 
 private fun addNoteRelay() {
@@ -697,6 +752,7 @@ private fun logout() {
     activeNoteCrudService = noteCrudServiceForCurrentRelays()
     nip46TokenInput = ""
     webMenuState = resetWebMenuState()
+    clearNoteDetail()
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
     cancelNoteEdit()
@@ -716,6 +772,7 @@ private fun buttonElement(
 ): WebElement =
     element("button", "action-button").also { button ->
         button.textContent = text
+        button.setAttribute("type", "button")
         if (!enabled) {
             button.setAttribute("disabled", "disabled")
         } else if (onClick != null) {

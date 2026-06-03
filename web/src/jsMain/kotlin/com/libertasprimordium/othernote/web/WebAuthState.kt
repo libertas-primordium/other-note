@@ -83,6 +83,16 @@ data class WebNoteLoadGuard(
     }
 }
 
+data class WebNoteDetailUiState(
+    val openNoteId: String? = null,
+)
+
+fun openWebNoteDetail(noteId: String): WebNoteDetailUiState =
+    WebNoteDetailUiState(openNoteId = noteId)
+
+fun closeWebNoteDetail(): WebNoteDetailUiState =
+    WebNoteDetailUiState()
+
 val WebSignedInMenuItems = listOf(
     "Reload notes",
     "Note relays",

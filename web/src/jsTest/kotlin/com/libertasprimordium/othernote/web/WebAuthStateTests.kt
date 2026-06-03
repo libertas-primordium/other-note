@@ -202,6 +202,18 @@ class WebResponsiveNoteGridLayoutTests {
     }
 }
 
+class WebNoteDetailStateTests {
+    @Test
+    fun openDetailStoresSelectedNoteId() {
+        assertEquals(WebNoteDetailUiState(openNoteId = "note-1"), openWebNoteDetail("note-1"))
+    }
+
+    @Test
+    fun closeDetailClearsSelectedNoteId() {
+        assertEquals(WebNoteDetailUiState(), closeWebNoteDetail())
+    }
+}
+
 class WebNoteLoadGuardTests {
     private val nip07Identity = WebAccountIdentity("aa".repeat(32), WebAuthMethod.Nip07)
     private val nip46Identity = WebAccountIdentity("bb".repeat(32), WebAuthMethod.Nip46)
@@ -915,6 +927,44 @@ class WebReadOnlyNoteTests {
         assertEquals("Details with code", preview.snippet)
     }
 
+    @Test
+    fun notePreviewStartsSnippetAfterTitleLine() {
+        val preview = webNotePreview("relay check\nsecond detail\nthird detail")
+
+        assertEquals("relay check", preview.title)
+        assertEquals("second detail third detail", preview.snippet)
+    }
+
+    @Test
+    fun notePreviewForSingleLineNoteHasNoSnippet() {
+        val preview = webNotePreview("test 2.0")
+
+        assertEquals("test 2.0", preview.title)
+        assertEquals("", preview.snippet)
+    }
+
+    @Test
+    fun notePreviewCompactsLongJsonWithoutMutatingSource() {
+        val raw = """{"version":"vpn-marketplace/1","listing":"30402:d9b12978983a0a4f06e4f0719c29c77a7ad1282f1b4b95e61ef5668624633a1a"}"""
+        val preview = webNotePreview(raw)
+
+        assertTrue(preview.title.endsWith("..."))
+        assertTrue(preview.title.length <= 83)
+        assertEquals("", preview.snippet)
+        assertTrue(raw.contains("vpn-marketplace/1"))
+    }
+
+    @Test
+    fun notePreviewCompactsLongUrlLikeContentAfterTitle() {
+        val raw = "remote signer\nbunker://a5544e864411bf1735e86b7f37686214d98e9b410ebe61a23dd268254f357d8e?relay=wss://relay.ditto.pub/&relay=wss://relay.nos.lol/&relay=wss://nostr.bitcoiner.social/&secret=1eb7d57a-a304-46ce-b543-a74b8b87df3a"
+        val preview = webNotePreview(raw)
+
+        assertEquals("remote signer", preview.title)
+        assertTrue(preview.snippet.startsWith("bunker://"))
+        assertTrue(preview.snippet.endsWith("..."))
+        assertTrue(preview.snippet.length <= 143)
+    }
+
     private fun noteEvent(
         id: String,
         createdAt: Long,
@@ -953,6 +1003,21 @@ class WebNoteRelaySettingsTests {
     fun defaultWebNoteRelayListIsUsedWhenCustomStateIsEmpty() {
         assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(WebNoteRelaySettingsState(relays = emptyList())))
         assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(defaultWebNoteRelaySettings()))
+    }
+
+    @Test
+    fun typingRelayInputUpdatesDraftWithoutChangingSelectedRelays() {
+        val initial = WebNoteRelaySettingsState(
+            relays = listOf("wss://notes.example"),
+            input = "",
+            message = WebNoteCopy.RelayInvalid,
+        )
+
+        val typed = updateWebNoteRelayInput(initial, "relay.example.com")
+
+        assertEquals(listOf("wss://notes.example"), selectedWebNoteRelays(typed))
+        assertEquals("relay.example.com", typed.input)
+        assertEquals("", typed.message)
     }
 
     @Test

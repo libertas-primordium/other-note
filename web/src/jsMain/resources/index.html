@@ -220,17 +220,27 @@
         }
 
         .modal-panel {
+            min-width: 0;
             width: min(680px, 100%);
+            max-width: 100%;
             max-height: min(82vh, 720px);
+            overflow-x: hidden;
             overflow-y: auto;
             box-shadow: 0 22px 60px rgba(0, 0, 0, 0.56);
         }
 
         .modal-header {
             display: flex;
+            min-width: 0;
+            max-width: 100%;
             gap: 12px;
             align-items: flex-start;
             justify-content: space-between;
+        }
+
+        .modal-header .section-title {
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
 
         .modal-header .action-button {
@@ -309,6 +319,7 @@
         }
 
         .note-card {
+            display: grid;
             width: 100%;
             align-self: start;
             break-inside: avoid;
@@ -322,12 +333,29 @@
             overflow-wrap: anywhere;
         }
 
+        .note-card-open {
+            min-width: 0;
+            max-width: 100%;
+            border-radius: 6px;
+            cursor: pointer;
+            overflow-wrap: anywhere;
+        }
+
+        .note-card-open:focus {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
+        }
+
         .note-title {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
             margin: 0;
             color: var(--text);
             font-size: 0.875rem;
             font-weight: 700;
             line-height: 1.22;
+            overflow: hidden;
             overflow-wrap: anywhere;
         }
 
@@ -340,7 +368,11 @@
         }
 
         .note-snippet {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4;
             font-size: 0.75rem;
+            overflow: hidden;
         }
 
         .note-meta {
@@ -364,18 +396,32 @@
         }
 
         .note-card-actions {
+            flex-direction: row;
             justify-content: flex-end;
             gap: 6px;
-            margin-top: 4px;
+            margin-top: 10px;
         }
 
         .note-card-actions .action-button {
-            min-height: 32px;
-            padding: 0 8px;
-            border-color: transparent;
-            background: transparent;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 60px;
+            min-height: 34px;
+            padding: 0 10px;
+            border-color: rgba(142, 68, 255, 0.68);
+            border-radius: 7px;
+            background: rgba(142, 68, 255, 0.08);
             color: var(--accent);
             font-size: 0.75rem;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .note-card-actions .action-button:last-child {
+            border-color: rgba(255, 139, 139, 0.58);
+            background: rgba(255, 139, 139, 0.06);
+            color: #ffb4b4;
         }
 
         .note-card-actions .action-button:hover,
@@ -425,6 +471,46 @@
             resize: vertical;
         }
 
+        .note-detail-panel {
+            min-width: 0;
+            width: min(760px, 100%);
+            max-width: 100%;
+            overflow-x: hidden;
+        }
+
+        .note-detail-body {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 14px;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .note-detail-body .markdown-view {
+            display: block;
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .note-detail-body .markdown-heading,
+        .note-detail-body .markdown-paragraph,
+        .note-detail-body .markdown-quote,
+        .note-detail-body .markdown-code-block,
+        .note-detail-body .inline-code {
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+
+        .note-detail-body .markdown-view > * + * {
+            margin-top: 8px;
+        }
+
         .markdown-view {
             display: grid;
             min-width: 0;
@@ -432,6 +518,7 @@
             gap: 8px;
             margin-top: 10px;
             color: var(--text);
+            overflow-x: hidden;
             overflow-wrap: anywhere;
         }
 
@@ -444,6 +531,12 @@
             margin: 0;
             line-height: 1.5;
             overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .markdown-paragraph,
+        .markdown-quote {
+            white-space: pre-wrap;
         }
 
         .markdown-heading {
@@ -469,10 +562,11 @@
         .markdown-code-block {
             min-width: 0;
             max-width: 100%;
-            overflow-x: auto;
+            overflow-x: hidden;
             overflow-wrap: anywhere;
             padding: 10px;
             white-space: pre-wrap;
+            word-break: break-word;
         }
 
         .inline-code {
@@ -509,8 +603,10 @@
             }
 
             .note-card-actions {
-                align-items: stretch;
-                flex-direction: column;
+                align-items: center;
+                flex-direction: row;
+                gap: 6px;
+                justify-content: flex-start;
             }
         }
     </style>
