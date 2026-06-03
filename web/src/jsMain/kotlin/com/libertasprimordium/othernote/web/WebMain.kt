@@ -41,10 +41,11 @@ private var loadedNotePlaintexts: Map<String, String> = emptyMap()
 private var noteEditMode: WebNoteEditMode = WebNoteEditMode.Idle
 private var noteEditBody = ""
 private var noteEditMessage = ""
+private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
 private var activeNip46RemoteSigner = WebNip46RemoteSigner()
-private var activeNoteLoader = WebNoteLoader()
-private var activeNoteCrudService = WebNoteCrudService()
+private var activeNoteLoader = noteLoaderForCurrentRelays()
+private var activeNoteCrudService = noteCrudServiceForCurrentRelays()
 
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
@@ -78,6 +79,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     when (val signInState = state.signInState) {
         is WebSignInState.SignedIn -> {
             appendChild(accountPanel(signInState.identity))
+            appendChild(noteRelaySettingsPanel())
             appendChild(notesPanel(signInState.identity, noteState))
         }
         else -> {
@@ -87,7 +89,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", "shell
     }
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Not implemented yet"))
-        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, or pending writes. It has no direct nsec input and no relay settings screen yet."))
+        appendChild(textElement("p", "body", "This web preview does not persist web sessions, remote signer sessions, note caches, drafts, note relay preferences, or pending writes. It has no direct nsec input and no full relay-list sync yet."))
     })
     appendChild(element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Planned sign-in paths"))
@@ -106,6 +108,37 @@ private fun accountPanel(identity: WebAccountIdentity): WebElement =
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
         appendChild(textElement("p", "body small-gap", "Notes, drafts, and signer sessions are in memory only. Refreshing this page may clear this session."))
         appendChild(buttonElement(text = "Logout", enabled = true, onClick = ::logout))
+    }
+
+private fun noteRelaySettingsPanel(): WebElement =
+    element("section", "panel") {
+        appendChild(textElement("h2", "section-title", "Note relays"))
+        appendChild(textElement("p", "body", "These relays fetch and publish your encrypted notes."))
+        appendChild(textElement("p", "body small-gap", "Relay choices are kept in memory for this browser session."))
+        appendChild(element("div", "relay-list") {
+            selectedWebNoteRelays(noteRelaySettings).forEach { relay ->
+                appendChild(element("div", "relay-row") {
+                    appendChild(textElement("span", "relay-url", relay))
+                    appendChild(buttonElement(text = "Remove", enabled = true, onClick = { removeNoteRelay(relay) }))
+                })
+            }
+        })
+        appendChild(textInputElement(
+            label = "Add note relay",
+            value = noteRelaySettings.input,
+            enabled = true,
+            inputType = "text",
+            placeholder = "relay.example.com",
+            onInput = ::updateNoteRelayInput,
+        ))
+        if (noteRelaySettings.message.isNotBlank()) {
+            val style = if (noteRelaySettings.message == WebNoteCopy.RelayInvalid) "body error small-gap" else "body small-gap"
+            appendChild(textElement("p", style, noteRelaySettings.message))
+        }
+        appendChild(element("div", "inline-actions") {
+            appendChild(buttonElement(text = "Add relay", enabled = true, onClick = ::addNoteRelay))
+            appendChild(buttonElement(text = "Restore defaults", enabled = true, onClick = ::restoreDefaultNoteRelays))
+        })
     }
 
 private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): WebElement =
@@ -357,7 +390,7 @@ private fun requestNip46PublicKey() {
 
 private fun loadReadOnlyNotes(identity: WebAccountIdentity) {
     activeNoteLoader.close()
-    activeNoteLoader = WebNoteLoader()
+    activeNoteLoader = noteLoaderForCurrentRelays()
     val decryptor = when (identity.method) {
         WebAuthMethod.Nip46 -> WebNip46NoteDecryptor(activeNip46RemoteSigner, identity.publicKeyHex)
         WebAuthMethod.Nip07 -> {
@@ -507,10 +540,52 @@ private fun resetLoadedNotes() {
     loadedNotePlaintexts = emptyMap()
 }
 
+private fun updateNoteRelayInput(value: String) {
+    noteRelaySettings = updateWebNoteRelayInput(noteRelaySettings, value)
+    render()
+}
+
+private fun addNoteRelay() {
+    updateNoteRelaySettings(addWebNoteRelay(noteRelaySettings))
+}
+
+private fun removeNoteRelay(relay: String) {
+    updateNoteRelaySettings(removeWebNoteRelay(noteRelaySettings, relay))
+}
+
+private fun restoreDefaultNoteRelays() {
+    updateNoteRelaySettings(restoreDefaultWebNoteRelays(noteRelaySettings))
+}
+
+private fun updateNoteRelaySettings(next: WebNoteRelaySettingsState) {
+    val previousRelays = selectedWebNoteRelays(noteRelaySettings)
+    noteRelaySettings = next
+    if (previousRelays != selectedWebNoteRelays(noteRelaySettings)) {
+        rebuildNoteRelayClients()
+    }
+    render()
+}
+
+private fun rebuildNoteRelayClients() {
+    activeNoteLoader.close()
+    activeNoteCrudService.close()
+    activeNoteLoader = noteLoaderForCurrentRelays()
+    activeNoteCrudService = noteCrudServiceForCurrentRelays()
+}
+
+private fun noteLoaderForCurrentRelays(): WebNoteLoader =
+    WebNoteLoader(WebNoteRelayFetcher(selectedWebNoteRelays(noteRelaySettings)))
+
+private fun noteCrudServiceForCurrentRelays(): WebNoteCrudService =
+    WebNoteCrudService(WebNoteRelayPublisher(selectedWebNoteRelays(noteRelaySettings)))
+
 private fun logout() {
     activeNip46RemoteSigner.disconnect()
     activeNoteLoader.close()
     activeNoteCrudService.close()
+    noteRelaySettings = defaultWebNoteRelaySettings()
+    activeNoteLoader = noteLoaderForCurrentRelays()
+    activeNoteCrudService = noteCrudServiceForCurrentRelays()
     nip46TokenInput = ""
     noteState = WebNoteLoadState.Idle
     resetLoadedNotes()
@@ -539,6 +614,8 @@ private fun textInputElement(
     label: String,
     value: String,
     enabled: Boolean,
+    inputType: String = Nip46TokenInputType,
+    placeholder: String = "bunker://...",
     onInput: (String) -> Unit,
 ): WebElement =
     element("label", "field-label") {
@@ -546,12 +623,12 @@ private fun textInputElement(
         appendChild(
             element("input", "text-input").also { input ->
                 input.value = value
-                input.setAttribute("type", Nip46TokenInputType)
+                input.setAttribute("type", inputType)
                 input.setAttribute("autocomplete", "off")
                 input.setAttribute("autocapitalize", "none")
                 input.setAttribute("autocorrect", "off")
                 input.setAttribute("spellcheck", "false")
-                input.setAttribute("placeholder", "bunker://...")
+                input.setAttribute("placeholder", placeholder)
                 if (!enabled) input.setAttribute("disabled", "disabled")
                 input.addEventListener("input") {
                     onInput(input.value)

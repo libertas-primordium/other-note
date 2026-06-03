@@ -780,6 +780,116 @@ class WebReadOnlyNoteTests {
         )
 }
 
+class WebNoteRelaySettingsTests {
+    @Test
+    fun defaultWebNoteRelayListIsUsedWhenCustomStateIsEmpty() {
+        assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(WebNoteRelaySettingsState(relays = emptyList())))
+        assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(defaultWebNoteRelaySettings()))
+    }
+
+    @Test
+    fun addingValidRelayNormalizesNakedHostnameAndUsesItForNoteRelays() {
+        val state = addWebNoteRelay(
+            defaultWebNoteRelaySettings().copy(input = "Relay.Example.com/nostr/"),
+        )
+
+        assertEquals("wss://relay.example.com/nostr", selectedWebNoteRelays(state).last())
+        assertEquals(WebNoteCopy.RelayAdded, state.message)
+        assertEquals("", state.input)
+    }
+
+    @Test
+    fun addingDuplicateRelayDoesNotCreateDuplicateRows() {
+        val state = addWebNoteRelay(
+            WebNoteRelaySettingsState(
+                relays = listOf("wss://relay.example.com"),
+                input = "wss://RELAY.EXAMPLE.COM/",
+            ),
+        )
+
+        assertEquals(listOf("wss://relay.example.com"), selectedWebNoteRelays(state))
+        assertEquals(WebNoteCopy.RelayAlreadyAdded, state.message)
+    }
+
+    @Test
+    fun invalidRelayInputFailsSafely() {
+        val state = addWebNoteRelay(defaultWebNoteRelaySettings().copy(input = "https://relay.example.com"))
+
+        assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(state))
+        assertEquals(WebNoteCopy.RelayInvalid, state.message)
+    }
+
+    @Test
+    fun relayNormalizationRejectsUnsafeOrAmbiguousRelayUrls() {
+        assertTrue(normalizeWebNoteRelayUrl("wss://relay.example.com").isSuccess)
+        assertEquals("wss://relay.example.com", normalizeWebNoteRelayUrl("relay.example.com").getOrThrow())
+        assertEquals("ws://localhost:7000", normalizeWebNoteRelayUrl("ws://localhost:7000/").getOrThrow())
+        assertTrue(normalizeWebNoteRelayUrl("http://relay.example.com").isFailure)
+        assertTrue(normalizeWebNoteRelayUrl("wss://relay.example.com?x=1").isFailure)
+        assertTrue(normalizeWebNoteRelayUrl("wss://relay.example.com#fragment").isFailure)
+        assertTrue(normalizeWebNoteRelayUrl("ws://relay.example.com").isFailure)
+        assertTrue(normalizeWebNoteRelayUrl("relay example.com").isFailure)
+    }
+
+    @Test
+    fun removingNoteRelayRemovesOnlyWebNoteRelayState() {
+        val state = removeWebNoteRelay(
+            WebNoteRelaySettingsState(relays = listOf("wss://one.example", "wss://two.example")),
+            relay = "wss://one.example",
+        )
+
+        assertEquals(listOf("wss://two.example"), selectedWebNoteRelays(state))
+        assertEquals(WebNoteCopy.RelayRemoved, state.message)
+    }
+
+    @Test
+    fun removingLastNoteRelayFallsBackToDefaultRelays() {
+        val state = removeWebNoteRelay(
+            WebNoteRelaySettingsState(relays = listOf("wss://one.example")),
+            relay = "wss://one.example",
+        )
+
+        assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(state))
+        assertEquals(WebNoteCopy.RelayDefaultsRestored, state.message)
+    }
+
+    @Test
+    fun restoringDefaultsRestoresDefaultNoteRelays() {
+        val state = restoreDefaultWebNoteRelays(
+            WebNoteRelaySettingsState(relays = listOf("wss://custom.example"), input = "draft"),
+        )
+
+        assertEquals(DefaultWebNoteRelays, selectedWebNoteRelays(state))
+        assertEquals("", state.input)
+        assertEquals(WebNoteCopy.RelayDefaultsRestored, state.message)
+    }
+
+    @Test
+    fun nip46SignerRelaysAreNotDisplayedAsDefaultNoteRelays() {
+        val signerRelay = "wss://signer-transport.example"
+        val encodedRelay = signerRelay.replace(":", "%3A").replace("/", "%2F")
+        val parsed = assertIs<WebNip46TokenParseResult.Valid>(
+            parseWebNip46BunkerToken("bunker://${"22".repeat(32)}?relay=$encodedRelay"),
+        )
+
+        assertEquals(listOf(signerRelay), parsed.token.relays)
+        assertTrue(signerRelay !in selectedWebNoteRelays(defaultWebNoteRelaySettings()))
+    }
+
+    @Test
+    fun sameUrlInSignerAndNoteStateIsANoteRelayOnlyWhenExplicitlyAdded() {
+        val sharedRelay = "wss://shared.example"
+        val encodedRelay = sharedRelay.replace(":", "%3A").replace("/", "%2F")
+        val parsed = assertIs<WebNip46TokenParseResult.Valid>(
+            parseWebNip46BunkerToken("bunker://${"22".repeat(32)}?relay=$encodedRelay"),
+        )
+        val noteState = addWebNoteRelay(WebNoteRelaySettingsState(relays = emptyList(), input = sharedRelay))
+
+        assertEquals(listOf(sharedRelay), parsed.token.relays)
+        assertTrue(sharedRelay in selectedWebNoteRelays(noteState))
+    }
+}
+
 class WebNoteCrudTests {
     private val accountPubkey = "cc".repeat(32)
     private val noteJson = Json { encodeDefaults = true }

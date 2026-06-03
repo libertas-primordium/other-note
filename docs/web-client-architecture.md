@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, and basic signer-backed note create/edit/delete held in memory only, but browser persistence, full relay settings, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, basic signer-backed note create/edit/delete, and session-only note relay selection held in memory only, but browser persistence, durable relay preferences, native-style relay migration, kind `10002` web relay-list sync, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -173,12 +173,16 @@ Future implementation branches should stay narrow:
   - Fetch encrypted note events from note relays.
   - Decrypt through the selected signer path where supported.
   - Reuse native reducer and Markdown display behavior.
-  - Current status: implemented as an in-memory read-only preview using default note relays, signer-dependent NIP-44 decrypt support, local latest-event/tombstone reduction, and display-only Markdown rendering. It does not persist note events or decrypted notes.
+  - Current status: implemented as an in-memory read-only preview using session-selected note relays, signer-dependent NIP-44 decrypt support, local latest-event/tombstone reduction, and display-only Markdown rendering. It does not persist note events or decrypted notes.
 - `web-client-note-crud`
   - Create, edit, and tombstone notes using existing kind `30078` event semantics.
   - Publish only signed encrypted events to note relays.
   - Keep pending write behavior bounded and visible.
-  - Current status: implemented as an in-memory preview using default note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, browser sessions, or remote-signer sessions.
+  - Current status: implemented as an in-memory preview using session-selected note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, browser sessions, or remote-signer sessions.
+- `web-client-relay-settings`
+  - Let users add, remove, normalize, deduplicate, and restore session-only note relays for web fetch and publish.
+  - Keep NIP-46 signer transport relays separate from note relays.
+  - Current status: implemented as in-memory note relay selection only. It does not persist relay preferences, publish kind `10002` relay-list metadata, or run native-style relay migration.
 
 ## Risks and open questions
 

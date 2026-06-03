@@ -31,6 +31,12 @@ internal val DefaultWebNoteRelays = listOf(
     "wss://relay.ditto.pub",
 )
 
+internal data class WebNoteRelaySettingsState(
+    val relays: List<String> = DefaultWebNoteRelays,
+    val input: String = "",
+    val message: String = "",
+)
+
 external interface Nip07Nip44 {
     fun encrypt(pubkey: String, plaintext: String): Promise<String?>
     fun decrypt(pubkey: String, ciphertext: String): Promise<String?>
@@ -61,6 +67,11 @@ internal object WebNoteCopy {
     const val PublishFailed = "No note relay accepted the signed encrypted note event."
     const val PublishPartial = "Saved to at least one note relay; some relays did not accept the write."
     const val PublishSucceeded = "Saved to note relays."
+    const val RelayAdded = "Added note relay."
+    const val RelayAlreadyAdded = "Relay is already in the note relay list."
+    const val RelayInvalid = "Enter a valid note relay URL."
+    const val RelayRemoved = "Removed note relay."
+    const val RelayDefaultsRestored = "Restored default note relays."
 }
 
 internal data class WebReadOnlyNote(
@@ -910,6 +921,79 @@ internal fun mergePublishedWebNoteEvent(
     val decrypted = decryptedByEventId.toMutableMap()
     decrypted[event.id] = plaintextPayload
     return reduceDecryptedWebNoteEvents(eventMap.values.toList(), decrypted)
+}
+
+internal fun defaultWebNoteRelaySettings(): WebNoteRelaySettingsState =
+    WebNoteRelaySettingsState(relays = DefaultWebNoteRelays)
+
+internal fun selectedWebNoteRelays(state: WebNoteRelaySettingsState): List<String> =
+    state.relays.ifEmpty { DefaultWebNoteRelays }
+
+internal fun updateWebNoteRelayInput(state: WebNoteRelaySettingsState, input: String): WebNoteRelaySettingsState =
+    state.copy(input = input, message = "")
+
+internal fun addWebNoteRelay(state: WebNoteRelaySettingsState): WebNoteRelaySettingsState {
+    val relay = normalizeWebNoteRelayUrl(state.input).getOrElse {
+        return state.copy(message = WebNoteCopy.RelayInvalid)
+    }
+    if (relay in selectedWebNoteRelays(state)) {
+        return state.copy(input = "", message = WebNoteCopy.RelayAlreadyAdded)
+    }
+    return state.copy(
+        relays = (selectedWebNoteRelays(state) + relay).distinct(),
+        input = "",
+        message = WebNoteCopy.RelayAdded,
+    )
+}
+
+internal fun removeWebNoteRelay(state: WebNoteRelaySettingsState, relay: String): WebNoteRelaySettingsState {
+    val remaining = selectedWebNoteRelays(state).filterNot { it == relay }
+    return if (remaining.isEmpty()) {
+        state.copy(relays = DefaultWebNoteRelays, input = "", message = WebNoteCopy.RelayDefaultsRestored)
+    } else {
+        state.copy(relays = remaining, input = "", message = WebNoteCopy.RelayRemoved)
+    }
+}
+
+internal fun restoreDefaultWebNoteRelays(state: WebNoteRelaySettingsState): WebNoteRelaySettingsState =
+    state.copy(relays = DefaultWebNoteRelays, input = "", message = WebNoteCopy.RelayDefaultsRestored)
+
+internal fun normalizeWebNoteRelayUrl(raw: String): Result<String> = runCatching {
+    val trimmed = raw.trim()
+    require(trimmed.isNotBlank())
+    require(trimmed.none { it.isWhitespace() })
+    require(!trimmed.contains("?"))
+    require(!trimmed.contains("#"))
+
+    val withScheme = if (trimmed.contains("://")) trimmed else "wss://$trimmed"
+    val schemeSeparator = withScheme.indexOf("://")
+    require(schemeSeparator > 0)
+    val scheme = withScheme.take(schemeSeparator).lowercase()
+    require(scheme == "wss" || scheme == "ws")
+
+    val rest = withScheme.drop(schemeSeparator + 3)
+    require(rest.isNotBlank())
+    require(!rest.contains("@"))
+
+    val firstSlash = rest.indexOf("/")
+    val authority = if (firstSlash >= 0) rest.take(firstSlash) else rest
+    val rawPath = if (firstSlash >= 0) rest.drop(firstSlash) else ""
+    require(authority.isNotBlank())
+
+    val normalizedAuthority = authority.lowercase()
+    if (scheme == "ws") {
+        require(
+            normalizedAuthority == "localhost" ||
+                normalizedAuthority.startsWith("localhost:") ||
+                normalizedAuthority == "127.0.0.1" ||
+                normalizedAuthority.startsWith("127.0.0.1:") ||
+                normalizedAuthority == "[::1]" ||
+                normalizedAuthority.startsWith("[::1]:"),
+        )
+    }
+
+    val normalizedPath = rawPath.trimEnd('/')
+    "$scheme://$normalizedAuthority$normalizedPath"
 }
 
 internal fun webNoteEventMessage(event: WebNostrEvent): String =
