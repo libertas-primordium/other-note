@@ -6,6 +6,8 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class WebAuthStateTests {
     @Test
@@ -571,4 +573,144 @@ class WebNip46RelayStageTests {
 
         assertEquals(WebAuthCopy.Nip46PublicKeyRelayClosed, tracker.markFailed(attempt))
     }
+}
+
+class WebReadOnlyNoteTests {
+    private val accountPubkey = "aa".repeat(32)
+    private val noteJson = Json { encodeDefaults = true }
+
+    @Test
+    fun noteRelayRequestTargetsSignedInPubkeyAndOtherNoteKind() {
+        val message = webNoteRequestMessage(accountPubkey)
+
+        assertTrue(message.contains(""""authors":["$accountPubkey"]"""))
+        assertTrue(message.contains(""""kinds":[30078]"""))
+        assertTrue(message.contains(""""#t":["other-note"]"""))
+    }
+
+    @Test
+    fun latestEventWinsAndTombstoneHidesNote() {
+        val old = noteEvent("event-old", createdAt = 1, noteId = "same")
+        val newer = noteEvent("event-newer", createdAt = 2, noteId = "same")
+        val deleted = noteEvent("event-delete", createdAt = 3, noteId = "same")
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = listOf(old, newer, deleted),
+            decryptedByEventId = mapOf(
+                old.id to payload("same", body = "old", updatedAtMs = 1),
+                newer.id to payload("same", body = "newer", updatedAtMs = 2),
+                deleted.id to payload("same", body = "", updatedAtMs = 3, deleted = true),
+            ),
+        )
+
+        assertTrue(reduced.notes.isEmpty())
+        assertEquals(setOf("same"), reduced.selectedNotes.map { it.id }.toSet())
+    }
+
+    @Test
+    fun olderEventDoesNotOverwriteNewerVisibleNote() {
+        val old = noteEvent("event-old", createdAt = 1, noteId = "same")
+        val newer = noteEvent("event-newer", createdAt = 2, noteId = "same")
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = listOf(newer, old),
+            decryptedByEventId = mapOf(
+                old.id to payload("same", body = "old", updatedAtMs = 1),
+                newer.id to payload("same", body = "newer", updatedAtMs = 2),
+            ),
+        )
+
+        assertEquals("newer", reduced.notes.single().bodyMarkdown)
+    }
+
+    @Test
+    fun wrongAccountAndMalformedPayloadAreIgnoredSafely() {
+        val own = noteEvent("event-own", createdAt = 1, noteId = "own")
+        val otherAccount = noteEvent("event-other", createdAt = 2, noteId = "other", pubkey = "bb".repeat(32))
+        val malformed = noteEvent("event-bad", createdAt = 3, noteId = "bad")
+        val scopedEvents = listOf(own, otherAccount, malformed).filter { it.pubkey == accountPubkey }
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = scopedEvents,
+            decryptedByEventId = mapOf(
+                own.id to payload("own", body = "# Header\n**raw** markdown", updatedAtMs = 1),
+                malformed.id to """{"schema":"wrong"}""",
+            ),
+        )
+
+        assertEquals(1, reduced.notes.size)
+        assertEquals("# Header\n**raw** markdown", reduced.notes.single().bodyMarkdown)
+        assertEquals(1, reduced.payloadRejectedCount)
+    }
+
+    @Test
+    fun dTagMismatchIsRejected() {
+        val event = noteEvent("event", createdAt = 1, noteId = "tag-id")
+        val reduced = reduceDecryptedWebNoteEvents(
+            events = listOf(event),
+            decryptedByEventId = mapOf(event.id to payload("payload-id", body = "body", updatedAtMs = 1)),
+        )
+
+        assertTrue(reduced.notes.isEmpty())
+        assertEquals(1, reduced.dTagRejectedCount)
+    }
+
+    @Test
+    fun nip07DecryptorWithoutCapabilityFailsSafely() {
+        var callback: Result<String>? = null
+        WebNip07NoteDecryptor(nip44 = null, userPubkey = accountPubkey).decrypt("ciphertext") { result ->
+            callback = result
+        }
+
+        assertTrue(callback?.isFailure == true)
+        assertEquals(WebNoteCopy.Nip07DecryptUnavailable, callback.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun markdownRendererKeepsCodeBlockLiteralAndRawTextUnchanged() {
+        val raw = "# Header\n\n```md\n**literal** `code`\n```\n\n> quote"
+        val blocks = webMarkdownBlocks(raw)
+
+        assertTrue(blocks.any { it is WebMarkdownBlock.Heading && it.text == "Header" })
+        assertTrue(blocks.any { it is WebMarkdownBlock.BlockQuote && it.text == "quote" })
+        assertEquals("**literal** `code`", blocks.filterIsInstance<WebMarkdownBlock.CodeBlock>().single().code)
+        assertEquals("# Header\n\n```md\n**literal** `code`\n```\n\n> quote", raw)
+    }
+
+    @Test
+    fun notePreviewUsesFirstMeaningfulMarkdownLine() {
+        val preview = webNotePreview("\n\n## Project\n\nDetails with `code`")
+
+        assertEquals("Project", preview.title)
+        assertEquals("Details with code", preview.snippet)
+    }
+
+    private fun noteEvent(
+        id: String,
+        createdAt: Long,
+        noteId: String,
+        pubkey: String = accountPubkey,
+    ): WebNostrEvent =
+        WebNostrEvent(
+            id = id,
+            pubkey = pubkey,
+            createdAt = createdAt,
+            kind = 30078,
+            tags = listOf(listOf("d", webNoteDTag(noteId)), listOf("t", "other-note")),
+            content = "ciphertext-$id",
+            sig = "sig",
+        )
+
+    private fun payload(
+        noteId: String,
+        body: String,
+        updatedAtMs: Long,
+        deleted: Boolean = false,
+    ): String =
+        noteJson.encodeToString(
+            WebNotePayload(
+                noteId = noteId,
+                createdAtMs = 1,
+                updatedAtMs = updatedAtMs,
+                bodyMarkdown = body,
+                deleted = deleted,
+            ),
+        )
 }

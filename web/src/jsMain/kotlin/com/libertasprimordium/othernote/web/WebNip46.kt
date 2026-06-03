@@ -15,7 +15,7 @@ private const val Nip46EventKind = 24133
 private const val ResponseClockSkewSeconds = 60L
 private const val RequestTimeoutMs = 15_000
 private const val RelaySubscriptionId = "other-note-nip46"
-private const val PreviewPermissions = "get_public_key,ping"
+private const val PreviewPermissions = "get_public_key,nip44_decrypt,ping"
 private const val TransportPrivateKeyByteCount = 32
 private const val TransportKeyGenerationAttempts = 8
 
@@ -75,6 +75,11 @@ data class WebNip46Session(
 sealed interface WebNip46ConnectResult {
     data class Connected(val userPubkey: String) : WebNip46ConnectResult
     data class Failed(val safeMessage: String) : WebNip46ConnectResult
+}
+
+sealed interface WebNip46DecryptResult {
+    data class Decrypted(val plaintext: String) : WebNip46DecryptResult
+    data class Failed(val safeMessage: String) : WebNip46DecryptResult
 }
 
 sealed interface WebNip46RelayResponse {
@@ -258,12 +263,47 @@ class WebNip46RemoteSigner {
                 }
                 is WebNip46RelayResponse.Success -> {
                     val validation = validateNip07PublicKey(response.result)
-                    disconnect()
                     when (validation) {
                         is Nip07PublicKeyResult.Valid -> onResult(WebNip46ConnectResult.Connected(validation.publicKeyHex))
-                        is Nip07PublicKeyResult.Invalid -> onResult(WebNip46ConnectResult.Failed(validation.message))
+                        is Nip07PublicKeyResult.Invalid -> {
+                            disconnect()
+                            onResult(WebNip46ConnectResult.Failed(validation.message))
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    fun decryptNotePayload(
+        userPubkey: String,
+        ciphertext: String,
+        onResult: (WebNip46DecryptResult) -> Unit,
+    ) {
+        val session = activeSession
+        if (session == null || !isValidHexPublicKey(userPubkey)) {
+            onResult(WebNip46DecryptResult.Failed(WebNoteCopy.NoteDecryptUnavailable))
+            return
+        }
+        val requestId = when (val generated = secureRandomHex(16)) {
+            is WebNip46RandomHexResult.Success -> generated.hex
+            is WebNip46RandomHexResult.Failed -> {
+                onResult(WebNip46DecryptResult.Failed(generated.safeMessage))
+                return
+            }
+        }
+        val request = WebNip46RequestPayload(
+            id = requestId,
+            method = "nip44_decrypt",
+            params = listOf(userPubkey, ciphertext),
+        )
+        val transport = activeTransport ?: WebNip46RelayTransport().also { activeTransport = it }
+        transport.sendRequest(session, request) { response ->
+            when (response) {
+                is WebNip46RelayResponse.Success -> onResult(WebNip46DecryptResult.Decrypted(response.result))
+                is WebNip46RelayResponse.Error -> onResult(WebNip46DecryptResult.Failed(response.safeMessage))
+                is WebNip46RelayResponse.AuthChallenge ->
+                    onResult(WebNip46DecryptResult.Failed("Remote signer approval required for decryption."))
             }
         }
     }
