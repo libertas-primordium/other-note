@@ -2295,13 +2295,114 @@ class WebReadOnlyNoteTests {
 
     @Test
     fun markdownRendererKeepsCodeBlockLiteralAndRawTextUnchanged() {
-        val raw = "# Header\n\n```md\n**literal** `code`\n```\n\n> quote"
+        val raw = "# Header\n\n```md\n**literal** __literal__ ~~literal~~ `code`\n```\n\n> quote"
         val blocks = webMarkdownBlocks(raw)
 
         assertTrue(blocks.any { it is WebMarkdownBlock.Heading && it.text == "Header" })
         assertTrue(blocks.any { it is WebMarkdownBlock.BlockQuote && it.text == "quote" })
-        assertEquals("**literal** `code`", blocks.filterIsInstance<WebMarkdownBlock.CodeBlock>().single().code)
-        assertEquals("# Header\n\n```md\n**literal** `code`\n```\n\n> quote", raw)
+        assertEquals("**literal** __literal__ ~~literal~~ `code`", blocks.filterIsInstance<WebMarkdownBlock.CodeBlock>().single().code)
+        assertEquals("# Header\n\n```md\n**literal** __literal__ ~~literal~~ `code`\n```\n\n> quote", raw)
+    }
+
+    @Test
+    fun markdownBlocksParseListsAndHorizontalRules() {
+        val blocks = webMarkdownBlocks("- one\n* two\n\n1. first\n2. second\n\n---\n\n***")
+
+        assertEquals(
+            listOf(
+                WebMarkdownBlock.ListBlock(ordered = false, items = listOf("one", "two")),
+                WebMarkdownBlock.ListBlock(ordered = true, items = listOf("first", "second")),
+                WebMarkdownBlock.HorizontalRule,
+                WebMarkdownBlock.HorizontalRule,
+            ),
+            blocks,
+        )
+    }
+
+    @Test
+    fun markdownSpansParseExpandedInlineStylesAndEscapes() {
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Bold("bold"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.Bold("strong"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.Italic("italic"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.Italic("em"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.BoldItalic("both"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.BoldItalic("under both"),
+                WebMarkdownSpan.Text(" "),
+                WebMarkdownSpan.Strike("gone"),
+            ),
+            webMarkdownSpans("**bold** __strong__ *italic* _em_ ***both*** ___under both___ ~~gone~~"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("*not italic* and _not italic_ and ~~not strike~~ and [not link]")),
+            webMarkdownSpans("""\*not italic\* and \_not italic\_ and \~~not strike~~ and \[not link\]"""),
+        )
+    }
+
+    @Test
+    fun markdownSpansParseUnderscoreEmphasisAndStrikethroughWithSurroundingText() {
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Text("before "),
+                WebMarkdownSpan.Bold("bold with underscores"),
+                WebMarkdownSpan.Text(" after"),
+            ),
+            webMarkdownSpans("before __bold with underscores__ after"),
+        )
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Text("before "),
+                WebMarkdownSpan.Italic("italic with underscores"),
+                WebMarkdownSpan.Text(" after"),
+            ),
+            webMarkdownSpans("before _italic with underscores_ after"),
+        )
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Text("before "),
+                WebMarkdownSpan.Strike("deleted text"),
+                WebMarkdownSpan.Text(" after"),
+            ),
+            webMarkdownSpans("before ~~deleted text~~ after"),
+        )
+    }
+
+    @Test
+    fun markdownSpansDoNotTreatIntrawordUnderscoresAsEmphasis() {
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("snake_case_word")),
+            webMarkdownSpans("snake_case_word"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("some_variable_name")),
+            webMarkdownSpans("some_variable_name"),
+        )
+    }
+
+    @Test
+    fun markdownCodeAndHtmlRemainInertText() {
+        assertEquals(
+            listOf(WebMarkdownSpan.Code("https://example.com/image.png _not italic_ ~~not strike~~")),
+            webMarkdownSpans("`https://example.com/image.png _not italic_ ~~not strike~~`"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("<script>alert(1)</script>")),
+            webMarkdownSpans("<script>alert(1)</script>"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("plain __unclosed and _also unclosed")),
+            webMarkdownSpans("plain __unclosed and _also unclosed"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("plain ~~unclosed strike")),
+            webMarkdownSpans("plain ~~unclosed strike"),
+        )
     }
 
     @Test
@@ -2315,6 +2416,10 @@ class WebReadOnlyNoteTests {
                 WebMarkdownSpan.Text("."),
             ),
             webMarkdownSpans("Visit https://example.com/path or [docs](http://example.com/docs)."),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Link("https://example.com/path_with_underscores", "https://example.com/path_with_underscores")),
+            webMarkdownSpans("https://example.com/path_with_underscores"),
         )
     }
 
@@ -2358,6 +2463,14 @@ class WebReadOnlyNoteTests {
         assertEquals(
             listOf(WebMarkdownSpan.Text("![x](file:///tmp/image.png)")),
             webMarkdownSpans("![x](file:///tmp/image.png)"),
+        )
+    }
+
+    @Test
+    fun markdownSpansRejectUnsafeLinks() {
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("[bad](javascript:alert(1))")),
+            webMarkdownSpans("[bad](javascript:alert(1))"),
         )
     }
 

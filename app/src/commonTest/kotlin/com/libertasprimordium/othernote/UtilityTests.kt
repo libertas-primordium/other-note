@@ -541,12 +541,12 @@ class UtilityTests {
 
     @Test
     fun markdownBlocksPreserveHeadingsAndFencedCodeBlocks() {
-        val blocks = markdownBlocks("# Header\n\n```kotlin\n**literal**\n`code`\n```\n\nPlain")
+        val blocks = markdownBlocks("# Header\n\n```kotlin\n**literal**\n__literal__\n~~literal~~\n`code`\n```\n\nPlain")
 
         assertEquals(
             listOf(
                 MarkdownBlock.Heading(1, "Header"),
-                MarkdownBlock.CodeBlock("**literal**\n`code`"),
+                MarkdownBlock.CodeBlock("**literal**\n__literal__\n~~literal~~\n`code`"),
                 MarkdownBlock.Paragraph("Plain"),
             ),
             blocks,
@@ -567,15 +567,38 @@ class UtilityTests {
     }
 
     @Test
+    fun markdownBlocksParseListsAndHorizontalRules() {
+        val blocks = markdownBlocks("- one\n- **two**\n\n1. first\n2. second\n\n---\n\n***")
+
+        assertEquals(
+            listOf(
+                MarkdownBlock.ListBlock(ordered = false, items = listOf("one", "**two**")),
+                MarkdownBlock.ListBlock(ordered = true, items = listOf("first", "second")),
+                MarkdownBlock.HorizontalRule,
+                MarkdownBlock.HorizontalRule,
+            ),
+            blocks,
+        )
+    }
+
+    @Test
     fun markdownSpansParseCommonInlineStyles() {
-        val spans = markdownSpans("this is **bold** and *italic* and ~strike~ and ~~gone~~ and `code`")
+        val spans = markdownSpans("this is **bold** and __strong__ and *italic* and _em_ and ***both*** and ___under both___ and ~strike~ and ~~gone~~ and `code`")
 
         assertEquals(
             listOf(
                 MarkdownSpan.Text("this is "),
                 MarkdownSpan.Bold("bold"),
                 MarkdownSpan.Text(" and "),
+                MarkdownSpan.Bold("strong"),
+                MarkdownSpan.Text(" and "),
                 MarkdownSpan.Italic("italic"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.Italic("em"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.BoldItalic("both"),
+                MarkdownSpan.Text(" and "),
+                MarkdownSpan.BoldItalic("under both"),
                 MarkdownSpan.Text(" and "),
                 MarkdownSpan.Strike("strike"),
                 MarkdownSpan.Text(" and "),
@@ -588,10 +611,66 @@ class UtilityTests {
     }
 
     @Test
+    fun markdownSpansParseUnderscoreEmphasisWithSurroundingText() {
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("before "),
+                MarkdownSpan.Bold("bold with underscores"),
+                MarkdownSpan.Text(" after"),
+            ),
+            markdownSpans("before __bold with underscores__ after"),
+        )
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("before "),
+                MarkdownSpan.Italic("italic with underscores"),
+                MarkdownSpan.Text(" after"),
+            ),
+            markdownSpans("before _italic with underscores_ after"),
+        )
+    }
+
+    @Test
+    fun markdownSpansDoNotTreatIntrawordUnderscoresAsEmphasis() {
+        assertEquals(
+            listOf(MarkdownSpan.Text("snake_case_word")),
+            markdownSpans("snake_case_word"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("some_variable_name")),
+            markdownSpans("some_variable_name"),
+        )
+    }
+
+    @Test
+    fun markdownSpansParseStrikethroughWithSurroundingText() {
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("before "),
+                MarkdownSpan.Strike("deleted text"),
+                MarkdownSpan.Text(" after"),
+            ),
+            markdownSpans("before ~~deleted text~~ after"),
+        )
+    }
+
+    @Test
     fun markdownInlineCodeDoesNotParseNestedMarkers() {
         assertEquals(
-            listOf(MarkdownSpan.Code("**bold** *italic* ~strike~")),
-            markdownSpans("`**bold** *italic* ~strike~`"),
+            listOf(MarkdownSpan.Code("**bold** __bold__ *italic* _italic_ ~~strike~~")),
+            markdownSpans("`**bold** __bold__ *italic* _italic_ ~~strike~~`"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Code("https://example.com/image.png")),
+            markdownSpans("`https://example.com/image.png`"),
+        )
+    }
+
+    @Test
+    fun markdownEscapesPreventUnintendedFormatting() {
+        assertEquals(
+            listOf(MarkdownSpan.Text("*not italic* and _not italic_ and ~~not strike~~ and [not link]")),
+            markdownSpans("""\*not italic\* and \_not italic\_ and \~~not strike~~ and \[not link\]"""),
         )
     }
 
@@ -606,6 +685,10 @@ class UtilityTests {
                 MarkdownSpan.Text("."),
             ),
             markdownSpans("Visit https://example.com/path or [docs](http://example.com/docs)."),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Link("https://example.com/path_with_underscores", "https://example.com/path_with_underscores")),
+            markdownSpans("https://example.com/path_with_underscores"),
         )
     }
 
@@ -653,6 +736,18 @@ class UtilityTests {
     }
 
     @Test
+    fun markdownSpansRejectUnsafeLinksAndRenderHtmlAsText() {
+        assertEquals(
+            listOf(MarkdownSpan.Text("[bad](javascript:alert(1))")),
+            markdownSpans("[bad](javascript:alert(1))"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("<script>alert(1)</script>")),
+            markdownSpans("<script>alert(1)</script>"),
+        )
+    }
+
+    @Test
     fun profileImageUrlValidationAllowsOnlySupportedHttpsRasterImages() {
         listOf(
             "https://example.com/avatar.jpg",
@@ -685,14 +780,16 @@ class UtilityTests {
         val spans = markdownSpans("plain **unclosed and *also unclosed")
 
         assertEquals(
-            listOf(
-                MarkdownSpan.Text("plain "),
-                MarkdownSpan.Text("**"),
-                MarkdownSpan.Text("unclosed and "),
-                MarkdownSpan.Text("*"),
-                MarkdownSpan.Text("also unclosed"),
-            ),
+            listOf(MarkdownSpan.Text("plain **unclosed and *also unclosed")),
             spans,
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("plain __unclosed and _also unclosed")),
+            markdownSpans("plain __unclosed and _also unclosed"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("plain ~~unclosed strike")),
+            markdownSpans("plain ~~unclosed strike"),
         )
     }
 
