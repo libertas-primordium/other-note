@@ -37,6 +37,7 @@ import com.libertasprimordium.othernote.util.MediaType
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.MarkdownSpan
 import com.libertasprimordium.othernote.util.detectUrls
+import com.libertasprimordium.othernote.util.isSupportedRemoteImageUrl
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
@@ -531,6 +532,14 @@ class UtilityTests {
     }
 
     @Test
+    fun noteCardPreviewKeepsImageUrlsAsRawText() {
+        val preview = noteCardPreview("https://example.com/image.png\nmore text")
+
+        assertEquals("https://example.com/image.png", preview.title)
+        assertEquals("more text", preview.snippet)
+    }
+
+    @Test
     fun markdownBlocksPreserveHeadingsAndFencedCodeBlocks() {
         val blocks = markdownBlocks("# Header\n\n```kotlin\n**literal**\n`code`\n```\n\nPlain")
 
@@ -584,6 +593,91 @@ class UtilityTests {
             listOf(MarkdownSpan.Code("**bold** *italic* ~strike~")),
             markdownSpans("`**bold** *italic* ~strike~`"),
         )
+    }
+
+    @Test
+    fun markdownSpansLinkifyBareHttpUrlsAndMarkdownLinks() {
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("Visit "),
+                MarkdownSpan.Link("https://example.com/path", "https://example.com/path"),
+                MarkdownSpan.Text(" or "),
+                MarkdownSpan.Link("docs", "http://example.com/docs"),
+                MarkdownSpan.Text("."),
+            ),
+            markdownSpans("Visit https://example.com/path or [docs](http://example.com/docs)."),
+        )
+    }
+
+    @Test
+    fun markdownSpansRenderMarkdownImagesForSupportedHttpsRasterUrls() {
+        assertEquals(
+            listOf(
+                MarkdownSpan.Text("Look "),
+                MarkdownSpan.Image("alt text", "https://example.com/image.png"),
+            ),
+            markdownSpans("Look ![alt text](https://example.com/image.png)"),
+        )
+    }
+
+    @Test
+    fun markdownSpansRenderBareHttpsImageUrlsAsImages() {
+        listOf(
+            "https://example.com/image.jpg",
+            "https://example.com/image.jpeg",
+            "https://example.com/image.png",
+            "https://example.com/image.webp",
+            "https://example.com/image.gif",
+            "https://example.com/image.JPG",
+            "https://example.com/image.Png?width=1200",
+            "https://example.com/image.WEBP#preview",
+        ).forEach { url ->
+            assertEquals(listOf(MarkdownSpan.Image("", url)), markdownSpans(url), "Expected image token for $url")
+        }
+    }
+
+    @Test
+    fun markdownSpansRejectUnsafeOrUnsupportedImages() {
+        assertEquals(
+            listOf(MarkdownSpan.Link("https://example.com/image.svg", "https://example.com/image.svg")),
+            markdownSpans("https://example.com/image.svg"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("![x](data:image/png;base64,AAAA)")),
+            markdownSpans("![x](data:image/png;base64,AAAA)"),
+        )
+        assertEquals(
+            listOf(MarkdownSpan.Text("![x](file:///tmp/image.png)")),
+            markdownSpans("![x](file:///tmp/image.png)"),
+        )
+    }
+
+    @Test
+    fun profileImageUrlValidationAllowsOnlySupportedHttpsRasterImages() {
+        listOf(
+            "https://example.com/avatar.jpg",
+            "https://example.com/avatar.jpeg",
+            "https://example.com/avatar.png",
+            "https://example.com/avatar.webp",
+            "https://example.com/avatar.gif",
+            "https://example.com/avatar.JPG",
+            "https://example.com/avatar.Png?size=128",
+            "https://example.com/avatar.WEBP#profile",
+        ).forEach { url ->
+            assertTrue(isSupportedRemoteImageUrl(url), "Expected supported profile image URL: $url")
+        }
+        listOf(
+            "http://example.com/avatar.png",
+            "data:image/png;base64,AAAA",
+            "file:///tmp/avatar.png",
+            "content://avatar.png",
+            "javascript:alert(1)",
+            "/avatar.png",
+            "avatar.png",
+            "https://example.com/avatar.svg",
+        ).forEach { url ->
+            assertFalse(isSupportedRemoteImageUrl(url), "Expected unsupported profile image URL: $url")
+        }
     }
 
     @Test

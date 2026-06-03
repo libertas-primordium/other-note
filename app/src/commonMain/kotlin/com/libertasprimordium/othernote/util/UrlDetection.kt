@@ -13,6 +13,7 @@ enum class MediaType {
 
 private val UrlRegex = Regex("""https?://[^\s<>()"]+""")
 private val ImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "avif")
+private val RenderableImageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp")
 private val VideoExtensions = setOf("mp4", "webm", "mov", "m4v")
 
 fun detectUrls(text: String): List<DetectedUrl> =
@@ -28,4 +29,14 @@ fun mediaTypeFor(url: String): MediaType {
         in VideoExtensions -> MediaType.Video
         else -> MediaType.Link
     }
+}
+
+fun isSafeHttpUrl(url: String): Boolean =
+    (url.startsWith("https://") || url.startsWith("http://")) &&
+        url.none { it.isISOControl() || it.isWhitespace() || it == '<' || it == '>' || it == '"' }
+
+fun isSupportedRemoteImageUrl(url: String): Boolean {
+    if (!url.startsWith("https://") || !isSafeHttpUrl(url)) return false
+    val extension = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase()
+    return extension in RenderableImageExtensions
 }

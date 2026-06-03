@@ -2305,6 +2305,91 @@ class WebReadOnlyNoteTests {
     }
 
     @Test
+    fun markdownSpansLinkifyBareUrlsAndMarkdownLinks() {
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Text("Visit "),
+                WebMarkdownSpan.Link("https://example.com/path", "https://example.com/path"),
+                WebMarkdownSpan.Text(" or "),
+                WebMarkdownSpan.Link("docs", "http://example.com/docs"),
+                WebMarkdownSpan.Text("."),
+            ),
+            webMarkdownSpans("Visit https://example.com/path or [docs](http://example.com/docs)."),
+        )
+    }
+
+    @Test
+    fun markdownSpansRenderMarkdownImagesForSupportedHttpsRasterUrls() {
+        assertEquals(
+            listOf(
+                WebMarkdownSpan.Text("Look "),
+                WebMarkdownSpan.Image("alt text", "https://example.com/image.png"),
+            ),
+            webMarkdownSpans("Look ![alt text](https://example.com/image.png)"),
+        )
+    }
+
+    @Test
+    fun markdownSpansRenderBareHttpsImageUrlsAsImages() {
+        listOf(
+            "https://example.com/image.jpg",
+            "https://example.com/image.jpeg",
+            "https://example.com/image.png",
+            "https://example.com/image.webp",
+            "https://example.com/image.gif",
+            "https://example.com/image.JPG",
+            "https://example.com/image.Png?width=1200",
+            "https://example.com/image.WEBP#preview",
+        ).forEach { url ->
+            assertEquals(listOf(WebMarkdownSpan.Image("", url)), webMarkdownSpans(url), "Expected image token for $url")
+        }
+    }
+
+    @Test
+    fun markdownSpansRejectUnsafeOrUnsupportedImages() {
+        assertEquals(
+            listOf(WebMarkdownSpan.Link("https://example.com/image.svg", "https://example.com/image.svg")),
+            webMarkdownSpans("https://example.com/image.svg"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("![x](data:image/png;base64,AAAA)")),
+            webMarkdownSpans("![x](data:image/png;base64,AAAA)"),
+        )
+        assertEquals(
+            listOf(WebMarkdownSpan.Text("![x](file:///tmp/image.png)")),
+            webMarkdownSpans("![x](file:///tmp/image.png)"),
+        )
+    }
+
+    @Test
+    fun profileImageUrlValidationAllowsOnlySupportedHttpsRasterImages() {
+        listOf(
+            "https://example.com/avatar.jpg",
+            "https://example.com/avatar.jpeg",
+            "https://example.com/avatar.png",
+            "https://example.com/avatar.webp",
+            "https://example.com/avatar.gif",
+            "https://example.com/avatar.JPG",
+            "https://example.com/avatar.Png?size=128",
+            "https://example.com/avatar.WEBP#profile",
+        ).forEach { url ->
+            assertTrue(webSupportedRemoteImageUrl(url), "Expected supported profile image URL: $url")
+        }
+        listOf(
+            "http://example.com/avatar.png",
+            "data:image/png;base64,AAAA",
+            "file:///tmp/avatar.png",
+            "content://avatar.png",
+            "javascript:alert(1)",
+            "/avatar.png",
+            "avatar.png",
+            "https://example.com/avatar.svg",
+        ).forEach { url ->
+            assertTrue(!webSupportedRemoteImageUrl(url), "Expected unsupported profile image URL: $url")
+        }
+    }
+
+    @Test
     fun notePreviewUsesFirstMeaningfulMarkdownLine() {
         val preview = webNotePreview("\n\n## Project\n\nDetails with `code`")
 
@@ -2326,6 +2411,14 @@ class WebReadOnlyNoteTests {
 
         assertEquals("test 2.0", preview.title)
         assertEquals("", preview.snippet)
+    }
+
+    @Test
+    fun notePreviewKeepsImageUrlsAsRawText() {
+        val preview = webNotePreview("https://example.com/image.png\nmore text")
+
+        assertEquals("https://example.com/image.png", preview.title)
+        assertEquals("more text", preview.snippet)
     }
 
     @Test

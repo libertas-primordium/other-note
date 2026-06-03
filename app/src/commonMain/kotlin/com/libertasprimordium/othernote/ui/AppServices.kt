@@ -1,5 +1,6 @@
 package com.libertasprimordium.othernote.ui
 
+import androidx.compose.ui.graphics.ImageBitmap
 import com.libertasprimordium.othernote.data.InMemoryNoteRepository
 import com.libertasprimordium.othernote.data.InMemoryLocalEventCache
 import com.libertasprimordium.othernote.data.InMemoryPendingWriteStore
@@ -47,6 +48,27 @@ enum class AppPlatform {
     Desktop,
 }
 
+interface ExternalUrlOpener {
+    fun open(url: String): Boolean
+}
+
+object UnavailableExternalUrlOpener : ExternalUrlOpener {
+    override fun open(url: String): Boolean = false
+}
+
+sealed interface NoteImageLoadResult {
+    data class Loaded(val image: ImageBitmap) : NoteImageLoadResult
+    data object Failed : NoteImageLoadResult
+}
+
+interface NoteImageLoader {
+    suspend fun load(url: String): NoteImageLoadResult
+}
+
+object UnavailableNoteImageLoader : NoteImageLoader {
+    override suspend fun load(url: String): NoteImageLoadResult = NoteImageLoadResult.Failed
+}
+
 data class AppServices(
     val mode: AppRuntimeMode,
     val platform: AppPlatform = AppPlatform.Generic,
@@ -68,6 +90,8 @@ data class AppServices(
     val relayTester: RelayTester = DefaultRelayTester(client, crypto),
     val themePreferenceStore: ThemePreferenceStore = NoopThemePreferenceStore,
     val noteListPreferenceStore: NoteListPreferenceStore = NoopNoteListPreferenceStore,
+    val externalUrlOpener: ExternalUrlOpener = UnavailableExternalUrlOpener,
+    val noteImageLoader: NoteImageLoader = UnavailableNoteImageLoader,
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(
         if (mode == AppRuntimeMode.DesktopRelay || mode == AppRuntimeMode.DesktopDevRelay) DesktopRelayDefaults else DefaultRelays,

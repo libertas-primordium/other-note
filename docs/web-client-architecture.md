@@ -81,7 +81,8 @@ Relay-list behavior should mirror native semantics where feasible:
 - Public kind `10002` relay-list import/publish should preserve unrelated relay categories where practical.
 - NIP-46 signer transport relays carry encrypted kind `24133` app/signer traffic and must remain separate from note relays.
 - The note relay settings screen must not show, edit, import, or publish NIP-46 signer transport relays.
-- Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for text-only identity display. Remote `picture` and `banner` URLs must remain inert strings unless a later privacy-reviewed image-loading design approves rendering them.
+- Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for identity display. The signed-in account header may render the active profile's supported HTTPS `picture` as a small thumbnail with a bundled placeholder fallback; remote `banner` URLs remain inert strings.
+- Full-note rendering may linkify safe `http`/`https` URLs and render supported HTTPS note-content image URLs only after the user opens the full-note view. Note cards, previews, and editors must keep URLs and image references inert/raw and must not prefetch remote images.
 
 ## Storage policy
 
@@ -103,6 +104,7 @@ Forbidden browser storage:
 - Raw decrypted NIP-44 payloads.
 - Raw sensitive diagnostics.
 - Browser-persisted profile metadata or profile image caches.
+- Browser-persisted note image caches, rendered note output, link URLs, or image URLs.
 - Browser-persisted search queries or sort preferences in the current web preview.
 - Browser-persisted note relay settings, relay stats, note events, relay events, pending writes, or migration queues.
 
@@ -197,7 +199,7 @@ Future implementation branches should stay narrow:
 - `web-client-profile-metadata`
   - Fetch the active account's latest public kind `0` profile metadata from the current web note relays.
   - Display safe text fields in the signed-in header.
-  - Current status: implemented as in-memory, text-only profile display. It does not persist profile data and does not render remote `picture` or `banner` images.
+  - Current status: implemented as in-memory profile display with a small active-account thumbnail. It does not persist profile data or image URLs, unsupported or failing profile pictures fall back to a bundled placeholder, and remote `banner` images remain disabled. Full-note view can render user-authored HTTPS note-content images.
 
 ## Risks and open questions
 

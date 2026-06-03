@@ -43,6 +43,7 @@ external interface WebStorage {
 internal const val Nip46TokenInputLabel = "Remote signer token"
 internal const val Nip46TokenInputType = "password"
 private const val WebNotesResultsContainerId = "web-notes-results"
+private const val WebProfilePlaceholderImagePath = "images/profile-placeholder.svg"
 
 private lateinit var rootElement: WebElement
 private var authState = WebAuthUiState(nip07Available = isNip07Available())
@@ -102,7 +103,7 @@ fun main() {
         }
     }
     window.addEventListener("keydown") { event ->
-        val key = event.asDynamic().key as? String
+        val key = event.key as? String
         if (key == "Escape" && activeSignInInfoTopic != null) {
             activeSignInInfoTopic = null
             render()
@@ -147,17 +148,41 @@ private fun appShellClass(state: WebAuthUiState): String =
 private fun signedInHeader(identity: WebAccountIdentity, profile: WebProfileUiState): WebElement =
     element("header", "app-header") {
         val summary = webProfileHeaderSummary(identity, profile)
+        val metadata = profile.metadata?.takeIf { it.pubkey == identity.publicKeyHex }
         appendChild(element("div", "app-header-copy") {
             appendChild(textElement("p", "eyebrow", "Web client preview"))
             appendChild(textElement("h1", "app-title", "Other Note"))
-            appendChild(textElement("h2", "profile-name", summary.primary))
-            appendChild(textElement("p", "body", summary.secondary))
+            appendChild(element("div", "profile-identity-row") {
+                appendChild(profileThumbnailElement(metadata?.pictureUrl))
+                appendChild(element("div", "profile-identity-copy") {
+                    appendChild(textElement("h2", "profile-name", summary.primary))
+                    appendChild(textElement("p", "body", summary.secondary))
+                })
+            })
             summary.tertiary?.let { appendChild(textElement("p", "body muted profile-line", it)) }
             summary.about?.let { appendChild(textElement("p", "body muted profile-about", it)) }
             appendChild(textElement("p", "body muted small-gap", "In-memory web session. Refreshing this page may clear auth, notes, drafts, and relay choices."))
         })
         appendChild(signedInMenu(identity))
     }
+
+private fun profileThumbnailElement(pictureUrl: String?): WebElement {
+    val imageUrl = pictureUrl?.takeIf(::webSupportedRemoteImageUrl) ?: WebProfilePlaceholderImagePath
+    var usingFallback = imageUrl == WebProfilePlaceholderImagePath
+    return element("img", "profile-thumbnail").also { image ->
+        image.setAttribute("src", imageUrl)
+        image.setAttribute("alt", "Profile thumbnail")
+        image.setAttribute("loading", "lazy")
+        image.setAttribute("decoding", "async")
+        image.setAttribute("referrerpolicy", "no-referrer")
+        image.addEventListener("error") {
+            if (!usingFallback) {
+                usingFallback = true
+                image.setAttribute("src", WebProfilePlaceholderImagePath)
+            }
+        }
+    }
+}
 
 private fun signedInMenu(identity: WebAccountIdentity): WebElement =
     element("div", "menu-shell") {
@@ -448,9 +473,9 @@ private fun noteCard(note: WebReadOnlyNote, canCrud: Boolean): WebElement =
                 openNoteDetail(note)
             }
             addEventListener("keydown") { event ->
-                val key = event.asDynamic().key as? String
+                val key = event.key as? String
                 if (key == "Enter" || key == " ") {
-                    event.asDynamic().preventDefault()
+                    event.preventDefault()
                     openNoteDetail(note)
                 }
             }
@@ -1988,9 +2013,28 @@ private fun inlineElement(tagName: String, className: String, markdown: String):
                     is WebMarkdownSpan.Italic -> textElement("em", "", span.text)
                     is WebMarkdownSpan.Strike -> textElement("s", "", span.text)
                     is WebMarkdownSpan.Code -> textElement("code", "inline-code", span.text)
+                    is WebMarkdownSpan.Link -> linkElement(span)
+                    is WebMarkdownSpan.Image -> imageElement(span)
                 },
             )
         }
+    }
+
+private fun linkElement(span: WebMarkdownSpan.Link): WebElement =
+    textElement("a", "markdown-link", span.label).also { link ->
+        link.setAttribute("href", span.url)
+        link.setAttribute("target", "_blank")
+        link.setAttribute("rel", "noopener noreferrer")
+        link.setAttribute("referrerpolicy", "no-referrer")
+    }
+
+private fun imageElement(span: WebMarkdownSpan.Image): WebElement =
+    element("img", "markdown-image").also { image ->
+        image.setAttribute("src", span.url)
+        image.setAttribute("alt", span.alt)
+        image.setAttribute("loading", "lazy")
+        image.setAttribute("decoding", "async")
+        image.setAttribute("referrerpolicy", "no-referrer")
     }
 
 private fun formatWebNoteTimestamp(updatedAtMs: Long): String =
