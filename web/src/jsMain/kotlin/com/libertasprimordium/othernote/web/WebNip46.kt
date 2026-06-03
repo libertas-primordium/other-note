@@ -47,6 +47,8 @@ external interface BrowserGlobal {
 external object NostrTools {
     fun getPublicKey(privateKey: Uint8Array): String
     fun finalizeEvent(eventTemplate: dynamic, privateKey: Uint8Array): dynamic
+    fun validateEvent(event: dynamic): Boolean
+    fun verifyEvent(event: dynamic): Boolean
     val nip44: dynamic
 }
 

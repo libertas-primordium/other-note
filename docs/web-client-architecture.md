@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, basic signer-backed note create/edit/delete, and session-only note relay selection held in memory only, but browser persistence, durable relay preferences, native-style relay migration, kind `10002` web relay-list sync, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, read-only note loading, basic signer-backed note create/edit/delete, session-only note relay selection, and text-only active-account profile metadata display held in memory only, but browser persistence, durable relay preferences, native-style relay migration, kind `10002` web relay-list sync, durable note caches, persistent pending writes, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -74,6 +74,7 @@ Relay-list behavior should mirror native semantics where feasible:
 - Public kind `10002` relay-list import/publish should preserve unrelated relay categories where practical.
 - NIP-46 signer transport relays carry encrypted kind `24133` app/signer traffic and must remain separate from note relays.
 - The note relay settings screen must not show, edit, import, or publish NIP-46 signer transport relays.
+- Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for text-only identity display. Remote `picture` and `banner` URLs must remain inert strings unless a later privacy-reviewed image-loading design approves rendering them.
 
 ## Storage policy
 
@@ -96,6 +97,7 @@ Forbidden browser storage:
 - Decrypted payload JSON.
 - Raw decrypted NIP-44 payloads.
 - Raw sensitive diagnostics.
+- Browser-persisted profile metadata or profile image caches.
 
 Direct `nsec` fallback must not write the key to `localStorage`, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs. If browser durable storage is introduced later for non-secret data, it must be audited so secrets cannot be accidentally routed into it.
 
@@ -185,6 +187,10 @@ Future implementation branches should stay narrow:
   - Let users add, remove, normalize, deduplicate, and restore session-only note relays for web fetch and publish.
   - Keep NIP-46 signer transport relays separate from note relays.
   - Current status: implemented as in-memory note relay selection only. It does not persist relay preferences, publish kind `10002` relay-list metadata, or run native-style relay migration.
+- `web-client-profile-metadata`
+  - Fetch the active account's latest public kind `0` profile metadata from the current web note relays.
+  - Display safe text fields in the signed-in header.
+  - Current status: implemented as in-memory, text-only profile display. It does not persist profile data and does not render remote `picture` or `banner` images.
 
 ## Risks and open questions
 
