@@ -275,6 +275,16 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         appScope,
         ::updatePublishStatuses,
     )
+
+    fun openExternalUrl(url: String): Boolean {
+        val opened = services.externalUrlOpener.open(url)
+        if (!opened) {
+            _message.value = "Could not open link with the system browser."
+        }
+        return opened
+    }
+
+    suspend fun loadNoteImage(url: String): NoteImageLoadResult = services.noteImageLoader.load(url)
     private val syncNotes = SyncNotesUseCase(
         notes,
         nostr,

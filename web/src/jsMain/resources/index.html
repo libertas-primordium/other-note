@@ -242,6 +242,31 @@
             min-width: 0;
         }
 
+        .profile-identity-row {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .profile-identity-copy {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .profile-thumbnail {
+            display: block;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            border: 1px solid var(--subtle-border);
+            border-radius: 999px;
+            background: var(--card-surface);
+            object-fit: cover;
+        }
+
         .app-title {
             margin: 0;
             font-size: clamp(1.75rem, 5vw, 2.75rem);
@@ -251,7 +276,7 @@
 
         .profile-name {
             max-width: 100%;
-            margin: 10px 0 2px;
+            margin: 0 0 2px;
             color: var(--text);
             font-size: 1rem;
             font-weight: 700;
@@ -865,7 +890,8 @@
         .note-detail-body .markdown-paragraph,
         .note-detail-body .markdown-quote,
         .note-detail-body .markdown-code-block,
-        .note-detail-body .inline-code {
+        .note-detail-body .inline-code,
+        .note-detail-body .markdown-link {
             min-width: 0;
             max-width: 100%;
             overflow-x: hidden;
@@ -941,6 +967,25 @@
             overflow-wrap: anywhere;
             word-break: break-word;
             padding: 1px 4px;
+        }
+
+        .markdown-link {
+            color: var(--accent);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .markdown-image {
+            display: block;
+            width: auto;
+            max-width: 100%;
+            height: auto;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--code-background);
         }
 
         .footer {

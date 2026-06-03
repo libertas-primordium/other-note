@@ -2,9 +2,11 @@ package com.libertasprimordium.othernote.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +29,9 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +65,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -79,14 +85,17 @@ import com.libertasprimordium.othernote.security.SavedNip55SessionMetadata
 import com.libertasprimordium.othernote.util.MarkdownBlock
 import com.libertasprimordium.othernote.util.MarkdownSpan
 import com.libertasprimordium.othernote.util.NoteSortOption
-import com.libertasprimordium.othernote.util.detectUrls
 import com.libertasprimordium.othernote.util.formatNoteCardUpdatedAt
+import com.libertasprimordium.othernote.util.isSupportedRemoteImageUrl
 import com.libertasprimordium.othernote.util.markdownBlocks
 import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.noteCardPreview
 import com.libertasprimordium.othernote.util.noteListDisplayNotes
 import com.libertasprimordium.othernote.util.noteSortOptionForId
+import org.jetbrains.compose.resources.painterResource
 import kotlinx.coroutines.launch
+import othernote.app.generated.resources.Res
+import othernote.app.generated.resources.profile_placeholder
 
 sealed class Screen {
     data object Login : Screen()
@@ -791,7 +800,7 @@ fun NotesListScreen(
         containerColor = OtherNoteBlack,
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(12.dp)) {
-            AccountIdentityHeader(session = session, profileState = profileState)
+            AccountIdentityHeader(appState = appState, session = session, profileState = profileState)
             if (appState.runtimeMode == AppRuntimeMode.DesktopRelay || appState.runtimeMode == AppRuntimeMode.DesktopDevRelay) {
                 Text("Desktop relay runtime", color = OtherNotePurple)
             }
@@ -1067,32 +1076,73 @@ private fun NoteSortSelectionDialog(
 
 @Composable
 private fun AccountIdentityHeader(
+    appState: AppState,
     session: com.libertasprimordium.othernote.domain.UserSession?,
     profileState: ProfileUiState,
 ) {
     if (session == null) {
-        Text("Local-only session", color = OtherNoteMuted)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ProfileThumbnail(null, appState)
+            Text("Local-only session", color = OtherNoteMuted)
+        }
         return
     }
     val profile = profileState.metadata?.takeIf { it.pubkey == session.publicKeyHex }
     val fallback = session.abbreviatedNpub()
     val primary = profile?.bestName?.takeIf { it.isNotBlank() } ?: fallback
-    Text(
-        primary,
-        color = OtherNoteText,
-        fontSize = 18.sp,
-        fontWeight = FontWeight.Bold,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-    Text(fallback, color = OtherNoteMuted, fontSize = 12.sp)
-    when {
-        profile?.nip05?.isNotBlank() == true -> Text(profile.nip05, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        profile?.website?.isNotBlank() == true -> Text(profile.website, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        profileState.loading && profile == null -> Text("Loading profile...", color = OtherNoteMuted, fontSize = 12.sp)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        ProfileThumbnail(profile?.pictureUrl, appState)
+        Column(Modifier.weight(1f)) {
+            Text(
+                primary,
+                color = OtherNoteText,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(fallback, color = OtherNoteMuted, fontSize = 12.sp)
+            when {
+                profile?.nip05?.isNotBlank() == true -> Text(profile.nip05, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                profile?.website?.isNotBlank() == true -> Text(profile.website, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                profileState.loading && profile == null -> Text("Loading profile...", color = OtherNoteMuted, fontSize = 12.sp)
+            }
+        }
     }
     profile?.about?.takeIf { it.isNotBlank() }?.let {
         Text(it, color = OtherNoteMuted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ProfileThumbnail(
+    pictureUrl: String?,
+    appState: AppState,
+    modifier: Modifier = Modifier,
+) {
+    val safeUrl = pictureUrl?.takeIf(::isSupportedRemoteImageUrl)
+    var loadResult by remember(safeUrl) { mutableStateOf<NoteImageLoadResult?>(null) }
+    LaunchedEffect(safeUrl) {
+        loadResult = if (safeUrl == null) null else appState.loadNoteImage(safeUrl)
+    }
+    val thumbnailModifier = modifier
+        .size(42.dp)
+        .clip(RoundedCornerShape(21.dp))
+        .background(OtherNotePanel)
+    when (val result = loadResult) {
+        is NoteImageLoadResult.Loaded -> Image(
+            bitmap = result.image,
+            contentDescription = "Profile image",
+            contentScale = ContentScale.Crop,
+            modifier = thumbnailModifier,
+        )
+        NoteImageLoadResult.Failed,
+        null -> Image(
+            painter = painterResource(Res.drawable.profile_placeholder),
+            contentDescription = "Profile placeholder",
+            contentScale = ContentScale.Crop,
+            modifier = thumbnailModifier,
+        )
     }
 }
 
@@ -1317,10 +1367,7 @@ fun NoteDisplayScreen(appState: AppState, note: Note, onBack: () -> Unit, onEdit
             if (message.isNotBlank()) {
                 Text(message, color = OtherNoteMuted, modifier = Modifier.padding(bottom = 12.dp))
             }
-            RenderMarkdown(note.bodyMarkdown)
-            detectUrls(note.bodyMarkdown).forEach { url ->
-                Text("${url.type}: ${url.value}", color = OtherNotePurple, modifier = Modifier.padding(top = 8.dp))
-            }
+            RenderMarkdown(note.bodyMarkdown, appState)
         }
     }
     if (confirmDelete) {
@@ -1369,20 +1416,24 @@ private fun NoteDeleteConfirmationDialog(
 }
 
 @Composable
-fun RenderMarkdown(markdown: String) {
+fun RenderMarkdown(markdown: String, appState: AppState) {
     markdownBlocks(markdown).forEach { block ->
         when (block) {
-            is MarkdownBlock.Heading -> Text(
-                renderInlineMarkdown(block.text),
-                color = OtherNoteText,
-                fontSize = (28 - block.level * 2).sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp),
+            is MarkdownBlock.Heading -> RenderInlineMarkdown(
+                markdown = block.text,
+                appState = appState,
+                style = TextStyle(
+                    color = OtherNoteText,
+                    fontSize = (28 - block.level * 2).sp,
+                    fontWeight = FontWeight.Bold,
+                ),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             )
-            is MarkdownBlock.Paragraph -> Text(
-                renderInlineMarkdown(block.text),
-                color = OtherNoteText,
-                modifier = Modifier.padding(bottom = 10.dp),
+            is MarkdownBlock.Paragraph -> RenderInlineMarkdown(
+                markdown = block.text,
+                appState = appState,
+                style = TextStyle(color = OtherNoteText),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             )
             is MarkdownBlock.BlockQuote -> Row(
                 Modifier.fillMaxWidth().padding(bottom = 10.dp),
@@ -1390,7 +1441,12 @@ fun RenderMarkdown(markdown: String) {
                 verticalAlignment = Alignment.Top,
             ) {
                 Box(Modifier.width(3.dp).height(28.dp).background(OtherNotePurple))
-                Text(renderInlineMarkdown(block.text), color = OtherNoteMuted, modifier = Modifier.weight(1f))
+                RenderInlineMarkdown(
+                    markdown = block.text,
+                    appState = appState,
+                    style = TextStyle(color = OtherNoteMuted),
+                    modifier = Modifier.weight(1f),
+                )
             }
             is MarkdownBlock.CodeBlock -> Text(
                 block.code,
@@ -1403,37 +1459,131 @@ fun RenderMarkdown(markdown: String) {
 }
 
 @Composable
-private fun renderInlineMarkdown(markdown: String) = buildAnnotatedString {
-    markdownSpans(markdown).forEach { span ->
-        when (span) {
-            is MarkdownSpan.Text -> append(span.text)
-            is MarkdownSpan.Bold -> {
-                pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                append(span.text)
-                pop()
-            }
-            is MarkdownSpan.Italic -> {
-                pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
-                append(span.text)
-                pop()
-            }
-            is MarkdownSpan.Strike -> {
-                pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
-                append(span.text)
-                pop()
-            }
-            is MarkdownSpan.Code -> {
-                pushStyle(
-                    SpanStyle(
-                        fontFamily = FontFamily.Monospace,
-                        color = OtherNoteCodeText,
-                        background = OtherNoteCodeBackground,
-                    ),
-                )
-                append(span.text)
-                pop()
+private fun RenderInlineMarkdown(
+    markdown: String,
+    appState: AppState,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+) {
+    val pendingTextSpans = mutableListOf<MarkdownSpan>()
+
+    @Composable
+    fun FlushText() {
+        if (pendingTextSpans.isEmpty()) return
+        val codeText = OtherNoteCodeText
+        val codeBackground = OtherNoteCodeBackground
+        val linkColor = OtherNotePurple
+        val annotated = buildAnnotatedString {
+            pendingTextSpans.forEach { span ->
+                appendMarkdownTextSpan(span, codeText, codeBackground, linkColor)
             }
         }
+        ClickableText(
+            text = annotated,
+            style = style,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { offset ->
+                annotated.getStringAnnotations(MarkdownUrlAnnotationTag, offset, offset)
+                    .firstOrNull()
+                    ?.let { appState.openExternalUrl(it.item) }
+            },
+        )
+        pendingTextSpans.clear()
+    }
+
+    Column(modifier) {
+        markdownSpans(markdown).forEach { span ->
+            if (span is MarkdownSpan.Image) {
+                FlushText()
+                RemoteNoteImage(span, appState, Modifier.fillMaxWidth().padding(bottom = 8.dp))
+            } else {
+                pendingTextSpans += span
+            }
+        }
+        FlushText()
+    }
+}
+
+private const val MarkdownUrlAnnotationTag = "url"
+
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownTextSpan(
+    span: MarkdownSpan,
+    codeText: Color,
+    codeBackground: Color,
+    linkColor: Color,
+) {
+    when (span) {
+        is MarkdownSpan.Text -> append(span.text)
+        is MarkdownSpan.Bold -> {
+            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+            append(span.text)
+            pop()
+        }
+        is MarkdownSpan.Italic -> {
+            pushStyle(SpanStyle(fontStyle = FontStyle.Italic))
+            append(span.text)
+            pop()
+        }
+        is MarkdownSpan.Strike -> {
+            pushStyle(SpanStyle(textDecoration = TextDecoration.LineThrough))
+            append(span.text)
+            pop()
+        }
+        is MarkdownSpan.Code -> {
+            pushStyle(
+                SpanStyle(
+                    fontFamily = FontFamily.Monospace,
+                    color = codeText,
+                    background = codeBackground,
+                ),
+            )
+            append(span.text)
+            pop()
+        }
+        is MarkdownSpan.Link -> {
+            pushStringAnnotation(MarkdownUrlAnnotationTag, span.url)
+            pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
+            append(span.label)
+            pop()
+            pop()
+        }
+        is MarkdownSpan.Image -> Unit
+    }
+}
+
+@Composable
+private fun RemoteNoteImage(
+    span: MarkdownSpan.Image,
+    appState: AppState,
+    modifier: Modifier = Modifier,
+) {
+    var loadResult by remember(span.url) { mutableStateOf<NoteImageLoadResult?>(null) }
+    LaunchedEffect(span.url) {
+        loadResult = appState.loadNoteImage(span.url)
+    }
+    when (val result = loadResult) {
+        is NoteImageLoadResult.Loaded -> Image(
+            bitmap = result.image,
+            contentDescription = span.alt.ifBlank { "Inline note image" },
+            contentScale = ContentScale.Fit,
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(OtherNotePanel),
+        )
+        NoteImageLoadResult.Failed -> Text(
+            "Image unavailable",
+            color = OtherNoteMuted,
+            modifier = modifier
+                .background(OtherNoteCodeBackground, RoundedCornerShape(8.dp))
+                .padding(10.dp),
+        )
+        null -> Text(
+            "Loading image...",
+            color = OtherNoteMuted,
+            modifier = modifier
+                .background(OtherNoteCodeBackground, RoundedCornerShape(8.dp))
+                .padding(10.dp),
+        )
     }
 }
 

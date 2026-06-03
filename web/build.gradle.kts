@@ -103,6 +103,9 @@ val webSecuritySourceCheck by tasks.registering {
         }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
         val webAuthStateText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebAuthState.kt").asFile.readText()
+        check(!webMainText.contains("event.asDynamic()")) {
+            "Web DOM event handlers must use direct dynamic event properties; event.asDynamic() causes runtime failures in the Kotlin/JS bundle."
+        }
         listOf("Nip07", "Nip46", "RememberedNip46", "DirectNsec", "GeneratedIdentity").forEach { topic ->
             check(webMainText.contains("signInInfoButton(WebSignInInfoTopic.$topic)") || webMainText.contains("sectionTitleWithInfo(\"") && webMainText.contains("WebSignInInfoTopic.$topic")) {
                 "Signed-out login must expose an accessible info button for WebSignInInfoTopic.$topic."
@@ -209,11 +212,34 @@ val webSecuritySourceCheck by tasks.registering {
         check(!searchInputUpdater.contains("render()")) {
             "Note search typing must not call render(); replacing the active search input on each character drops focus."
         }
-        check(!runtimeText.contains("element(\"img\"") && !runtimeText.contains("element(\"image\"")) {
-            "Web runtime must not render profile picture/banner URLs as image elements in this preview."
+        check(webMainText.contains("""element("img", "markdown-image")""")) {
+            "Web runtime must render note Markdown images only through the full-note markdown-image path."
+        }
+        check(webMainText.contains("""element("img", "profile-thumbnail")""")) {
+            "Web runtime must render profile images only through the signed-in profile-thumbnail path."
+        }
+        check(webMainText.contains("""WebProfilePlaceholderImagePath = "images/profile-placeholder.svg"""")) {
+            "Web profile thumbnail fallback must use the bundled same-origin placeholder asset."
+        }
+        check(resourceDir.file("images/profile-placeholder.svg").asFile.isFile) {
+            "Bundled web profile placeholder image is missing."
+        }
+        listOf(
+            """setAttribute("loading", "lazy")""",
+            """setAttribute("decoding", "async")""",
+            """setAttribute("referrerpolicy", "no-referrer")""",
+            """setAttribute("rel", "noopener noreferrer")""",
+            """setAttribute("target", "_blank")""",
+        ).forEach { requiredSafeAttribute ->
+            check(webMainText.contains(requiredSafeAttribute)) {
+                "Web full-note links/images must include safe attribute: $requiredSafeAttribute"
+            }
+        }
+        check(!runtimeText.contains("element(\"image\"")) {
+            "Web runtime must not create generic image elements outside the full-note Markdown and profile-thumbnail paths."
         }
         check(!runtimeText.contains("createElement(\"img\"") && !runtimeText.contains("createElement(\"image\"")) {
-            "Web runtime must not create profile image elements in this preview."
+            "Web runtime must not create profile image elements with raw createElement calls."
         }
 
         val serviceWorkerFiles = resourceFiles.filter { file ->
@@ -235,10 +261,10 @@ val webSecuritySourceCheck by tasks.registering {
             "Web index.html should load only the self-hosted generated bundle."
         }
         check(!indexText.contains("<img", ignoreCase = true)) {
-            "Web index.html must not render remote profile images or other image tags in this preview."
+            "Web index.html must not render static image tags; runtime image rendering is limited to reviewed full-note and profile-thumbnail paths."
         }
         check(!indexText.contains("background-image", ignoreCase = true)) {
-            "Web index.html must not render remote profile images through CSS backgrounds in this preview."
+            "Web index.html must not render remote images through CSS backgrounds."
         }
         check(!indexText.contains("""http-equiv="Content-Security-Policy"""")) {
             "Web index.html must not enforce CSP through a meta tag; production CSP belongs in host HTTP headers."
@@ -309,10 +335,13 @@ val webSecuritySourceCheck by tasks.registering {
         listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block").forEach { selector ->
             requireCssDeclaration(selector, "min-width: 0")
         }
-        listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code").forEach { selector ->
+        listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code", ".markdown-link").forEach { selector ->
             requireCssDeclaration(selector, "overflow-wrap: anywhere")
         }
         requireCssDeclaration(".note-list", "display: flex")
+        requireCssDeclaration(".profile-thumbnail", "width: 42px")
+        requireCssDeclaration(".profile-thumbnail", "height: 42px")
+        requireCssDeclaration(".profile-thumbnail", "object-fit: cover")
         requireCssDeclaration(".note-list", "gap: 6px")
         requireCssDeclaration(".note-lanes", "align-items: flex-start")
         requireCssDeclaration(".note-lane", "display: grid")
@@ -333,9 +362,12 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".note-detail-body", "overflow-x: hidden")
         requireCssDeclaration(".note-detail-body .markdown-view", "display: block")
         requireCssDeclaration(".note-detail-body .markdown-view", "overflow-x: hidden")
-        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "overflow-wrap: anywhere")
-        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "word-break: break-word")
-        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code", "white-space: pre-wrap")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code,\n        .note-detail-body .markdown-link", "overflow-wrap: anywhere")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code,\n        .note-detail-body .markdown-link", "word-break: break-word")
+        requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code,\n        .note-detail-body .markdown-link", "white-space: pre-wrap")
+        requireCssDeclaration(".markdown-image", "max-width: 100%")
+        requireCssDeclaration(".markdown-image", "height: auto")
+        requireCssDeclaration(".markdown-image", "display: block")
         requireCssDeclaration(".markdown-view", "overflow-x: hidden")
         requireCssDeclaration(".notes-panel", "background: transparent")
         requireCssDeclaration(".notes-panel", "border: 0")
@@ -370,6 +402,7 @@ val webSecuritySourceCheck by tasks.registering {
         val expectedCspDirectives = listOf(
             "default-src 'self'",
             "script-src 'self'",
+            "img-src 'self' data: https:",
             "connect-src 'self' wss:",
             "object-src 'none'",
             "base-uri 'none'",

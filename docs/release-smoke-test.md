@@ -86,22 +86,23 @@ Run the installed app directly:
 "/opt/other-note/bin/Other Note"
 ```
 
-Verify the packaged runtime includes `java.net.http`.
+Verify the packaged runtime includes `java.desktop` for external link opening and `java.net.http` for the desktop relay client.
 
 Preferred check when the packaged runtime exposes `bin/java`:
 
 ```bash
-/opt/other-note/lib/runtime/bin/java --list-modules | grep '^java.net.http'
+/opt/other-note/lib/runtime/bin/java --list-modules | grep -E '^(java.desktop|java.net.http)'
 ```
 
 Fallback for current `jpackage` layouts that omit `runtime/bin/java`:
 
 ```bash
-grep 'java.net.http' /opt/other-note/lib/runtime/release
+grep -E 'java.desktop|java.net.http' /opt/other-note/lib/runtime/release
 ```
 
 Manual checks:
 
+- [ ] Installed desktop can open full-note `http://` and `https://` links through the default browser; on Linux this should work through Java Desktop browse or the `xdg-open` fallback.
 - [ ] Installed binary opens without `NoClassDefFoundError: java/net/http/HttpClient`.
 - [ ] Desktop launcher entry appears as `Other Note`.
 - [ ] Desktop icon appears instead of a blank/default Java icon.

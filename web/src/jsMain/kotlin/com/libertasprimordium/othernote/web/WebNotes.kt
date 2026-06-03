@@ -1175,6 +1175,8 @@ internal sealed class WebMarkdownSpan {
     data class Italic(val text: String) : WebMarkdownSpan()
     data class Strike(val text: String) : WebMarkdownSpan()
     data class Code(val text: String) : WebMarkdownSpan()
+    data class Link(val label: String, val url: String) : WebMarkdownSpan()
+    data class Image(val alt: String, val url: String) : WebMarkdownSpan()
 }
 
 internal data class WebNotePreview(
@@ -1251,10 +1253,20 @@ internal fun webMarkdownSpans(markdown: String): List<WebMarkdownSpan> {
     var index = 0
 
     fun appendText(text: String) {
-        if (text.isNotEmpty()) spans += WebMarkdownSpan.Text(text)
+        if (text.isNotEmpty()) spans += webLinkifiedTextSpans(text)
     }
 
     while (index < markdown.length) {
+        webParseMarkdownImageSpan(markdown, index)?.let { parsed ->
+            spans += parsed.span
+            index = parsed.nextIndex
+            continue
+        }
+        webParseMarkdownLinkSpan(markdown, index)?.let { parsed ->
+            spans += parsed.span
+            index = parsed.nextIndex
+            continue
+        }
         val marker = when {
             markdown.startsWith("`", index) -> "`"
             markdown.startsWith("**", index) -> "**"
@@ -1265,6 +1277,8 @@ internal fun webMarkdownSpans(markdown: String): List<WebMarkdownSpan> {
         }
         if (marker == null) {
             val next = listOf(
+                markdown.indexOf("![", index),
+                markdown.indexOf("[", index),
                 markdown.indexOf("`", index),
                 markdown.indexOf("**", index),
                 markdown.indexOf("~~", index),
@@ -1296,6 +1310,81 @@ internal fun webMarkdownSpans(markdown: String): List<WebMarkdownSpan> {
         index = close + marker.length
     }
     return spans
+}
+
+private data class WebParsedMarkdownSpan(
+    val span: WebMarkdownSpan,
+    val nextIndex: Int,
+)
+
+private fun webParseMarkdownImageSpan(markdown: String, index: Int): WebParsedMarkdownSpan? {
+    if (!markdown.startsWith("![", index)) return null
+    val labelEnd = markdown.indexOf("](", index + 2)
+    if (labelEnd < 0) return null
+    val urlEnd = markdown.indexOf(")", labelEnd + 2)
+    if (urlEnd < 0) return null
+    val raw = markdown.substring(index, urlEnd + 1)
+    val alt = markdown.substring(index + 2, labelEnd)
+    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val span = if (webSupportedRemoteImageUrl(url)) {
+        WebMarkdownSpan.Image(alt, url)
+    } else {
+        WebMarkdownSpan.Text(raw)
+    }
+    return WebParsedMarkdownSpan(span, urlEnd + 1)
+}
+
+private fun webParseMarkdownLinkSpan(markdown: String, index: Int): WebParsedMarkdownSpan? {
+    if (!markdown.startsWith("[", index)) return null
+    val labelEnd = markdown.indexOf("](", index + 1)
+    if (labelEnd < 0) return null
+    val urlEnd = markdown.indexOf(")", labelEnd + 2)
+    if (urlEnd < 0) return null
+    val raw = markdown.substring(index, urlEnd + 1)
+    val label = markdown.substring(index + 1, labelEnd)
+    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val span = if (webSafeHttpUrl(url)) {
+        WebMarkdownSpan.Link(label.ifBlank { url }, url)
+    } else {
+        WebMarkdownSpan.Text(raw)
+    }
+    return WebParsedMarkdownSpan(span, urlEnd + 1)
+}
+
+private fun webLinkifiedTextSpans(text: String): List<WebMarkdownSpan> {
+    val spans = mutableListOf<WebMarkdownSpan>()
+    var lastIndex = 0
+    Regex("""https?://[^\s<>()"]+""").findAll(text).forEach { match ->
+        if (match.range.first > lastIndex) {
+            spans += WebMarkdownSpan.Text(text.substring(lastIndex, match.range.first))
+        }
+        val raw = match.value
+        val url = raw.trimEnd('.', ',', '!', '?', ';', ':', ')', ']')
+        val trailing = raw.drop(url.length)
+        if (webSupportedRemoteImageUrl(url)) {
+            spans += WebMarkdownSpan.Image("", url)
+        } else if (webSafeHttpUrl(url)) {
+            spans += WebMarkdownSpan.Link(url, url)
+        } else {
+            spans += WebMarkdownSpan.Text(url)
+        }
+        if (trailing.isNotEmpty()) spans += WebMarkdownSpan.Text(trailing)
+        lastIndex = match.range.last + 1
+    }
+    if (lastIndex < text.length) {
+        spans += WebMarkdownSpan.Text(text.substring(lastIndex))
+    }
+    return spans
+}
+
+internal fun webSafeHttpUrl(url: String): Boolean =
+    (url.startsWith("https://") || url.startsWith("http://")) &&
+        url.none { it.isISOControl() || it.isWhitespace() || it == '<' || it == '>' || it == '"' }
+
+internal fun webSupportedRemoteImageUrl(url: String): Boolean {
+    if (!url.startsWith("https://") || !webSafeHttpUrl(url)) return false
+    val extension = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase()
+    return extension in setOf("png", "jpg", "jpeg", "gif", "webp")
 }
 
 internal fun webNotePreview(markdown: String): WebNotePreview {

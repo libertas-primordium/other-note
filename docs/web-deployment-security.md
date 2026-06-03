@@ -22,7 +22,7 @@ Production deployments must set CSP and related controls as HTTP response header
 Recommended production headers:
 
 ```text
-Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'; upgrade-insecure-requests
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'; upgrade-insecure-requests
 Referrer-Policy: no-referrer
 X-Content-Type-Options: nosniff
 Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()
@@ -58,7 +58,8 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 - NIP-46 sign-in remains session-only by default. If the user opts in, the remembered NIP-46 record may store only version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps. It must not store the original bunker token secret, user private key, direct `nsec`, generated identity key, note data, note relay settings, relay stats, profile data, search/sort state, or pending writes.
 - Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
-- Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
+- Profile metadata is not persisted. The signed-in account header may render the active account's supported HTTPS profile `picture` as a small thumbnail with a same-origin placeholder fallback; remote `banner` URLs remain inert.
+- Full-note view may render user-authored HTTPS inline image URLs from note content. Cards, previews, and editors must not prefetch or render remote images.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
 
 Forbidden for auth/session/key/note/draft/pending-write data:
@@ -137,7 +138,9 @@ DevTools network checks:
 - [ ] No backend note API calls.
 - [ ] No unexpected third-party script, font, image, or tracking requests.
 - [ ] Font requests are same-origin `fonts/roboto/*.woff2` requests only.
-- [ ] No remote profile `picture` or `banner` image requests.
+- [ ] Remote profile `picture` requests occur only for the active signed-in account header thumbnail, and unsupported/missing/failing images fall back to the same-origin placeholder.
+- [ ] No remote profile `banner` image requests.
+- [ ] Remote note image requests occur only after opening full-note view and only for supported HTTPS image URLs.
 
 ## CSP Smoke Checklist
 

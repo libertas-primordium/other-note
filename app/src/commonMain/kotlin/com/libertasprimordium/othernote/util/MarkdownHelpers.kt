@@ -13,6 +13,8 @@ sealed class MarkdownSpan {
     data class Italic(val text: String) : MarkdownSpan()
     data class Strike(val text: String) : MarkdownSpan()
     data class Code(val text: String) : MarkdownSpan()
+    data class Link(val label: String, val url: String) : MarkdownSpan()
+    data class Image(val alt: String, val url: String) : MarkdownSpan()
 }
 
 data class NoteCardPreview(
@@ -89,10 +91,20 @@ fun markdownSpans(markdown: String): List<MarkdownSpan> {
     var index = 0
 
     fun appendText(text: String) {
-        if (text.isNotEmpty()) spans += MarkdownSpan.Text(text)
+        if (text.isNotEmpty()) spans += linkifiedTextSpans(text)
     }
 
     while (index < markdown.length) {
+        parseMarkdownImageSpan(markdown, index)?.let { parsed ->
+            spans += parsed.span
+            index = parsed.nextIndex
+            continue
+        }
+        parseMarkdownLinkSpan(markdown, index)?.let { parsed ->
+            spans += parsed.span
+            index = parsed.nextIndex
+            continue
+        }
         val marker = when {
             markdown.startsWith("`", index) -> "`"
             markdown.startsWith("**", index) -> "**"
@@ -103,6 +115,8 @@ fun markdownSpans(markdown: String): List<MarkdownSpan> {
         }
         if (marker == null) {
             val next = listOf(
+                markdown.indexOf("![", index),
+                markdown.indexOf("[", index),
                 markdown.indexOf("`", index),
                 markdown.indexOf("**", index),
                 markdown.indexOf("~~", index),
@@ -134,6 +148,71 @@ fun markdownSpans(markdown: String): List<MarkdownSpan> {
             }
         }
         index = close + marker.length
+    }
+    return spans
+}
+
+private data class ParsedMarkdownSpan(
+    val span: MarkdownSpan,
+    val nextIndex: Int,
+)
+
+private fun parseMarkdownImageSpan(markdown: String, index: Int): ParsedMarkdownSpan? {
+    if (!markdown.startsWith("![", index)) return null
+    val labelEnd = markdown.indexOf("](", index + 2)
+    if (labelEnd < 0) return null
+    val urlEnd = markdown.indexOf(")", labelEnd + 2)
+    if (urlEnd < 0) return null
+    val raw = markdown.substring(index, urlEnd + 1)
+    val alt = markdown.substring(index + 2, labelEnd)
+    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val span = if (isSupportedRemoteImageUrl(url)) {
+        MarkdownSpan.Image(alt, url)
+    } else {
+        MarkdownSpan.Text(raw)
+    }
+    return ParsedMarkdownSpan(span, urlEnd + 1)
+}
+
+private fun parseMarkdownLinkSpan(markdown: String, index: Int): ParsedMarkdownSpan? {
+    if (!markdown.startsWith("[", index)) return null
+    val labelEnd = markdown.indexOf("](", index + 1)
+    if (labelEnd < 0) return null
+    val urlEnd = markdown.indexOf(")", labelEnd + 2)
+    if (urlEnd < 0) return null
+    val raw = markdown.substring(index, urlEnd + 1)
+    val label = markdown.substring(index + 1, labelEnd)
+    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val span = if (isSafeHttpUrl(url)) {
+        MarkdownSpan.Link(label.ifBlank { url }, url)
+    } else {
+        MarkdownSpan.Text(raw)
+    }
+    return ParsedMarkdownSpan(span, urlEnd + 1)
+}
+
+private fun linkifiedTextSpans(text: String): List<MarkdownSpan> {
+    val spans = mutableListOf<MarkdownSpan>()
+    var lastIndex = 0
+    Regex("""https?://[^\s<>()"]+""").findAll(text).forEach { match ->
+        if (match.range.first > lastIndex) {
+            spans += MarkdownSpan.Text(text.substring(lastIndex, match.range.first))
+        }
+        val raw = match.value
+        val url = raw.trimEnd('.', ',', '!', '?', ';', ':', ')', ']')
+        val trailing = raw.drop(url.length)
+        if (isSupportedRemoteImageUrl(url)) {
+            spans += MarkdownSpan.Image("", url)
+        } else if (isSafeHttpUrl(url)) {
+            spans += MarkdownSpan.Link(url, url)
+        } else {
+            spans += MarkdownSpan.Text(url)
+        }
+        if (trailing.isNotEmpty()) spans += MarkdownSpan.Text(trailing)
+        lastIndex = match.range.last + 1
+    }
+    if (lastIndex < text.length) {
+        spans += MarkdownSpan.Text(text.substring(lastIndex))
     }
     return spans
 }

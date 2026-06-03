@@ -28,6 +28,8 @@ object DesktopAppServicesFactory {
                 pendingWriteStore = DesktopPendingWriteStore(),
                 themePreferenceStore = DesktopThemePreferenceStore(),
                 noteListPreferenceStore = DesktopNoteListPreferenceStore(),
+                externalUrlOpener = DesktopExternalUrlOpener(),
+                noteImageLoader = DesktopNoteImageLoader(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),
@@ -50,6 +52,8 @@ object DesktopAppServicesFactory {
                 pendingWriteStore = DesktopPendingWriteStore(),
                 themePreferenceStore = DesktopThemePreferenceStore(),
                 noteListPreferenceStore = DesktopNoteListPreferenceStore(),
+                externalUrlOpener = DesktopExternalUrlOpener(),
+                noteImageLoader = DesktopNoteImageLoader(),
                 relaySettings = RelaySettingsStore(
                     DesktopRelayDefaults,
                     DesktopRelaySettingsPersistence(),
