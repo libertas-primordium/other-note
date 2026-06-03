@@ -75,7 +75,10 @@ data class WebNip46Session(
 )
 
 sealed interface WebNip46ConnectResult {
-    data class Connected(val userPubkey: String) : WebNip46ConnectResult
+    data class Connected(
+        val userPubkey: String,
+        val session: WebNip46Session? = null,
+    ) : WebNip46ConnectResult
     data class Failed(val safeMessage: String) : WebNip46ConnectResult
 }
 
@@ -243,6 +246,20 @@ class WebNip46RemoteSigner {
         activeSession = null
     }
 
+    fun resumeWithSession(
+        session: WebNip46Session,
+        onProgress: (WebNip46Status, String) -> Unit,
+        onResult: (WebNip46ConnectResult) -> Unit,
+    ) {
+        disconnect()
+        activeSession = session
+        activeTransport = WebNip46RelayTransport()
+        onProgress(WebNip46Status.RequestingPublicKey, "Checking remembered remote signer session.")
+        requestPublicKey(session, onResult)
+    }
+
+    fun activeSessionSnapshot(): WebNip46Session? = activeSession
+
     private fun requestPublicKey(
         session: WebNip46Session,
         onResult: (WebNip46ConnectResult) -> Unit,
@@ -276,7 +293,7 @@ class WebNip46RemoteSigner {
                 is WebNip46RelayResponse.Success -> {
                     val validation = validateNip07PublicKey(response.result)
                     when (validation) {
-                        is Nip07PublicKeyResult.Valid -> onResult(WebNip46ConnectResult.Connected(validation.publicKeyHex))
+                        is Nip07PublicKeyResult.Valid -> onResult(WebNip46ConnectResult.Connected(validation.publicKeyHex, session))
                         is Nip07PublicKeyResult.Invalid -> {
                             disconnect()
                             onResult(WebNip46ConnectResult.Failed(validation.message))
@@ -1046,7 +1063,7 @@ private fun parseQueryParams(raw: String): Map<String, List<String>> =
         }
         .groupBy({ it.first }, { it.second })
 
-private fun normalizeSignerRelay(raw: String): String? {
+internal fun normalizeSignerRelay(raw: String): String? {
     val trimmed = raw.trim()
     if (trimmed.isBlank() || trimmed.any { it.isWhitespace() }) return null
     if (!trimmed.startsWith("wss://")) return null
@@ -1078,8 +1095,29 @@ private fun JsonElement.jsonArrayOrNull(): JsonArray? = this as? JsonArray
 private fun JsonElement.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 private fun JsonElement.stringOrNull(): String? = runCatching { jsonPrimitive.content }.getOrNull()
 
-private fun isValidHexPublicKey(value: String): Boolean =
+internal fun isValidHexPublicKey(value: String): Boolean =
     value.length == 64 && value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+internal fun isValidHexPrivateKey(value: String): Boolean =
+    value.length == 64 &&
+        value.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
+        value.chunked(2).any { it.toInt(16) != 0 }
+
+internal fun uint8ArrayFromHex(hex: String): Uint8Array? {
+    val normalized = hex.lowercase()
+    if (!isValidHexPrivateKey(normalized)) return null
+    val bytes = Uint8Array(normalized.length / 2)
+    normalized.chunked(2).forEachIndexed { index, byte ->
+        writeUint8ArrayByte(bytes, index, byte.toInt(16))
+    }
+    return bytes
+}
+
+internal fun Uint8Array.toFixedHex(byteCount: Int): String = buildString {
+    repeat(byteCount) { index ->
+        append((readUint8ArrayByte(this@toFixedHex, index) and 0xff).toString(16).padStart(2, '0'))
+    }
+}
 
 private fun epochSeconds(): Long =
     (js("Date.now()") as Double).toLong() / 1000

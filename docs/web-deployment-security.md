@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, or a lower-emphasis session-only direct `nsec` fallback; create a fresh identity for the current browser session; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only.
+This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, explicit remembered NIP-46 remote-signer reconnect, or a lower-emphasis session-only direct `nsec` fallback; create a fresh identity for the current browser session; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only except for the documented theme and remembered NIP-46 storage records.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -48,10 +48,13 @@ If a temporary development CSP is needed for local experiments, keep it separate
 
 ## Browser Storage Policy
 
-Current web auth/session/note/relay state is memory-only. The only browser-persisted web value is the generic selected theme ID stored under `on.web.theme`.
+Current web auth/session/note/relay state is memory-only except for two explicit storage records:
+
+- `on.web.theme`: a generic selected theme ID.
+- `on.web.nip46`: an explicit opt-in remembered NIP-46 remote-signer communication-session record.
 
 - Auth state is not durably restored after refresh.
-- NIP-46 communication keys and session material are not persisted.
+- NIP-46 sign-in remains session-only by default. If the user opts in, the remembered NIP-46 record may store only version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps. It must not store the original bunker token secret, user private key, direct `nsec`, generated identity key, note data, note relay settings, relay stats, profile data, search/sort state, or pending writes.
 - Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted and remote profile `picture`/`banner` URLs are not rendered as images.
@@ -59,7 +62,7 @@ Current web auth/session/note/relay state is memory-only. The only browser-persi
 
 Forbidden for auth/session/key/note/draft/pending-write data:
 
-- `localStorage`, except for the exact generic theme preference key `on.web.theme`
+- `localStorage`, except for the exact generic theme preference key `on.web.theme` and explicit remembered NIP-46 key `on.web.nip46`
 - IndexedDB
 - cookies
 - Cache Storage
@@ -117,7 +120,8 @@ Manual checks:
 
 DevTools storage checks:
 
-- [ ] No Other Note auth/session/key/note data in `localStorage`.
+- [ ] `localStorage` contains no Other Note auth/session/key/note data except the allowed `on.web.theme` value and explicit `on.web.nip46` remembered remote-signer record if the user opted in.
+- [ ] If `on.web.nip46` exists, it contains no direct `nsec`, generated identity key, user private key, bunker token secret, note content, note events, note relay settings, relay stats, profile data, search query, or sort preference.
 - [ ] No Other Note auth/session/key/note data in IndexedDB.
 - [ ] No Other Note auth/session/key/note data in cookies.
 - [ ] No Other Note Cache Storage entries.
@@ -145,7 +149,7 @@ When testing a production-like host with headers:
 
 ## Known Limits
 
-- No durable web sessions.
+- No durable web sessions except explicit opt-in remembered NIP-46 remote-signer communication sessions.
 - Direct `nsec` web flow is session-only and not remembered after refresh/logout.
 - No service worker or offline mode.
 - No durable web note cache.

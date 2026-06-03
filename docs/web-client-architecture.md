@@ -1,6 +1,6 @@
 # Web client architecture plan
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed or direct-key note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web value is the generic theme ID under `on.web.theme`; browser persistence for sessions, relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, direct-key sessions, generated identities, and release deployment are not implemented yet. Android and Debian/Linux desktop remain the active tested targets.
+This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with default session-only behavior and explicit opt-in remembered remote-signer reconnect, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed or direct-key note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web values are the generic theme ID under `on.web.theme` and the explicit remembered NIP-46 communication-session record under `on.web.nip46`; browser persistence for direct-key sessions, generated identities, note relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, and release deployment is not implemented. Android and Debian/Linux desktop remain the active tested targets.
 
 The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
 
@@ -52,7 +52,7 @@ UX requirements for the first web sign-in surface:
 
 For NIP-07, the browser extension owns the private key and performs signing. Any NIP-44 encrypt/decrypt support must use the extension only if the extension exposes the needed APIs safely; otherwise the web client must not pretend that encrypted note operations are available through that signer.
 
-For NIP-46, the remote signer owns the user's private key. Other Note may use a local NIP-46 communication key for encrypted kind `24133` request/response traffic, but web persistence of that communication key is not approved by default. The remote signer may see plaintext note payloads during signer-mediated NIP-44 encrypt/decrypt operations by design.
+For NIP-46, the remote signer owns the user's private key. Other Note may use a local NIP-46 communication key for encrypted kind `24133` request/response traffic. Web persistence of that communication key is default-off and allowed only when the user explicitly checks "Remember this remote signer on this browser." The remembered record is sensitive because it can request signer actions from the remote signer until revoked or forgotten, but it is not the user's private key and must remain separate from note relays and note content. The remote signer may see plaintext note payloads during signer-mediated NIP-44 encrypt/decrypt operations by design.
 
 For direct `nsec` fallback, the private key may exist only in browser memory for the active session. It may be used to sign events and perform NIP-44 encrypt/decrypt locally, then must be discarded on logout, refresh, tab close, or process end as far as browser behavior allows.
 
@@ -83,19 +83,17 @@ Relay-list behavior should mirror native semantics where feasible:
 
 ## Storage policy
 
-Initial web storage should be conservative. The implementation currently persists only the generic selected theme ID under `on.web.theme`. All auth, signer, direct-key, note, relay, profile, search, sort, draft, migration, stats, and pending-write state remains in memory only.
+Initial web storage should be conservative. The implementation currently persists only the generic selected theme ID under `on.web.theme` and the explicit opt-in remembered NIP-46 communication-session record under `on.web.nip46`. All direct-key, generated-identity, note, note relay, profile, search, sort, draft, migration, stats, and pending-write state remains in memory only.
 
 Allowed browser storage, if needed:
 
 - Non-secret UI preferences such as selected theme.
-- Non-secret note list preferences such as selected sort option.
-- Non-secret local note relay preferences, if the user explicitly edits them.
-- Encrypted cached Nostr events only after a later design approves cache scope, clearing behavior, and XSS risk.
+- Explicit remembered NIP-46 communication-session metadata: version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps.
 
 Forbidden browser storage:
 
 - `nsec` values or private keys.
-- NIP-46 client communication private keys unless a future explicit secure web persistence design approves them.
+- NIP-46 client communication private keys except inside the explicit remembered remote-signer record under `on.web.nip46`.
 - Bunker pairing secrets.
 - Signer secrets or tokens.
 - Decrypted note body text.
@@ -104,6 +102,7 @@ Forbidden browser storage:
 - Raw sensitive diagnostics.
 - Browser-persisted profile metadata or profile image caches.
 - Browser-persisted search queries or sort preferences in the current web preview.
+- Browser-persisted note relay settings, relay stats, note events, relay events, pending writes, or migration queues.
 
 Direct `nsec` fallback must not write the key to `localStorage`, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs. If browser durable storage is introduced later for non-secret data, it must be audited so secrets cannot be accidentally routed into it.
 
@@ -157,7 +156,7 @@ Known unknowns:
 - Quartz and other crypto dependency compatibility in the browser.
 - Browser WebSocket behavior across Chromium, Firefox, mobile browsers, and privacy modes.
 - Whether NIP-07 extensions expose enough NIP-44 support for encrypted notes.
-- Whether web NIP-46 session persistence can be designed safely without durable bearer secrets.
+- Whether web NIP-46 remembered sessions need stronger browser-side protection than the current explicit opt-in bearer-capability record.
 
 ## First implementation milestone proposal
 
@@ -177,8 +176,8 @@ Future implementation branches should stay narrow:
   - Current status: implemented for public-key identity only, with no session persistence, note sync, or note writes.
 - `web-client-nip46-signin`
   - Add remote signer token parsing and request flow if browser relay transport is ready.
-  - Keep the session non-persistent initially unless a safe persistence design is approved.
-  - Current status: implemented for `bunker://` public-key identity only, with in-memory transport keys, signer transport relays from the token, no session persistence, no note sync, and no note writes.
+  - Keep new pairings session-only by default; allow explicit remembered remote-signer reconnect only through the reviewed `on.web.nip46` communication-session record.
+  - Current status: implemented for `bunker://` public-key identity, with in-memory transport keys by default, signer transport relays from the token, explicit opt-in remembered reconnect, and signer-backed note sync/write support when the signer grants the needed methods.
 - `web-client-note-read-only`
   - Fetch encrypted note events from note relays.
   - Decrypt through the selected signer path where supported.
@@ -188,7 +187,7 @@ Future implementation branches should stay narrow:
   - Create, edit, and tombstone notes using existing kind `30078` event semantics.
   - Publish only signed encrypted events to note relays.
   - Keep pending write behavior bounded and visible.
-  - Current status: implemented as an in-memory preview using session-selected note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, browser sessions, or remote-signer sessions.
+  - Current status: implemented as an in-memory preview using session-selected note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, direct-key browser sessions, or generated identities; only explicit remembered NIP-46 communication-session metadata is allowed for remote-signer reconnect.
 - `web-client-relay-settings`
   - Let users add, remove, normalize, deduplicate, and restore session-only note relays for web fetch and publish.
   - Keep NIP-46 signer transport relays separate from note relays.
@@ -205,7 +204,7 @@ Future implementation branches should stay narrow:
 - Service worker caching can preserve stale vulnerable code or sensitive artifacts if designed poorly.
 - Browser durable storage has no OS keychain-equivalent security boundary.
 - NIP-07 extension compatibility varies, especially for NIP-44 encrypt/decrypt.
-- NIP-46 web persistence is a bearer-capability problem and needs a separate design before durable storage.
+- NIP-46 remembered web sessions are a bearer-capability record; users must opt in and retain an easy forget path.
 - Crypto library compatibility and randomness quality must be verified in the chosen browser target.
 - Browser WebSocket relay behavior may differ from Android and JVM clients.
 - Large note sets may need careful incremental fetch/reduction to avoid blocking the UI.

@@ -37,6 +37,7 @@ external interface WebElement {
 external interface WebStorage {
     fun getItem(key: String): String?
     fun setItem(key: String, value: String)
+    fun removeItem(key: String)
 }
 
 internal const val Nip46TokenInputLabel = "Remote signer token"
@@ -64,6 +65,8 @@ private var relayStatsState = WebRelayStatsUiState()
 private var relayStatsGuard = WebRelayStatsGuard()
 private var noteRelaySettings = defaultWebNoteRelaySettings()
 private var nip46TokenInput = ""
+private var rememberNip46Session = false
+private var rememberedNip46State = loadInitialRememberedNip46State()
 private var directNsecDraft = WebDirectNsecDraftState()
 private var generatedIdentityState = WebGeneratedIdentityState()
 private var webMenuState = WebMenuUiState()
@@ -77,6 +80,7 @@ private var activeProfileFetcher = profileFetcherForCurrentRelays()
 private var activeRelayListFetcher = relayListFetcherForCurrentRelays()
 private var activeRelayMigrationService = WebRelayMigrationService()
 private var activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
+private var authAttemptGeneration = 0
 
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
@@ -137,7 +141,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
             appendChild(textElement("li", "method", "Session-only direct nsec fallback"))
             appendChild(textElement("li", "method", "Session-only generated identity"))
         })
-        appendChild(textElement("p", "body small-gap", "This web preview does not persist web sessions, remote signer sessions, direct-key sessions, generated identities, note caches, drafts, note relay preferences, relay migration queues, or pending writes. Relay-list metadata and relay migration are session-only and best-effort when the active signer supports them."))
+        appendChild(textElement("p", "body small-gap", "This web preview persists only a generic theme choice and, if you opt in, remembered NIP-46 remote-signer communication metadata. It does not persist direct-key sessions, generated identities, note caches, drafts, note relay preferences, relay migration queues, or pending writes."))
     })
     appendChild(textElement("p", "footer", "Android and Debian/Linux desktop are the current active targets."))
 }
@@ -289,8 +293,8 @@ private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
     element("div", "panel-content") {
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
         appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated."))
-        appendChild(textElement("p", "body", "This web preview keeps auth, signer sessions, notes, drafts, relay choices, and pending writes in memory only."))
-        appendChild(textElement("p", "body", "Direct nsec fallback is session-only. It has no durable browser storage for auth, signer, direct keys, notes, relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
+        appendChild(textElement("p", "body", "This web preview keeps auth, notes, drafts, relay choices, and pending writes in memory only. Remembered NIP-46 remote-signer reconnect is available only by explicit opt-in."))
+        appendChild(textElement("p", "body", "Direct nsec fallback and generated identities are session-only. The web client has no durable browser storage for direct keys, notes, note relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
         appendChild(textElement("p", "body small-gap", "Android and Debian/Linux desktop are the current active native targets."))
     }
 
@@ -605,13 +609,24 @@ private fun nip07SignInPanel(state: WebAuthUiState): WebElement =
 private fun nip46SignInPanel(state: WebAuthUiState): WebElement =
     element("section", "panel") {
         appendChild(textElement("h2", "section-title", "Remote signer / NIP-46"))
-        appendChild(textElement("p", "body", "Your private key stays in the remote signer. This web preview does not save remote signer sessions yet."))
+        appendChild(textElement("p", "body", "Your private key stays in the remote signer. New pairings are session-only unless you explicitly remember the signer on this browser."))
+        appendChild(rememberedNip46SessionPanel(state))
         appendChild(textInputElement(
             label = Nip46TokenInputLabel,
             value = nip46TokenInput,
             enabled = state.signInState !is WebSignInState.SigningIn,
             onInput = { value -> nip46TokenInput = value },
         ))
+        appendChild(checkboxElement(
+            label = RememberNip46CheckboxLabel,
+            checked = rememberNip46Session,
+            enabled = state.signInState !is WebSignInState.SigningIn,
+            onChange = ::setRememberNip46Session,
+        ))
+        appendChild(textElement("p", "body muted small-gap", rememberNip46OptInLabel(rememberNip46Session)))
+        if (rememberNip46Session) {
+            appendChild(textElement("p", "body muted small-gap", "Use only on a trusted browser/device. Use Forget remembered remote signer to remove this reusable session from this browser."))
+        }
         if (state.nip46Message.isNotBlank()) {
             val style = if (state.nip46Status == WebNip46Status.Failed) "body error small-gap" else "body small-gap"
             appendChild(textElement("p", style, state.nip46Message))
@@ -627,6 +642,36 @@ private fun nip46SignInPanel(state: WebAuthUiState): WebElement =
                 onClick = ::requestNip46PublicKey,
             ),
         )
+    }
+
+private fun rememberedNip46SessionPanel(state: WebAuthUiState): WebElement =
+    element("div", "remembered-signer-panel") {
+        val record = rememberedNip46State.record
+        if (record != null) {
+            appendChild(textElement("p", "body small-gap", "Remembered remote signer: ${WebAccountIdentity(record.userPubkey, WebAuthMethod.Nip46).displayPublicKey}"))
+            appendChild(textElement("p", "body muted small-gap", "This browser stores only the app's NIP-46 communication session and signer transport relays. It does not store your private key."))
+            appendChild(element("div", "inline-actions remembered-signer-actions") {
+                appendChild(buttonElement(
+                    text = "Continue with remembered remote signer",
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onClick = ::requestRememberedNip46Session,
+                ))
+                appendChild(buttonElement(
+                    text = "Forget remembered remote signer",
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onClick = ::forgetRememberedNip46Session,
+                ))
+            })
+        } else if (rememberedNip46State.invalidStoredSession) {
+            appendChild(textElement("p", "body error small-gap", rememberedNip46State.message))
+            appendChild(buttonElement(
+                text = "Forget remembered remote signer",
+                enabled = state.signInState !is WebSignInState.SigningIn,
+                onClick = ::forgetRememberedNip46Session,
+            ))
+        } else if (rememberedNip46State.message.isNotBlank()) {
+            appendChild(textElement("p", "body muted small-gap", rememberedNip46State.message))
+        }
     }
 
 private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
@@ -724,6 +769,7 @@ private fun generatedIdentityPanel(state: WebAuthUiState): WebElement =
     }
 
 private fun requestNip07PublicKey() {
+    val generation = nextAuthAttemptGeneration()
     val signer = window.nostr
     if (signer == null) {
         clearDirectNsecDraft()
@@ -741,6 +787,7 @@ private fun requestNip07PublicKey() {
     try {
         signer.getPublicKey().then(
             { publicKey ->
+                if (!isCurrentAuthAttempt(generation)) return@then
                 noteState = WebNoteLoadState.Idle
                 clearDirectKeySession()
                 resetLoadedNotes()
@@ -758,6 +805,7 @@ private fun requestNip07PublicKey() {
                 autoLoadNotesForSignedInSession()
             },
             {
+                if (!isCurrentAuthAttempt(generation)) return@then
                 authState = failNip07SignIn(authState)
                 render()
             },
@@ -769,6 +817,7 @@ private fun requestNip07PublicKey() {
 }
 
 private fun requestNip46PublicKey() {
+    val generation = nextAuthAttemptGeneration()
     clearDirectNsecDraft()
     clearGeneratedIdentityState()
     authState = beginNip46SignIn(authState)
@@ -779,28 +828,20 @@ private fun requestNip46PublicKey() {
     activeNip46RemoteSigner.connectWithBunkerToken(
         rawToken = nip46TokenInput,
         onProgress = { status, message ->
+            if (!isCurrentAuthAttempt(generation)) return@connectWithBunkerToken
             authState = updateNip46Progress(authState, status, message)
             render()
         },
         onResult = { result ->
+            if (!isCurrentAuthAttempt(generation)) return@connectWithBunkerToken
             when (result) {
                 is WebNip46ConnectResult.Connected -> {
-                    nip46TokenInput = ""
-                    noteState = WebNoteLoadState.Idle
-                    clearDirectKeySession()
-                    resetLoadedNotes()
-                    resetNoteListControlsState()
-                    cancelNoteEdit()
-                    resetProfile()
-                    resetRelayListState()
-                    resetRelayMigrationState()
-                    resetRelayStatsState()
-                    authState = completeNip46SignIn(authState, result.userPubkey)
+                    val rememberMessage = rememberConnectedNip46Session(result)
+                    activateNip46SignedInSession(result.userPubkey)
+                    if (rememberMessage != null) {
+                        authState = authState.copy(nip46Message = rememberMessage)
+                    }
                     render()
-                    fetchProfileForSignedInSession()
-                    refreshRelayListForSignedInSession(reloadNotesOnImport = true)
-                    refreshRelayStatsForSignedInSession()
-                    autoLoadNotesForSignedInSession()
                 }
                 is WebNip46ConnectResult.Failed -> {
                     authState = failNip46SignIn(authState, result.safeMessage)
@@ -811,6 +852,135 @@ private fun requestNip46PublicKey() {
     )
 }
 
+private fun requestRememberedNip46Session() {
+    val record = rememberedNip46State.record ?: run {
+        rememberedNip46State = rememberedNip46StateFromStorage(rememberedNip46StorageOrNull())
+        render()
+        return
+    }
+    val session = record.toSession()
+    if (session == null) {
+        rememberedNip46State = WebRememberedNip46UiState(
+            invalidStoredSession = true,
+            message = WebRememberedNip46Copy.InvalidStoredSession,
+        )
+        render()
+        return
+    }
+    val generation = nextAuthAttemptGeneration()
+    clearDirectNsecDraft()
+    clearGeneratedIdentityState()
+    clearDirectKeySession()
+    nip46TokenInput = ""
+    authState = updateNip46Progress(
+        beginNip46SignIn(authState),
+        WebNip46Status.RequestingPublicKey,
+        "Checking remembered remote signer session.",
+    )
+    render()
+    activeNip46RemoteSigner.disconnect()
+    activeNip46RemoteSigner = WebNip46RemoteSigner()
+    activeNip46RemoteSigner.resumeWithSession(
+        session = session,
+        onProgress = { status, message ->
+            if (!isCurrentAuthAttempt(generation)) return@resumeWithSession
+            authState = updateNip46Progress(authState, status, message)
+            render()
+        },
+        onResult = { result ->
+            if (!isCurrentAuthAttempt(generation)) return@resumeWithSession
+            when (result) {
+                is WebNip46ConnectResult.Connected -> {
+                    if (!result.userPubkey.equals(record.userPubkey, ignoreCase = true)) {
+                        activeNip46RemoteSigner.disconnect()
+                        authState = failNip46SignIn(authState, WebRememberedNip46Copy.ReconnectFailed)
+                        rememberedNip46State = rememberedNip46State.copy(message = WebRememberedNip46Copy.ReconnectFailed)
+                        render()
+                        return@resumeWithSession
+                    }
+                    updateRememberedNip46LastUsed(record)
+                    activateNip46SignedInSession(result.userPubkey)
+                }
+                is WebNip46ConnectResult.Failed -> {
+                    authState = failNip46SignIn(authState, WebRememberedNip46Copy.ReconnectFailed)
+                    rememberedNip46State = rememberedNip46State.copy(message = WebRememberedNip46Copy.ReconnectFailed)
+                    render()
+                }
+            }
+        },
+    )
+}
+
+private fun setRememberNip46Session(remember: Boolean) {
+    rememberNip46Session = remember
+    render()
+}
+
+private fun rememberConnectedNip46Session(result: WebNip46ConnectResult.Connected): String? {
+    if (!rememberNip46Session) return null
+    val session = result.session ?: activeNip46RemoteSigner.activeSessionSnapshot()
+        ?: return WebRememberedNip46Copy.StoreFailed
+    val record = rememberedNip46RecordFromSession(
+        session = session,
+        userPubkey = result.userPubkey,
+        nowMs = nowMs(),
+    ) ?: return WebRememberedNip46Copy.StoreFailed
+    return if (saveRememberedNip46Record(rememberedNip46StorageOrNull(), record)) {
+        rememberedNip46State = WebRememberedNip46UiState(record = record, message = WebRememberedNip46Copy.Stored)
+        WebRememberedNip46Copy.Stored
+    } else {
+        WebRememberedNip46Copy.StoreFailed
+    }
+}
+
+private fun updateRememberedNip46LastUsed(record: WebRememberedNip46Record) {
+    val updated = record.copy(updatedAtMs = nowMs())
+    if (saveRememberedNip46Record(rememberedNip46StorageOrNull(), updated)) {
+        rememberedNip46State = WebRememberedNip46UiState(record = updated)
+    }
+}
+
+private fun activateNip46SignedInSession(userPubkey: String) {
+    nip46TokenInput = ""
+    rememberNip46Session = false
+    noteState = WebNoteLoadState.Idle
+    clearDirectKeySession()
+    resetLoadedNotes()
+    resetNoteListControlsState()
+    cancelNoteEdit()
+    resetProfile()
+    resetRelayListState()
+    resetRelayMigrationState()
+    resetRelayStatsState()
+    authState = completeNip46SignIn(authState, userPubkey)
+    render()
+    fetchProfileForSignedInSession()
+    refreshRelayListForSignedInSession(reloadNotesOnImport = true)
+    refreshRelayStatsForSignedInSession()
+    autoLoadNotesForSignedInSession()
+}
+
+private fun forgetRememberedNip46Session() {
+    val previousRecord = rememberedNip46State.record
+    val removed = forgetRememberedNip46Record(rememberedNip46StorageOrNull())
+    if (!removed) {
+        rememberedNip46State = rememberedNip46State.copy(message = WebRememberedNip46Copy.ForgetFailed)
+        render()
+        return
+    }
+    val active = authState.signInState as? WebSignInState.SignedIn
+    val clearsActiveSession = active?.identity?.method == WebAuthMethod.Nip46 &&
+        previousRecord != null &&
+        active.identity.publicKeyHex.equals(previousRecord.userPubkey, ignoreCase = true)
+    if (clearsActiveSession) {
+        logout()
+        rememberedNip46State = WebRememberedNip46UiState(message = WebRememberedNip46Copy.ForgottenActive)
+    } else {
+        rememberedNip46State = WebRememberedNip46UiState(message = WebRememberedNip46Copy.Forgotten)
+    }
+    render()
+}
+
 private fun requestDirectNsecSession() {
     val submitted = directNsecDraft.input
     clearDirectNsecDraft()
@@ -819,6 +989,7 @@ private fun requestDirectNsecSession() {
 }
 
 private fun generateFreshIdentity() {
+    nextAuthAttemptGeneration()
     clearDirectNsecDraft()
     clearDirectKeySession()
     activeNip46RemoteSigner.disconnect()
@@ -872,6 +1043,7 @@ private fun requestGeneratedIdentitySession() {
 }
 
 private fun startDirectKeySession(rawNsec: String, onFailure: (String) -> Unit) {
+    nextAuthAttemptGeneration()
     clearDirectKeySession()
     activeNip46RemoteSigner.disconnect()
     nip46TokenInput = ""
@@ -1241,6 +1413,36 @@ private fun webThemeStorageOrNull(): WebThemePreferenceStorage? =
         }
     }.getOrNull()
 
+private fun loadInitialRememberedNip46State(): WebRememberedNip46UiState =
+    rememberedNip46StateFromStorage(rememberedNip46StorageOrNull())
+
+private fun rememberedNip46StorageOrNull(): WebRememberedNip46Storage? =
+    runCatching {
+        object : WebRememberedNip46Storage {
+            override fun read(key: String): String? =
+                localStorage.getItem(key)
+
+            override fun write(key: String, value: String) {
+                localStorage.setItem(key, value)
+            }
+
+            override fun remove(key: String) {
+                localStorage.removeItem(key)
+            }
+        }
+    }.getOrNull()
+
+private fun nextAuthAttemptGeneration(): Int {
+    authAttemptGeneration += 1
+    return authAttemptGeneration
+}
+
+private fun isCurrentAuthAttempt(generation: Int): Boolean =
+    generation == authAttemptGeneration
+
+private fun nowMs(): Long =
+    (js("Date.now()") as Double).toLong()
+
 private fun refreshNotesResultsOnly() {
     val signedIn = authState.signInState as? WebSignInState.SignedIn ?: return
     val container = document.getElementById(WebNotesResultsContainerId)
@@ -1573,6 +1775,7 @@ private fun manualRelaySyncDisabledCopy(): String? =
     }
 
 private fun logout() {
+    nextAuthAttemptGeneration()
     noteLoadGuard = noteLoadGuard.invalidate()
     profileLoadGuard = profileLoadGuard.invalidate()
     relayListLoadGuard = relayListLoadGuard.invalidate()
@@ -1594,6 +1797,7 @@ private fun logout() {
     activeRelayMigrationService = WebRelayMigrationService()
     activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
     nip46TokenInput = ""
+    rememberNip46Session = false
     clearDirectNsecDraft()
     clearGeneratedIdentityState()
     webMenuState = resetWebMenuState()
