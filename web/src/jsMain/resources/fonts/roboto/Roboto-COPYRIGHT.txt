@@ -1,0 +1,19 @@
+Roboto font files bundled for the Other Note web client.
+
+Upstream name: Roboto
+Upstream source: https://github.com/google/roboto
+Packaged source used for these web assets: Debian fonts-roboto-unhinted 2:0~20170802-4
+
+The bundled WOFF2 files were converted from the Debian package's unhinted
+Roboto TTF files with Debian's woff2 utility.
+
+Files:
+- Roboto-Regular.woff2
+- Roboto-Italic.woff2
+- Roboto-Medium.woff2
+- Roboto-Bold.woff2
+
+Copyright: 2015, Google Inc.
+License: Apache-2.0
+
+The full Apache 2.0 license text is included in Apache-2.0.txt.
