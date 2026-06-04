@@ -12,6 +12,7 @@ Use this document with [web-client-architecture.md](web-client-architecture.md) 
 - Do not add server-side signing, encryption, decryption, or plaintext note handling.
 - Do not add analytics, telemetry, crash reporting, remote logging, trackers, third-party scripts, or remote fonts.
 - Do not add a service worker or offline cache unless a later reviewed cache/security design explicitly approves it.
+- Installability metadata must stay limited to the same-origin `manifest.webmanifest` file and bundled PNG icons; it must not introduce service workers, Cache Storage, credential APIs, or note/key/session persistence.
 - Do not log request bodies, signer payloads, relay payloads, note plaintext, `nsec` values, bunker tokens, or other account secrets.
 - Web fonts must be same-origin static assets. Other Note Web bundles Roboto WOFF2 files under `fonts/roboto/` with Apache-2.0 attribution; do not replace them with Google Fonts, CDN CSS, remote font URLs, or `local(...)`-only font loading.
 
@@ -22,7 +23,7 @@ Production deployments must set CSP and related controls as HTTP response header
 Recommended production headers:
 
 ```text
-Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'; upgrade-insecure-requests
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; manifest-src 'self'; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'; worker-src 'none'; upgrade-insecure-requests
 Referrer-Policy: no-referrer
 X-Content-Type-Options: nosniff
 Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()
@@ -91,8 +92,10 @@ web/build/dist/js/productionExecutable/
 Before deployment, inspect that directory:
 
 - [ ] Contains `index.html`.
+- [ ] Contains `manifest.webmanifest`.
 - [ ] Contains the generated `other-note-web.js` bundle.
 - [ ] Contains the self-hosted `fonts/roboto/*.woff2` files and Roboto license/attribution files.
+- [ ] Contains bundled same-origin install icons under `icons/`, including 192x192 and 512x512 PNG files.
 - [ ] Contains no service worker files.
 - [ ] Contains no unexpected third-party scripts.
 - [ ] Contains no generated files staged in git.
@@ -136,6 +139,7 @@ DevTools storage checks:
 DevTools network checks:
 
 - [ ] Static assets load from the web host.
+- [ ] The app manifest and install icons load from the web host.
 - [ ] Nostr relay WebSockets are expected note relay or signer transport connections.
 - [ ] No analytics or telemetry requests.
 - [ ] No backend note API calls.
