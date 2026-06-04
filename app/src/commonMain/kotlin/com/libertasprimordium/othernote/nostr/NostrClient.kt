@@ -1,0 +1,106 @@
+package com.libertasprimordium.othernote.nostr
+
+import com.libertasprimordium.othernote.domain.RelayStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+
+interface NostrClient {
+    suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult
+    suspend fun fetchEvents(relays: List<String>, filter: NostrFilter): RelayFetchResult =
+        RelayFetchResult(
+            events = emptyList(),
+            statuses = relays.map { RelayStatus(it, readable = false, message = "Generic event fetch not wired for this runtime") },
+        )
+    suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult
+    suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? =
+        selectLatestProfileMetadata(fetchEvents(relays, profileMetadataFilter(pubkey)).events, pubkey)
+}
+
+interface IncrementalNostrClient : NostrClient {
+    suspend fun fetchNotesIncrementally(
+        relays: List<String>,
+        authorPubkey: String,
+        onRelayResult: suspend (RelayFetchResult) -> Unit,
+    ): RelayFetchResult
+}
+
+interface FanoutNostrClient : NostrClient {
+    fun publishBestEffort(
+        relays: List<String>,
+        event: NostrEvent,
+        scope: CoroutineScope,
+        onStatus: (List<RelayStatus>) -> Unit,
+    ): PublishBestEffortHandle
+}
+
+interface Nip46LiveNostrClient : NostrClient {
+    suspend fun requestNip46Response(
+        relays: List<String>,
+        requestEvent: NostrEvent,
+        filter: NostrFilter,
+        timeoutMs: Long,
+        onCandidate: suspend (relay: String, event: NostrEvent) -> Boolean,
+    ): Nip46LiveRelayResult
+}
+
+data class PublishBestEffortHandle(
+    val firstAccepted: Deferred<RelayPublishResult>,
+    val complete: Deferred<RelayPublishResult>,
+)
+
+data class Nip46LiveRelayResult(
+    val responseFound: Boolean,
+    val publishStatuses: List<RelayStatus>,
+    val candidateEventCount: Int,
+    val liveEventAfterPublishCount: Int,
+    val relayOutcomes: List<Nip46LiveRelayOutcome> = emptyList(),
+)
+
+data class Nip46LiveRelayOutcome(
+    val relay: String,
+    val subscribed: Boolean,
+    val publishStatus: RelayStatus?,
+    val responseMatched: Boolean,
+    val candidateEventCount: Int,
+    val liveEventAfterPublishCount: Int,
+    val latencyMs: Long,
+    val failureReason: String?,
+)
+
+data class RelayFetchResult(
+    val events: List<NostrEvent>,
+    val statuses: List<RelayStatus>,
+)
+
+data class RelayPublishResult(
+    val statuses: List<RelayStatus>,
+) {
+    val allSucceeded: Boolean get() = statuses.isNotEmpty() && statuses.all { it.writable }
+    val anySucceeded: Boolean get() = statuses.any { it.writable }
+}
+
+data class ProfileMetadata(
+    val pubkey: String,
+    val name: String?,
+    val displayName: String?,
+    val pictureUrl: String?,
+    val about: String? = null,
+    val nip05: String? = null,
+    val website: String? = null,
+    val createdAt: Long? = null,
+) {
+    val bestName: String? get() = displayName?.takeIf { it.isNotBlank() } ?: name?.takeIf { it.isNotBlank() }
+}
+
+class OfflineNostrClient : NostrClient {
+    override suspend fun fetchNotes(relays: List<String>, authorPubkey: String): RelayFetchResult =
+        RelayFetchResult(
+            events = emptyList(),
+            statuses = relays.map { RelayStatus(it, readable = false, message = "Network client not wired yet") },
+        )
+
+    override suspend fun publish(relays: List<String>, event: NostrEvent): RelayPublishResult =
+        RelayPublishResult(relays.map { RelayStatus(it, writable = false, message = "Publishing not wired yet") })
+
+    override suspend fun fetchProfile(relays: List<String>, pubkey: String): ProfileMetadata? = null
+}

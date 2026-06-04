@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Other Note desktop icon">
+  <rect width="256" height="256" rx="34" fill="#0d1020"/>
+
+  <path d="M45 36 H153 L187 70 V223 H45 Z" fill="#f7f2ff"/>
+  <path d="M153 36 V70 H187 Z" fill="#d8ccff"/>
+
+  <rect x="70" y="83" width="83" height="14" rx="4" fill="#6d28d9"/>
+  <rect x="70" y="112" width="67" height="14" rx="4" fill="#6d28d9"/>
+
+  <polygon points="154,84 164,94 213,45 203,35" fill="#7dd3fc"/>
+  <rect x="164" y="121" width="57" height="14" rx="7" fill="#7dd3fc"/>
+  <polygon points="154,170 164,160 213,211 203,221" fill="#7dd3fc"/>
+  <circle cx="208" cy="38" r="18" fill="#38bdf8"/>
+  <circle cx="221" cy="128" r="18" fill="#38bdf8"/>
+  <circle cx="208" cy="218" r="18" fill="#38bdf8"/>
+
+  <path fill="#0d1020" fill-rule="evenodd" d="M86 159 V140 C86 115 104 99 127 99 C150 99 168 115 168 140 V159 H151 V140 C151 130 144 118 127 118 C110 118 103 130 103 140 V159 Z"/>
+  <path d="M80 159 H154 V210 H80 Z" fill="#0d1020"/>
+  <rect x="94" y="172" width="46" height="25" rx="5" fill="#7c3aed"/>
+</svg>

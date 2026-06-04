@@ -1,0 +1,1285 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <title>Other Note Web</title>
+    <style>
+        @font-face {
+            font-family: "Roboto";
+            src: url("fonts/roboto/Roboto-Regular.woff2") format("woff2");
+            font-weight: 400;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        @font-face {
+            font-family: "Roboto";
+            src: url("fonts/roboto/Roboto-Italic.woff2") format("woff2");
+            font-weight: 400;
+            font-style: italic;
+            font-display: swap;
+        }
+
+        @font-face {
+            font-family: "Roboto";
+            src: url("fonts/roboto/Roboto-Medium.woff2") format("woff2");
+            font-weight: 500;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        @font-face {
+            font-family: "Roboto";
+            src: url("fonts/roboto/Roboto-Bold.woff2") format("woff2");
+            font-weight: 700;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        :root {
+            color-scheme: var(--color-scheme);
+            --color-scheme: dark;
+            --font-family-body: "Roboto", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-family-monospace: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            --background: #050507;
+            --surface: #111116;
+            --card-surface: #111116;
+            --text: #f5f1ff;
+            --muted: #b8aec8;
+            --accent: #8e44ff;
+            --app-bar: #2a0f45;
+            --border: #6c4a90;
+            --subtle-border: rgba(108, 74, 144, 0.35);
+            --button-background: #8e44ff;
+            --button-text: #ffffff;
+            --text-field-background: #111116;
+            --text-field-border: #6c4a90;
+            --error: #ff6b8a;
+            --danger: #ffb4b4;
+            --danger-border: rgba(255, 139, 139, 0.58);
+            --danger-background: rgba(255, 139, 139, 0.06);
+            --code-background: #191020;
+            --code-text: #e8d7ff;
+        }
+
+        :root[data-theme="urban"] {
+            --color-scheme: light;
+            --background: #e7e7e3;
+            --surface: #f7f7f3;
+            --card-surface: #f7f7f3;
+            --text: #121212;
+            --muted: #525252;
+            --accent: #d96514;
+            --app-bar: #c9cbc7;
+            --border: #4a4d50;
+            --subtle-border: rgba(74, 77, 80, 0.35);
+            --button-background: #d96514;
+            --button-text: #111111;
+            --text-field-background: #f7f7f3;
+            --text-field-border: #4a4d50;
+            --error: #b3261e;
+            --danger: #9b1c18;
+            --danger-border: rgba(179, 38, 30, 0.6);
+            --danger-background: rgba(179, 38, 30, 0.08);
+            --code-background: #2b2d2f;
+            --code-text: #ffd2a8;
+        }
+
+        :root[data-theme="hacker"] {
+            --color-scheme: dark;
+            --background: #020403;
+            --surface: #07100b;
+            --card-surface: #07100b;
+            --text: #d7f9df;
+            --muted: #8ab796;
+            --accent: #3cd45b;
+            --app-bar: #050a07;
+            --border: #2aa847;
+            --subtle-border: rgba(42, 168, 71, 0.35);
+            --button-background: #07100b;
+            --button-text: #3cd45b;
+            --text-field-background: #07100b;
+            --text-field-border: #2aa847;
+            --error: #ff5f5f;
+            --danger: #ff8d8d;
+            --danger-border: rgba(255, 95, 95, 0.62);
+            --danger-background: rgba(255, 95, 95, 0.08);
+            --code-background: #000000;
+            --code-text: #a7ffb8;
+        }
+
+        :root[data-theme="papyrus"] {
+            --color-scheme: light;
+            --background: #fbf5e7;
+            --surface: #fffaef;
+            --card-surface: #fffaef;
+            --text: #17130d;
+            --muted: #574b38;
+            --accent: #d9be82;
+            --app-bar: #e7d2a0;
+            --border: #1f1a12;
+            --subtle-border: rgba(31, 26, 18, 0.3);
+            --button-background: #d9be82;
+            --button-text: #17130d;
+            --text-field-background: #fffaef;
+            --text-field-border: #1f1a12;
+            --error: #9f2d22;
+            --danger: #8e251d;
+            --danger-border: rgba(159, 45, 34, 0.58);
+            --danger-background: rgba(159, 45, 34, 0.08);
+            --code-background: #efe1c0;
+            --code-text: #17130d;
+        }
+
+        :root[data-theme="harbor"] {
+            --color-scheme: dark;
+            --background: #06131a;
+            --surface: #0d2029;
+            --card-surface: #0d2029;
+            --text: #e9f8ff;
+            --muted: #a3c1cc;
+            --accent: #38c6d9;
+            --app-bar: #082531;
+            --border: #338c9c;
+            --subtle-border: rgba(51, 140, 156, 0.35);
+            --button-background: #38c6d9;
+            --button-text: #06131a;
+            --text-field-background: #0d2029;
+            --text-field-border: #338c9c;
+            --error: #ff7b7b;
+            --danger: #ffabab;
+            --danger-border: rgba(255, 123, 123, 0.6);
+            --danger-background: rgba(255, 123, 123, 0.08);
+            --code-background: #021018;
+            --code-text: #b3f4ff;
+        }
+
+        :root[data-theme="daylight"] {
+            --color-scheme: light;
+            --background: #f8fafc;
+            --surface: #ffffff;
+            --card-surface: #ffffff;
+            --text: #111827;
+            --muted: #4b5563;
+            --accent: #2563eb;
+            --app-bar: #e5eaf2;
+            --border: #334155;
+            --subtle-border: rgba(51, 65, 85, 0.3);
+            --button-background: #2563eb;
+            --button-text: #ffffff;
+            --text-field-background: #ffffff;
+            --text-field-border: #334155;
+            --error: #b91c1c;
+            --danger: #991b1b;
+            --danger-border: rgba(185, 28, 28, 0.58);
+            --danger-background: rgba(185, 28, 28, 0.08);
+            --code-background: #e5e7eb;
+            --code-text: #111827;
+        }
+
+        :root[data-theme="burgundy"] {
+            --color-scheme: dark;
+            --background: #16070b;
+            --surface: #251016;
+            --card-surface: #251016;
+            --text: #fff1f3;
+            --muted: #d8a9b1;
+            --accent: #e05264;
+            --app-bar: #3a111b;
+            --border: #a63d50;
+            --subtle-border: rgba(166, 61, 80, 0.35);
+            --button-background: #e05264;
+            --button-text: #16070b;
+            --text-field-background: #251016;
+            --text-field-border: #a63d50;
+            --error: #ffb000;
+            --danger: #ffca52;
+            --danger-border: rgba(255, 176, 0, 0.62);
+            --danger-background: rgba(255, 176, 0, 0.08);
+            --code-background: #120409;
+            --code-text: #ffced6;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--background);
+            color: var(--text);
+            font-family: var(--font-family-body);
+        }
+
+        #root {
+            min-height: 100vh;
+        }
+
+        .shell {
+            width: min(760px, calc(100vw - 32px));
+            margin: 0 auto;
+            padding: 48px 0;
+        }
+
+        .signed-in-shell {
+            width: min(1280px, calc(100vw - 32px));
+            padding: 32px 0 48px;
+        }
+
+        .app-header {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 16px 0 12px;
+            border-bottom: 1px solid var(--subtle-border);
+        }
+
+        .app-header-copy {
+            min-width: 0;
+        }
+
+        .profile-identity-row {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .profile-identity-copy {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .profile-thumbnail {
+            display: block;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 auto;
+            border: 1px solid var(--subtle-border);
+            border-radius: 999px;
+            background: var(--card-surface);
+            object-fit: cover;
+        }
+
+        .app-title {
+            margin: 0;
+            font-size: clamp(1.75rem, 5vw, 2.75rem);
+            line-height: 1;
+            letter-spacing: 0;
+        }
+
+        .profile-name {
+            max-width: 100%;
+            margin: 0 0 2px;
+            color: var(--text);
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.25;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .profile-line {
+            max-width: 100%;
+            margin-top: 2px;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .profile-about {
+            display: -webkit-box;
+            max-width: min(760px, 100%);
+            margin-top: 4px;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+        }
+
+        .hero {
+            padding: 24px 0 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .eyebrow {
+            margin: 0 0 8px;
+            color: var(--accent);
+            font-size: 0.92rem;
+            font-weight: 700;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+
+        .title {
+            margin: 0;
+            font-size: clamp(2.25rem, 6vw, 4rem);
+            line-height: 1;
+            letter-spacing: 0;
+        }
+
+        .lede {
+            max-width: 620px;
+            margin: 18px 0 0;
+            color: var(--muted);
+            font-size: 1.08rem;
+            line-height: 1.55;
+        }
+
+        .panel {
+            margin-top: 18px;
+            padding: 18px;
+            background: var(--surface);
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+        }
+
+        .notes-panel {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 14px;
+            padding: 0;
+            background: transparent;
+            border: 0;
+            border-radius: 0;
+        }
+
+        .section-title {
+            margin: 0 0 10px;
+            font-size: 1rem;
+            letter-spacing: 0;
+        }
+
+        .section-heading-row {
+            display: flex;
+            min-width: 0;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .section-heading-row .section-title {
+            min-width: 0;
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .info-button {
+            display: inline-flex;
+            flex: 0 0 auto;
+            width: 40px;
+            height: 40px;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--subtle-border);
+            border-radius: 999px;
+            background: transparent;
+            color: var(--accent);
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .info-button:hover,
+        .info-button:focus {
+            border-color: var(--accent);
+            outline: none;
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+        }
+
+        .body {
+            margin: 0;
+            color: var(--muted);
+            line-height: 1.55;
+            overflow-wrap: anywhere;
+        }
+
+        .small-gap {
+            margin-top: 8px;
+        }
+
+        .error {
+            color: var(--error);
+        }
+
+        .action-button {
+            min-height: 40px;
+            margin-top: 12px;
+            padding: 0 14px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            background: var(--button-background);
+            color: var(--button-text);
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .action-button:disabled {
+            border-color: var(--border);
+            background: transparent;
+            color: var(--muted);
+            cursor: not-allowed;
+        }
+
+        .menu-shell {
+            position: relative;
+            flex: 0 0 auto;
+        }
+
+        .menu-shell .action-button {
+            margin-top: 0;
+        }
+
+        .menu-popover {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            z-index: 10;
+            width: min(240px, calc(100vw - 40px));
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--text-field-background);
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+        }
+
+        .menu-item {
+            display: block;
+            width: 100%;
+            min-height: 40px;
+            padding: 0 10px;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text);
+            font: inherit;
+            font-weight: 700;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .menu-item:hover,
+        .menu-item:focus {
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
+            outline: none;
+        }
+
+        .menu-item.danger {
+            color: var(--danger);
+        }
+
+        .menu-divider {
+            height: 1px;
+            margin: 6px 0;
+            background: var(--border);
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.62);
+        }
+
+        .note-detail-backdrop {
+            padding: 10px;
+        }
+
+        .modal-panel {
+            min-width: 0;
+            width: min(680px, 100%);
+            max-width: 100%;
+            max-height: min(82vh, 720px);
+            overflow-x: hidden;
+            overflow-y: auto;
+            box-shadow: 0 22px 60px rgba(0, 0, 0, 0.56);
+        }
+
+        .modal-header {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 12px;
+            align-items: flex-start;
+            justify-content: space-between;
+        }
+
+        .modal-header .section-title {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .modal-header .action-button {
+            min-height: 38px;
+            margin-top: 0;
+        }
+
+        .sign-in-info-panel .body {
+            color: var(--text);
+        }
+
+        .panel-content {
+            margin-top: 8px;
+        }
+
+        .inline-info-row {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 8px;
+        }
+
+        .inline-info-row .body {
+            min-width: 0;
+        }
+
+        .inline-info-row .info-button {
+            width: 36px;
+            height: 36px;
+        }
+
+        .field-label {
+            display: grid;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .field-label-text {
+            color: var(--text);
+            font-size: 0.92rem;
+            font-weight: 700;
+        }
+
+        .text-input {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            min-height: 44px;
+            padding: 0 12px;
+            border: 1px solid var(--text-field-border);
+            border-radius: 8px;
+            background: var(--text-field-background);
+            color: var(--text);
+            font: inherit;
+        }
+
+        .text-input:disabled {
+            color: var(--muted);
+            cursor: not-allowed;
+        }
+
+        .text-input::placeholder {
+            color: var(--muted);
+        }
+
+        .method-list {
+            display: grid;
+            gap: 8px;
+            margin: 0;
+            padding-left: 20px;
+            color: var(--muted);
+        }
+
+        .method {
+            line-height: 1.45;
+        }
+
+        .generated-secret-display {
+            max-width: 100%;
+            margin: 12px 0 0;
+            padding: 12px;
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+            background: var(--code-background);
+            color: var(--code-text);
+            font-family: var(--font-family-monospace);
+            font-size: 0.86rem;
+            line-height: 1.5;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+        }
+
+        .checkbox-list {
+            display: grid;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .checkbox-label {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 10px;
+            align-items: start;
+            color: var(--text);
+            line-height: 1.4;
+            overflow-wrap: anywhere;
+        }
+
+        .checkbox-input {
+            width: 18px;
+            height: 18px;
+            margin: 2px 0 0;
+            accent-color: var(--accent);
+        }
+
+        .checkbox-text {
+            min-width: 0;
+        }
+
+        .note-list {
+            display: flex;
+            min-width: 0;
+            max-width: 100%;
+            gap: 6px;
+            margin-top: 14px;
+        }
+
+        .note-lanes {
+            align-items: flex-start;
+        }
+
+        .note-lane {
+            display: grid;
+            flex: 1 1 0;
+            min-width: 0;
+            max-width: 100%;
+            gap: 6px;
+        }
+
+        .note-card {
+            display: grid;
+            width: 100%;
+            align-self: start;
+            break-inside: avoid;
+            page-break-inside: avoid;
+            min-width: 0;
+            max-width: 100%;
+            padding: 10px;
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+            background: var(--card-surface);
+            overflow-wrap: anywhere;
+        }
+
+        .note-card-open {
+            min-width: 0;
+            max-width: 100%;
+            border-radius: 6px;
+            cursor: pointer;
+            overflow-wrap: anywhere;
+        }
+
+        .note-card-open:focus {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
+        }
+
+        .note-title {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2;
+            margin: 0;
+            color: var(--text);
+            font-size: 0.875rem;
+            font-weight: 700;
+            line-height: 1.22;
+            overflow: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .note-snippet,
+        .note-meta {
+            margin: 6px 0 0;
+            color: var(--muted);
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+        }
+
+        .note-snippet {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4;
+            font-size: 0.75rem;
+            overflow: hidden;
+        }
+
+        .note-meta {
+            font-size: 0.6875rem;
+        }
+
+        .inline-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-top: 12px;
+        }
+
+        .inline-actions .action-button {
+            margin-top: 0;
+        }
+
+        .notes-actions {
+            margin-top: 14px;
+        }
+
+        .note-list-controls {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(190px, 260px);
+            min-width: 0;
+            max-width: 100%;
+            gap: 10px;
+            align-items: end;
+            margin-top: 12px;
+        }
+
+        .note-list-controls .field-label {
+            margin-top: 0;
+        }
+
+        .sort-select {
+            appearance: none;
+            min-height: 44px;
+            padding-right: 34px;
+            cursor: pointer;
+        }
+
+        .theme-select {
+            appearance: none;
+            min-height: 44px;
+            padding-right: 34px;
+            cursor: pointer;
+        }
+
+        .notes-results {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .notes-results-content {
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        .note-card-actions {
+            flex-direction: row;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .note-card-actions .action-button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 60px;
+            min-height: 34px;
+            padding: 0 10px;
+            border-color: color-mix(in srgb, var(--accent) 68%, transparent);
+            border-radius: 7px;
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
+            color: var(--accent);
+            font-size: 0.75rem;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .note-card-actions .action-button:last-child {
+            border-color: var(--danger-border);
+            background: var(--danger-background);
+            color: var(--danger);
+        }
+
+        .note-card-actions .action-button:hover,
+        .note-card-actions .action-button:focus {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
+            outline: none;
+        }
+
+        .relay-list {
+            display: grid;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .relay-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--text-field-background);
+        }
+
+        .relay-url {
+            color: var(--text);
+            overflow-wrap: anywhere;
+        }
+
+        .relay-row-main {
+            display: grid;
+            min-width: 0;
+            gap: 3px;
+        }
+
+        .relay-stat {
+            color: var(--muted);
+            font-size: 0.72rem;
+            line-height: 1.25;
+        }
+
+        .editor-panel {
+            min-width: 0;
+            max-width: 100%;
+            margin-top: 16px;
+            padding: 14px;
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+            background: var(--card-surface);
+        }
+
+        .note-editor-input {
+            min-height: 220px;
+            padding: 12px;
+            line-height: 1.5;
+            resize: vertical;
+        }
+
+        .note-detail-panel {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            margin-top: 0;
+            width: min(1120px, calc(100vw - 20px));
+            max-width: min(1120px, calc(100vw - 20px));
+            max-height: min(94vh, 980px);
+            padding: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .note-detail-header {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            display: flex;
+            flex-wrap: wrap;
+            min-width: 0;
+            max-width: 100%;
+            gap: 12px;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 14px;
+            border-bottom: 1px solid var(--subtle-border);
+            background: color-mix(in srgb, var(--card-surface) 96%, transparent);
+            backdrop-filter: blur(10px);
+        }
+
+        .note-detail-heading {
+            display: grid;
+            flex: 1 1 360px;
+            min-width: 0;
+            max-width: 100%;
+            gap: 4px;
+        }
+
+        .note-detail-actions {
+            display: flex;
+            flex: 0 0 auto;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            justify-content: flex-end;
+        }
+
+        .note-detail-actions .action-button {
+            min-height: 38px;
+            margin-top: 0;
+            padding: 0 12px;
+        }
+
+        .note-detail-actions .danger-action {
+            border-color: var(--danger-border);
+            background: var(--danger-background);
+            color: var(--danger);
+        }
+
+        .note-detail-body {
+            min-width: 0;
+            max-width: 100%;
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 16px;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .note-detail-body .markdown-view {
+            display: block;
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .note-detail-body .markdown-heading,
+        .note-detail-body .markdown-paragraph,
+        .note-detail-body .markdown-quote,
+        .note-detail-body .markdown-code-block,
+        .note-detail-body .inline-code,
+        .note-detail-body .markdown-link {
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+
+        .note-detail-body .markdown-view > * + * {
+            margin-top: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .note-detail-backdrop {
+                padding: 0;
+            }
+
+            .note-detail-panel {
+                width: 100vw;
+                max-width: 100vw;
+                max-height: 100vh;
+                border-radius: 0;
+            }
+
+            .note-detail-header {
+                padding: 10px;
+            }
+
+            .note-detail-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .note-detail-actions .action-button {
+                min-height: 42px;
+            }
+
+            .note-detail-body {
+                padding: 12px;
+            }
+        }
+
+        .note-edit-backdrop {
+            padding: 10px;
+        }
+
+        .note-edit-panel {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            width: min(1120px, calc(100vw - 20px));
+            max-width: min(1120px, calc(100vw - 20px));
+            max-height: min(94vh, 980px);
+            margin-top: 0;
+            padding: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .note-edit-header {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            display: flex;
+            flex-wrap: wrap;
+            min-width: 0;
+            max-width: 100%;
+            gap: 12px;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px;
+            border-bottom: 1px solid var(--subtle-border);
+            background: color-mix(in srgb, var(--card-surface) 96%, transparent);
+            backdrop-filter: blur(10px);
+        }
+
+        .note-edit-header .section-title {
+            min-width: 0;
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .note-edit-actions {
+            display: flex;
+            flex: 0 0 auto;
+            flex-wrap: wrap;
+            gap: 6px;
+            justify-content: flex-end;
+        }
+
+        .note-edit-actions .action-button {
+            min-height: 38px;
+            margin-top: 0;
+            padding: 0 12px;
+        }
+
+        .note-edit-message {
+            padding: 12px 14px 0;
+        }
+
+        .note-edit-panel .field-label {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 0;
+            max-width: 100%;
+            gap: 8px;
+            padding: 14px;
+        }
+
+        .note-edit-panel .note-editor-input {
+            flex: 1 1 auto;
+            width: 100%;
+            min-height: min(62vh, 620px);
+            resize: vertical;
+        }
+
+        .note-delete-panel {
+            min-width: 0;
+            width: min(460px, calc(100vw - 28px));
+            max-width: min(460px, calc(100vw - 28px));
+            max-height: min(86vh, 520px);
+            overflow-x: hidden;
+            overflow-y: auto;
+        }
+
+        .note-delete-title {
+            margin: 12px 0 0;
+            padding: 10px;
+            border: 1px solid var(--subtle-border);
+            border-radius: 8px;
+            background: var(--text-field-background);
+            color: var(--text);
+            font-weight: 700;
+            overflow-wrap: anywhere;
+        }
+
+        .note-delete-actions .danger-action {
+            border-color: var(--danger-border);
+            background: var(--danger-background);
+            color: var(--danger);
+        }
+
+        @media (max-width: 640px) {
+            .note-edit-backdrop {
+                padding: 0;
+            }
+
+            .note-edit-panel {
+                width: 100vw;
+                max-width: 100vw;
+                max-height: 100vh;
+                border-radius: 0;
+            }
+
+            .note-edit-header {
+                padding: 10px;
+            }
+
+            .note-edit-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            .note-edit-actions .action-button {
+                min-height: 42px;
+            }
+
+            .note-edit-panel .field-label {
+                padding: 12px;
+            }
+        }
+
+        .markdown-view {
+            display: grid;
+            min-width: 0;
+            max-width: 100%;
+            gap: 8px;
+            margin-top: 10px;
+            color: var(--text);
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+        }
+
+        .markdown-heading,
+        .markdown-paragraph,
+        .markdown-quote,
+        .markdown-code-block {
+            min-width: 0;
+            max-width: 100%;
+            margin: 0;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .markdown-paragraph,
+        .markdown-quote {
+            white-space: pre-wrap;
+        }
+
+        .markdown-heading {
+            font-size: 1rem;
+        }
+
+        .markdown-quote {
+            padding-left: 10px;
+            border-left: 3px solid var(--accent);
+            color: var(--muted);
+        }
+
+        .markdown-list {
+            min-width: 0;
+            max-width: 100%;
+            margin: 0 0 10px;
+            padding-left: 24px;
+            box-sizing: border-box;
+        }
+
+        .markdown-list-item {
+            min-width: 0;
+            max-width: 100%;
+            padding-bottom: 4px;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .markdown-rule {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            margin: 12px 0;
+            border: 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .bold-italic {
+            font-style: italic;
+        }
+
+        .markdown-code-block,
+        .inline-code {
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--code-background);
+            color: var(--code-text);
+            font-family: var(--font-family-monospace);
+            overflow-wrap: anywhere;
+        }
+
+        .markdown-code-block {
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: hidden;
+            overflow-wrap: anywhere;
+            padding: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .inline-code {
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            padding: 1px 4px;
+        }
+
+        .markdown-link {
+            color: var(--accent);
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .markdown-image {
+            display: block;
+            width: auto;
+            max-width: 100%;
+            height: auto;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--code-background);
+        }
+
+        .footer {
+            margin: 22px 0 0;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        @media (max-width: 560px) {
+            .shell {
+                width: min(100vw - 24px, 760px);
+                padding: 28px 0;
+            }
+
+            .signed-in-shell {
+                width: min(100vw - 24px, 1280px);
+            }
+
+            .app-header {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .menu-popover {
+                left: 0;
+                right: auto;
+            }
+
+            .note-card-actions {
+                align-items: center;
+                flex-direction: row;
+                gap: 6px;
+                justify-content: flex-start;
+            }
+
+            .note-list-controls {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="other-note-web.js"></script>
+</body>
+</html>
