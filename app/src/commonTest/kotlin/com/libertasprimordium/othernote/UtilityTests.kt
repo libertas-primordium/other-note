@@ -25,6 +25,7 @@ import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.NoteCardAction
 import com.libertasprimordium.othernote.ui.NoteCardActionPresentation
 import com.libertasprimordium.othernote.ui.SignInInfoTopic
+import com.libertasprimordium.othernote.ui.mainMenuButtonLabel
 import com.libertasprimordium.othernote.ui.noteCardActionPresentation
 import com.libertasprimordium.othernote.ui.noteCardActionMenuText
 import com.libertasprimordium.othernote.ui.noteCardActionItems
@@ -138,6 +139,12 @@ class UtilityTests {
             NoteCardActionPresentation.LongPressMenu,
             noteCardActionPresentation(AppPlatform.Desktop, availableWidthDp = 180),
         )
+    }
+
+    @Test
+    fun mainMenuButtonUsesExplicitDesktopLabelAndCompactAndroidLabel() {
+        assertEquals("Menu", mainMenuButtonLabel(AppPlatform.Desktop))
+        assertEquals("...", mainMenuButtonLabel(AppPlatform.Android))
     }
 
     @Test
