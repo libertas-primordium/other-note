@@ -97,7 +97,7 @@ class WebAuthStateTests {
 class WebLayoutMenuStateTests {
     @Test
     fun signedInMenuIncludesSecondaryActionsAndLogout() {
-        assertEquals(listOf("Reload notes", "Note relays", "Theme", "About web preview", "Logout"), WebSignedInMenuItems)
+        assertEquals(listOf("Reload notes", "Note relays", "Theme", "About Other Note Web", "Logout"), WebSignedInMenuItems)
     }
 
     @Test

@@ -20,9 +20,13 @@ val webSecuritySourceCheck by tasks.registering {
 
     val runtimeSourceDir = layout.projectDirectory.dir("src/jsMain/kotlin")
     val resourceDir = layout.projectDirectory.dir("src/jsMain/resources")
+    val readmeDoc = layout.projectDirectory.file("../README.md")
+    val webArchitectureDoc = layout.projectDirectory.file("../docs/web-client-architecture.md")
     val deploymentSecurityDoc = layout.projectDirectory.file("../docs/web-deployment-security.md")
     inputs.dir(runtimeSourceDir)
     inputs.dir(resourceDir)
+    inputs.file(readmeDoc)
+    inputs.file(webArchitectureDoc)
     inputs.file(deploymentSecurityDoc)
 
     doLast {
@@ -101,10 +105,53 @@ val webSecuritySourceCheck by tasks.registering {
         )
         val directKeyHits = forbiddenDirectKeyPatterns.filter { pattern -> directKeySource.contains(pattern) }
         check(directKeyHits.isEmpty()) {
-            "Direct nsec web foundation must stay memory-only and isolated from browser storage/DOM rendering; forbidden pattern(s): ${directKeyHits.joinToString()}"
+            "Direct nsec web path must stay memory-only and isolated from browser storage/DOM rendering; forbidden pattern(s): ${directKeyHits.joinToString()}"
         }
         val webMainText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile.readText()
         val webAuthStateText = runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebAuthState.kt").asFile.readText()
+        val webReleaseCopyFiles = listOf(
+            runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebMain.kt").asFile,
+            runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebAuthState.kt").asFile,
+            runtimeSourceDir.file("com/libertasprimordium/othernote/web/WebNotes.kt").asFile,
+            resourceDir.file("index.html").asFile,
+            readmeDoc.asFile,
+            webArchitectureDoc.asFile,
+            deploymentSecurityDoc.asFile,
+        )
+        val oldLaunchLabel = "pre" + "view"
+        val oldBuildShape = "skele" + "ton"
+        val oldForwardLabel = "fu" + "ture"
+        val forbiddenWebReleaseCopy = listOf(
+            "Other Note Web $oldLaunchLabel",
+            "Web client $oldLaunchLabel",
+            "About web $oldLaunchLabel",
+            "This web $oldLaunchLabel",
+            "web $oldLaunchLabel",
+            "$oldLaunchLabel shell",
+            "$oldLaunchLabel status",
+            "$oldLaunchLabel-only",
+            "static web-client $oldBuildShape",
+            "web-client $oldBuildShape",
+            "coming " + "soon",
+            "will " + "support",
+            "supports in $oldForwardLabel",
+            "plan" + "ned",
+            "$oldForwardLabel work",
+            "not imple" + "mented",
+            "not " + "yet",
+            "road" + "map",
+            oldBuildShape,
+            "found" + "ation",
+        )
+        val staleWebReleaseCopy = webReleaseCopyFiles.flatMap { file ->
+            val text = file.readText()
+            forbiddenWebReleaseCopy
+                .filter { phrase -> text.contains(phrase, ignoreCase = true) }
+                .map { phrase -> "${file.relativeTo(project.rootDir).invariantSeparatorsPath}: $phrase" }
+        }
+        check(staleWebReleaseCopy.isEmpty()) {
+            "Stale web release copy found; user-facing web UI/docs must not use old launch or development-path framing: ${staleWebReleaseCopy.joinToString()}"
+        }
         check(!webMainText.contains("event.asDynamic()")) {
             "Web DOM event handlers must use direct dynamic event properties; event.asDynamic() causes runtime failures in the Kotlin/JS bundle."
         }
@@ -277,7 +324,7 @@ val webSecuritySourceCheck by tasks.registering {
         ).find(webMainText)?.groups?.get("body")?.value
             ?: error("WebMain.kt must define noteCard before noteDetailPanel.")
         check(!noteCardRenderer.contains("renderMarkdown(") && noteCardRenderer.contains("webNotePreview(note.bodyMarkdown)")) {
-            "Web note cards must use raw preview text and must not render active Markdown."
+            "Web note cards must use raw card text and must not render active Markdown."
         }
         val appShellRenderer = Regex(
             """private fun appShell\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun appShellClass""",

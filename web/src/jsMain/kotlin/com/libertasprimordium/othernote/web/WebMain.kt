@@ -129,7 +129,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
     }
 
     appendChild(element("section", "hero") {
-        appendChild(textElement("p", "eyebrow", "Web client preview"))
+        appendChild(textElement("p", "eyebrow", "Web client"))
         appendChild(textElement("h1", "title", "Other Note"))
         appendChild(textElement("p", "lede", "Private Nostr-backed notes for this browser session."))
     })
@@ -150,7 +150,7 @@ private fun signedInHeader(identity: WebAccountIdentity, profile: WebProfileUiSt
         val summary = webProfileHeaderSummary(identity, profile)
         val metadata = profile.metadata?.takeIf { it.pubkey == identity.publicKeyHex }
         appendChild(element("div", "app-header-copy") {
-            appendChild(textElement("p", "eyebrow", "Web client preview"))
+            appendChild(textElement("p", "eyebrow", "Web client"))
             appendChild(textElement("h1", "app-title", "Other Note"))
             appendChild(element("div", "profile-identity-row") {
                 appendChild(profileThumbnailElement(metadata?.pictureUrl))
@@ -210,7 +210,7 @@ private fun signedInMenu(identity: WebAccountIdentity): WebElement =
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.Theme)
                     render()
                 })
-                appendChild(menuItemElement("About web preview") {
+                appendChild(menuItemElement("About Other Note Web") {
                     webMenuState = openWebMenuPanel(webMenuState, WebMenuPanel.About)
                     render()
                 })
@@ -232,8 +232,8 @@ private fun activeMenuPanel(identity: WebAccountIdentity): WebElement? =
         WebMenuPanel.Theme -> modalPanel("Theme") {
             appendChild(themeSelectorContent())
         }
-        WebMenuPanel.About -> modalPanel("About web preview") {
-            appendChild(aboutWebPreviewContent(identity))
+        WebMenuPanel.About -> modalPanel("About Other Note Web") {
+            appendChild(aboutWebContent(identity))
         }
     }
 
@@ -309,11 +309,11 @@ private fun noteRelaySettingsContent(): WebElement =
         }
     }
 
-private fun aboutWebPreviewContent(identity: WebAccountIdentity): WebElement =
+private fun aboutWebContent(identity: WebAccountIdentity): WebElement =
     element("div", "panel-content") {
         appendChild(textElement("p", "body", "Signed in with ${identity.method.displayName} as ${identity.displayPublicKey}."))
         appendChild(textElement("p", "body", "Signing, encryption, and decryption remain client-side or signer-delegated."))
-        appendChild(textElement("p", "body", "This web preview keeps auth, notes, drafts, relay choices, and pending writes in memory only. Remembered NIP-46 remote-signer reconnect is available only by explicit opt-in."))
+        appendChild(textElement("p", "body", "Other Note Web keeps auth, notes, drafts, relay choices, and pending writes in memory only. Remembered NIP-46 remote-signer reconnect is available only by explicit opt-in."))
         appendChild(textElement("p", "body", "Direct nsec fallback and generated identities are session-only. The web client has no durable browser storage for direct keys, notes, note relays, profile, search, or sort, no service worker, no tracking/reporting services, and no backend note processing."))
         appendChild(textElement("p", "body small-gap", "Android and Debian/Linux desktop are the current active native targets."))
     }

@@ -165,7 +165,7 @@ val WebSignedInMenuItems = listOf(
     "Reload notes",
     "Note relays",
     "Theme",
-    "About web preview",
+    "About Other Note Web",
     "Logout",
 )
 

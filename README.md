@@ -1,10 +1,10 @@
 # Other Note
 
-Other Note is a GPLv3 Nostr-powered notes app foundation for private notes. The first-pass app targets Android and Debian/Linux desktop with a shared Kotlin Multiplatform and Compose architecture.
+Other Note is a GPLv3 Nostr-powered notes app for private notes. The app targets Android, Debian/Linux desktop, and the web with a shared Kotlin Multiplatform and Compose architecture where practical.
 
 ## Status
 
-This repository now contains a runnable project structure with shared domain, data, sync, Nostr abstraction, UI, Android entry point, desktop entry point, desktop Debian packaging configuration, a static web-client skeleton, and focused tests.
+This repository now contains a runnable project structure with shared domain, data, sync, Nostr abstraction, UI, Android entry point, desktop entry point, desktop Debian packaging configuration, a static web client, and focused tests.
 
 Important security status:
 
@@ -23,8 +23,8 @@ Important security status:
 - Android can detect generic NIP-55 external signer apps, request signer public identity, remember safe signer-session metadata, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`. Android direct `nsec` remains a lower-emphasis fallback: session-only by default, with an explicit Android Credential Manager password-save option and explicit Android Keystore-backed save/continue/forget actions when the user chooses them.
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android cloud backup and device-transfer extraction are explicitly disabled for app data through the manifest and backup-rule resources. This is privacy hardening, not a backup feature.
-- NIP-46 remote signer foundation support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
-- The web target currently builds a preview shell with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with explicit opt-in remembered remote-signer sessions, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, active-account profile metadata display with a small safe thumbnail, basic signer-backed or direct-key note create/edit/delete, full-note-only safe Markdown/link/image rendering, and session-only note relay selection held in memory only. The direct `nsec` field can optionally expose browser/password-manager save/fill hints when the user explicitly opts in, but that is external user-controlled password-manager behavior rather than Other Note app storage. The web client persists only the generic visual theme preference and an explicitly remembered NIP-46 communication-session record when the user opts in; it has no browser-persisted user private key, direct `nsec`, generated identity key, note content, note events, note relay settings, relay stats, profile data, search/sort state, durable note cache, profile image cache, or persistent pending-write queue.
+- NIP-46 remote signer support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
+- The web target builds a static client with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with explicit opt-in remembered remote-signer sessions, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, active-account profile metadata display with a small safe thumbnail, signer-backed or direct-key note create/edit/delete, full-note-only safe Markdown/link/image rendering, and session-only note relay selection held in memory only. The direct `nsec` field can optionally expose browser/password-manager save/fill hints when the user explicitly opts in, but that is external user-controlled password-manager behavior rather than Other Note app storage. The web client persists only the generic visual theme preference and an explicitly remembered NIP-46 communication-session record when the user opts in; it has no browser-persisted user private key, direct `nsec`, generated identity key, note content, note events, note relay settings, relay stats, profile data, search/sort state, durable note cache, profile image cache, or persistent pending-write queue.
 - The web target self-hosts Roboto WOFF2 files from the static app bundle to better match Android's default `sans`/Material typography. The font files are derived from Debian `fonts-roboto-unhinted` with upstream source at `https://github.com/google/roboto` and Apache-2.0 license attribution in `web/src/jsMain/resources/fonts/roboto/`. The web client does not use Google Fonts, CDN fonts, remote font CSS, or external font hosts.
 - Sync is non-destructive when crypto is disabled, relay reads fail, or no relay reports a successful read.
 - Payload JSON uses `kotlinx.serialization`. NIP-01 event preimage serialization is kept separate from note payload serialization.
@@ -41,7 +41,7 @@ Other Note uses NIP-78 application-specific data events:
   - `["alt", "Encrypted Other Note note"]`
   - `["client", "Other Note"]`
 - Event pubkey is the user's public key.
-- Event content is intended to be the NIP-44 v2 encrypted note payload JSON, encrypted to self.
+- Event content is the NIP-44 v2 encrypted note payload JSON, encrypted to self.
 
 The encrypted note payload schema is versioned:
 
@@ -90,17 +90,17 @@ Current direct `nsec` use is session-only by default. On Android, the user may e
 
 The sign-in screen can create a fresh Nostr identity. This generates a new private key, displays the `nsec` for the user to save in a secure password manager, OS credential store, or signer such as Amber, and requires explicit acknowledgement before the key is used for the current session. On Android and Linux desktop, the generated identity can also be saved explicitly to supported OS-backed secure storage. When production crypto and a relay client are available, the generated session can encrypt, sign, publish, decrypt, edit, and delete encrypted `kind: 30078` notes. Losing the generated `nsec` means losing access to encrypted notes for that identity if no signer/keyring/password-manager copy exists. Other Note does not silently store or recover it.
 
-The key-management policy is documented in [docs/key-management.md](docs/key-management.md). The sign-in screen prioritizes Android signer/NIP-55 first on Android, then NIP-46 remote signer/bunker when available, then session-only pasted `nsec`, with fresh identity generation as a lower-emphasis deliberate flow. Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side; see [docs/web-client-architecture.md](docs/web-client-architecture.md) for the web planning document.
+The key-management policy is documented in [docs/key-management.md](docs/key-management.md). The sign-in screen prioritizes Android signer/NIP-55 first on Android, then NIP-46 remote signer/bunker when available, then session-only pasted `nsec`, with fresh identity generation as a lower-emphasis deliberate flow. Persistent direct-key convenience storage is explicit and OS-backed on Android and Linux desktop. Other Note Web keeps signing, encryption, and decryption fully client-side or signer-delegated; see [docs/web-client-architecture.md](docs/web-client-architecture.md).
 
 ## Android External Signer Status
 
 Android builds include NIP-55 discovery, public-key request, internal coverage for signer primitives, and relay-backed signer note creation/edit/delete/recovery:
 
 - The manifest declares a `nostrsigner:` query so the app can discover compatible Android signer apps.
-- Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary planned/tested signer target, but any compatible signer can be detected.
+- Discovery is generic NIP-55 intent discovery, not Amber-only. Amber is the primary tested signer target, but any compatible signer can be detected.
 - When a NIP-55 signer is detected, the login screen presents Android signer as the recommended Android path, shows remote signer/bunker as an advanced secondary option when available, and keeps the direct `nsec` field as a lower-emphasis session-only fallback.
 - Pressing "Use Android signer" explicitly launches a NIP-55 `get_public_key` intent. If the signer approves, Other Note creates a signer-backed session with public key, `npub`, and signer package metadata only.
-- After successful Android signer login, Other Note can remember the signer package, account pubkey, and local active-session state in app-private no-backup storage. Future launches can restore the authenticated app shell without opening Amber just to continue the session.
+- After successful Android signer login, Other Note can remember the signer package, account pubkey, and local active-session state in app-private no-backup storage. Subsequent launches can restore the authenticated app shell without opening Amber just to continue the session.
 - Remembered Android signer metadata is not saved-key storage: the user private key remains in the signer app. Log out disables automatic session restoration, and "Forget Android signer" removes only this app's saved signer metadata from the device.
 - Internal tests and helper code cover the NIP-55 `ContentResolver` `SIGN_EVENT` path using harmless unpublished events. These development test actions are no longer exposed in the normal app UI.
 - The initial `get_public_key` request asks for optional `sign_event` permissions for kind `1`, encrypted note kind `30078`, and relay-list kind `10002`, plus NIP-44 encrypt/decrypt permissions so compatible signers can approve the ContentResolver requests.
@@ -141,7 +141,7 @@ Manual Android signer test with Amber or another NIP-55 signer:
 
 ## NIP-46 Remote Signer Status
 
-Other Note includes a first production-safe foundation for NIP-46 remote signer / bunker login:
+Other Note includes production-safe NIP-46 remote signer / bunker login:
 
 - The login screen accepts a `bunker://<remote-signer-pubkey>?relay=<relay>&secret=<optional-secret>` token.
 - The login screen explains that the private key stays in the remote signer, summarizes the permissions Other Note requests, and shows pairing progress while waiting for signer approval.
@@ -158,7 +158,7 @@ Other Note includes a first production-safe foundation for NIP-46 remote signer 
 - Remote `nip44_encrypt` and `nip44_decrypt` are used for note save/edit/delete/recovery. The remote signer may see plaintext note payloads during these operations by design; use only a remote signer you trust with note plaintext.
 - Durable event cache and pending-write stores remain unchanged: they persist only signed encrypted events and safe relay metadata scoped by account pubkey. NIP-46 token secrets, decrypted notes, and decrypted payload JSON are not persisted. The reusable NIP-46 client communication key may be stored separately as a saved remote-signer session so the bunker can recognize this app after restart.
 - Pending relay writes retry by republishing already signed encrypted events for the same user pubkey; retry does not require storing a user private key.
-- Client-initiated `nostrconnect://` URI generation is available in the protocol layer for tests/future UI, but the current new-pairing login path is pasted `bunker://`.
+- Client-initiated `nostrconnect://` URI generation is available in the protocol layer for tests; the current new-pairing login path is pasted `bunker://`.
 - Android NIP-46 login and remote signer requests run from background coroutines. Relay publish/fetch waits, response polling, JSON parsing, and NIP-44/signing work must not block Compose input dispatch or recomposition.
 - Editor save keeps the draft open while remote signer requests are pending. Signer-transport failures are shown inside the editor and do not create a local note or enqueue an app note pending write.
 
@@ -201,7 +201,7 @@ Prerequisites:
 
 - JDK 17 or newer.
 - Android SDK for Android builds.
-- Node.js and npm for the Kotlin/JS web skeleton build. The Gradle configuration uses the system Node executable instead of downloading Node or Yarn.
+- Node.js and npm for the Kotlin/JS web build. The Gradle configuration uses the system Node executable instead of downloading Node or Yarn.
 - Network access the first time Gradle resolves Compose Multiplatform and Kotlin plugin artifacts.
 - `local.properties` is required for Android builds when `ANDROID_HOME` is not set. It should contain `sdk.dir=/path/to/android/sdk` and must not be committed.
 - Debian packaging requires a full JDK 17+ with `jpackage`. Android Studio's bundled JBR is not enough.
@@ -296,13 +296,13 @@ Runtime troubleshooting:
 - Verbose fetch diagnostics include safe timing fields such as `duration_ms`, query shape, fetched event counts, valid event counts, and rejected reason classes. They do not include keys, ciphertext, plaintext, note bodies, or decrypted JSON.
 - If no note appears after sync, enable relay diagnostics to distinguish: no relay returned events, returned events were rejected, all relays failed/timed out, or the newest event is a tombstone.
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
-- Current desktop and Android relay recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
+- Current desktop and Android relay recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is outside the current release scope; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-Non-Linux desktop keyring backends, richer client-initiated NIP-46 pairing UI, and remote profile banner rendering are intentionally future work. Full-note view can render the tested Markdown subset, safe links, and supported HTTPS inline note images; the signed-in identity line can render a safe profile thumbnail; note cards and editors keep Markdown, URLs, and image references as raw text.
+Non-Linux desktop keyring backends, richer client-initiated NIP-46 pairing UI, and remote profile banner rendering are outside the current release scope. Full-note view can render the tested Markdown subset, safe links, and supported HTTPS inline note images; the signed-in identity line can render a safe profile thumbnail; note cards and editors keep Markdown, URLs, and image references as raw text.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
-The web preview output is generated under `web/build/dist/js/productionExecutable/`. It currently supports in-memory NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with default session-only behavior and explicit opt-in remembered remote-signer reconnect, session-only direct `nsec` fallback sign-in with default-off browser/password-manager form hints, session-only fresh identity generation, read-only note loading, basic signer-backed or direct-key note create/edit/delete, local in-memory note search and sort, selectable built-in visual themes, full-note-only safe Markdown/link/image rendering, active-account profile metadata display with a safe thumbnail, session-only note relay selection with per-relay encrypted-event stats, session-only import of the active user's published kind `10002` write relays, bounded session-only relay migration for encrypted note events when note relays change, and manual session-only Sync/Migrate for the current web note relay list. The web client may persist only the generic theme ID under `on.web.theme` and the explicit remembered NIP-46 communication-session record under `on.web.nip46`; durable direct-key sessions, durable generated identities, durable note caches, persistent pending writes, durable note relay preferences, durable note search/sort preferences, and durable web relay migration queues remain future work governed by [docs/web-client-architecture.md](docs/web-client-architecture.md). Web static hosting and CSP checks are documented in [docs/web-deployment-security.md](docs/web-deployment-security.md).
+The web output is generated under `web/build/dist/js/productionExecutable/`. It supports in-memory NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with default session-only behavior and explicit opt-in remembered remote-signer reconnect, session-only direct `nsec` fallback sign-in with default-off browser/password-manager form hints, session-only fresh identity generation, encrypted note loading, signer-backed or direct-key note create/edit/delete, local in-memory note search and sort, selectable built-in visual themes, full-note-only safe Markdown/link/image rendering, active-account profile metadata display with a safe thumbnail, session-only note relay selection with per-relay encrypted-event stats, session-only import of the active user's published kind `10002` write relays, bounded session-only relay migration for encrypted note events when note relays change, and manual session-only Sync/Migrate for the current web note relay list. The web client may persist only the generic theme ID under `on.web.theme` and the explicit remembered NIP-46 communication-session record under `on.web.nip46`; it has no durable direct-key sessions, durable generated identities, durable note caches, persistent pending writes, durable note relay preferences, durable note search/sort preferences, or durable web relay migration queues. Web static hosting and CSP checks are documented in [docs/web-deployment-security.md](docs/web-deployment-security.md).
 
 ## Safe Test Commands
 
@@ -380,14 +380,14 @@ Platform code:
 
 - `androidMain`: Android activity, NIP-55 signer adapters, bounded Android relay client, and app-private durable encrypted-event cache/pending-write stores for external-signer sessions.
 - `desktopMain`: Compose Desktop window entry point, bounded WebSocket relay client, and file-backed developer runtime cache/pending-write stores.
-- `web`: standalone Kotlin/JS preview shell. It intentionally does not depend on the native app runtime. Current web auth includes in-memory NIP-07, default session-only NIP-46 public-key sign-in with explicit opt-in remembered remote-signer reconnect, session-only direct `nsec`, and session-only generated identities, with in-memory note loading, local note search/sort, persisted generic theme preference, signer-backed create/edit/delete, text-only profile metadata, session-only note relay selection and per-relay encrypted-event stats, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays when the active signer supports the required capabilities. Browser storage for user private keys, direct `nsec`, generated identities, notes, note events, note relay settings, relay stats, profile data, durable relay preferences, durable web relay migration queues, durable note caches, durable note search/sort preferences, and persistent pending writes is not implemented.
+- `web`: standalone Kotlin/JS static web client. It intentionally does not depend on the native app runtime. Current web auth includes in-memory NIP-07, default session-only NIP-46 public-key sign-in with explicit opt-in remembered remote-signer reconnect, session-only direct `nsec`, and session-only generated identities, with in-memory note loading, local note search/sort, persisted generic theme preference, signer-backed create/edit/delete, profile metadata, session-only note relay selection and per-relay encrypted-event stats, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays when the active signer supports the required capabilities. Browser storage for user private keys, direct `nsec`, generated identities, notes, note events, note relay settings, relay stats, profile data, durable relay preferences, durable web relay migration queues, durable note caches, durable note search/sort preferences, and persistent pending writes is absent.
 
-## Known Limitations And TODOs
+## Known Limitations
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
 - Broaden desktop keyring support beyond Linux Secret Service where needed.
 - Keep remote profile image loading limited to the active-account thumbnail; profile banners and profile image caching remain disabled.
-- Keep the practical Markdown renderer focused on the tested subset; tables, task lists, raw HTML rendering, math, diagrams, syntax highlighting, video, and richer embeds remain future work.
+- Keep the practical Markdown renderer focused on the tested subset; tables, task lists, raw HTML rendering, math, diagrams, syntax highlighting, video, and richer embeds are outside the current release scope.
 
 ## License
 
