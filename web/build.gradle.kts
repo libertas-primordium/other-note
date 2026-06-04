@@ -37,6 +37,7 @@ val webSecuritySourceCheck by tasks.registering {
             include("**/*.html")
             include("**/*.css")
             include("**/*.js")
+            include("**/*.webmanifest")
         }.files
 
         val forbiddenRuntimePatterns = listOf(
@@ -422,6 +423,56 @@ val webSecuritySourceCheck by tasks.registering {
         check(indexText.contains("""<script src="other-note-web.js"></script>""")) {
             "Web index.html should load only the self-hosted generated bundle."
         }
+        listOf(
+            """<meta name="theme-color" content="#2a0f45">""",
+            """<meta name="apple-mobile-web-app-capable" content="yes">""",
+            """<meta name="apple-mobile-web-app-title" content="Other Note">""",
+            """<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">""",
+            """<link rel="manifest" href="manifest.webmanifest">""",
+            """<link rel="apple-touch-icon" href="icons/other-note-180.png">""",
+        ).forEach { requiredInstallMetadata ->
+            check(indexText.contains(requiredInstallMetadata)) {
+                "Web index.html is missing installability metadata: $requiredInstallMetadata"
+            }
+        }
+        val manifest = resourceDir.file("manifest.webmanifest").asFile
+        check(manifest.isFile) {
+            "Web app manifest is missing."
+        }
+        val manifestText = manifest.readText()
+        listOf(
+            """"name": "Other Note"""",
+            """"short_name": "Other Note"""",
+            """"start_url": "/" """.trim(),
+            """"scope": "/" """.trim(),
+            """"display": "standalone"""",
+            """"background_color": "#050507"""",
+            """"theme_color": "#2a0f45"""",
+            """"prefer_related_applications": false""",
+        ).forEach { requiredManifestField ->
+            check(manifestText.contains(requiredManifestField)) {
+                "Web app manifest is missing required field: $requiredManifestField"
+            }
+        }
+        mapOf(
+            "icons/other-note-192.png" to "192x192",
+            "icons/other-note-512.png" to "512x512",
+        ).forEach { (iconPath, iconSize) ->
+            check(manifestText.contains(""""src": "$iconPath"""") && manifestText.contains(""""sizes": "$iconSize"""")) {
+                "Web app manifest must include PNG icon $iconPath with size $iconSize."
+            }
+            check(resourceDir.file(iconPath).asFile.isFile) {
+                "Web app manifest icon is missing: $iconPath"
+            }
+        }
+        check(resourceDir.file("icons/other-note-180.png").asFile.isFile) {
+            "Apple touch icon is missing."
+        }
+        listOf("serviceWorker", "CacheStorage", "indexedDB", "sessionStorage", "localStorage", "document.cookie").forEach { forbiddenManifestPattern ->
+            check(!manifestText.contains(forbiddenManifestPattern)) {
+                "Web app manifest must not introduce storage/cache behavior: $forbiddenManifestPattern"
+            }
+        }
         check(!indexText.contains("<img", ignoreCase = true)) {
             "Web index.html must not render static image tags; runtime image rendering is limited to reviewed full-note and profile-thumbnail paths."
         }
@@ -596,6 +647,7 @@ val webSecuritySourceCheck by tasks.registering {
             "default-src 'self'",
             "script-src 'self'",
             "img-src 'self' data: https:",
+            "manifest-src 'self'",
             "connect-src 'self' wss:",
             "object-src 'none'",
             "base-uri 'none'",
