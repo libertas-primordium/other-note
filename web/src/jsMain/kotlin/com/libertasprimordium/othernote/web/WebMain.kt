@@ -84,6 +84,9 @@ private var activeRelayMigrationService = WebRelayMigrationService()
 private var activeRelayStatsFetcher = relayStatsFetcherForCurrentRelays()
 private var authAttemptGeneration = 0
 
+internal const val WebRelayRetentionWarningText =
+    "Public relays are not guaranteed to retain your notes forever. Use multiple relays at minimum. Ideally, include at least one personal relay that you control."
+
 private sealed interface WebNoteEditMode {
     data object Idle : WebNoteEditMode
     data object Creating : WebNoteEditMode
@@ -252,6 +255,9 @@ private fun noteRelaySettingsContent(): WebElement =
     element("div", "panel-content") {
         appendChild(textElement("p", "body", "These relays fetch and publish your encrypted notes."))
         appendChild(textElement("p", "body small-gap", "Relay choices are kept in memory for this browser session."))
+        appendChild(element("section", "editor-panel relay-retention-warning") {
+            appendChild(textElement("p", "body", WebRelayRetentionWarningText))
+        })
         relayListStatusCopy()?.let { copy ->
             appendChild(textElement("p", relayListStatusClass(), copy))
         }

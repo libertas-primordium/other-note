@@ -78,7 +78,7 @@ Users may enter relay hostnames with or without `wss://`; for example, `relay.pr
 
 New relays are tested before being added. Direct/session-only key sessions publish and fetch a harmless non-note test event from the candidate relay. Signer-backed or local-only contexts use a bounded read/connect test instead, so relay testing does not mutate NIP-46 signer-transport relays or issue raw signer request payloads. If the test succeeds, the relay is added silently. If it fails, Other Note shows a safe warning and asks whether to cancel or continue adding the relay anyway.
 
-Public relays may purge old events. Add a relay you control for stronger long-term retention.
+Public relays are not guaranteed to retain encrypted note events forever. Use multiple relays at minimum. Ideally, include at least one personal relay that you control.
 
 Relay changes execute a local migration plan before settings are finalized. Other Note first signs and publishes an updated public kind `10002` relay-list event to the union of old and requested app relays, then fetches signed encrypted note history from the current relays before removal, keeps the encrypted event cache, selects the latest signed encrypted event for each note address, and republishes those already-signed encrypted events to newly added relays. If relay-list publishing, removed-relay fetch, or added-relay writes partially fail, the settings screen shows a safe warning and lets the user cancel or continue. Migration never decrypts and republishes plaintext, and it does not touch NIP-46 signer-transport relays.
 
