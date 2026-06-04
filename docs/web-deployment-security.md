@@ -1,6 +1,6 @@
 # Web deployment security
 
-This document is the deployment/security checklist for the static Other Note web preview. It is not a public release certification. The web preview is functional enough to sign in with NIP-07, NIP-46, explicit remembered NIP-46 remote-signer reconnect, or a lower-emphasis session-only direct `nsec` fallback; create a fresh identity for the current browser session; select a built-in visual theme; display text-only profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; and choose session-only note relays, but it remains security-sensitive and intentionally memory-only except for the documented theme and remembered NIP-46 storage records.
+This document is the deployment/security checklist for the static Other Note web client. The web client can sign in with NIP-07, NIP-46, explicit remembered NIP-46 remote-signer reconnect, or a lower-emphasis session-only direct `nsec` fallback; create a fresh identity for the current browser session; select a built-in visual theme; display active-account profile metadata; load encrypted notes; search/sort the currently loaded in-memory note list; create/edit/delete notes; render full-note Markdown links/images; and choose session-only note relays. It remains security-sensitive and intentionally memory-only except for the documented theme and remembered NIP-46 storage records.
 
 Use this document with [web-client-architecture.md](web-client-architecture.md) and [key-management.md](key-management.md).
 
@@ -13,7 +13,7 @@ Use this document with [web-client-architecture.md](web-client-architecture.md) 
 - Do not add analytics, telemetry, crash reporting, remote logging, trackers, third-party scripts, or remote fonts.
 - Do not add a service worker or offline cache unless a later reviewed cache/security design explicitly approves it.
 - Do not log request bodies, signer payloads, relay payloads, note plaintext, `nsec` values, bunker tokens, or other account secrets.
-- Web fonts must be same-origin static assets. The current web preview bundles Roboto WOFF2 files under `fonts/roboto/` with Apache-2.0 attribution; do not replace them with Google Fonts, CDN CSS, remote font URLs, or `local(...)`-only font loading.
+- Web fonts must be same-origin static assets. Other Note Web bundles Roboto WOFF2 files under `fonts/roboto/` with Apache-2.0 attribution; do not replace them with Google Fonts, CDN CSS, remote font URLs, or `local(...)`-only font loading.
 
 ## Production Security Headers
 
@@ -29,7 +29,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
 Cross-Origin-Opener-Policy: same-origin
 ```
 
-The current static shell has inline CSS, so the CSP includes `style-src 'self' 'unsafe-inline'`. A later styling cleanup can move CSS into a separate bundled file and remove `'unsafe-inline'` from `style-src`.
+The current static web build has inline CSS, so the CSP includes `style-src 'self' 'unsafe-inline'`. Moving CSS into a separate bundled file would allow removal of `'unsafe-inline'` from `style-src`.
 
 `connect-src 'self' wss:` is a conscious tradeoff. Users can select arbitrary Nostr note relays, and NIP-46 signer transport also uses WebSocket relays. The web client still keeps signing, encryption, and decryption client-side or signer-delegated; relay traffic is expected encrypted Nostr traffic, not server-side note processing.
 
@@ -45,7 +45,7 @@ The command below uses webpack dev server:
 
 Webpack dev server may use eval-like development code and local WebSocket connections for live reload. A strict production CSP in `index.html` can therefore blank the local page with an `unsafe-eval` violation before Other Note code runs. The source `index.html` intentionally does not include a CSP meta tag; production CSP must be tested through the final static host or a local production-like server that sends HTTP headers.
 
-If a temporary development CSP is needed for local experiments, keep it separate from the production header template. Development-only allowances may include loopback WebSocket sources such as `ws://localhost:*` or `ws://127.0.0.1:*`. Production should continue to use `connect-src 'self' wss:` for Nostr relay traffic.
+If a development CSP is needed for local experiments, keep it separate from the production header template. Development-only allowances may include loopback WebSocket sources such as `ws://localhost:*` or `ws://127.0.0.1:*`. Production should continue to use `connect-src 'self' wss:` for Nostr relay traffic.
 
 ## Browser Storage Policy
 
@@ -59,7 +59,7 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 - Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved by Other Note, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session. The direct `nsec` field may offer a default-off browser/password-manager opt-in that changes only form/autocomplete hints. If the user enables it, any save/fill behavior is controlled by the user's browser or password manager, not by Other Note app storage.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted. The signed-in account header may render the active account's supported HTTPS profile `picture` as a small thumbnail with a same-origin placeholder fallback; remote `banner` URLs remain inert.
-- Full-note view may render the tested Markdown subset and user-authored HTTPS inline image URLs from note content. Raw HTML remains escaped text. Cards, previews, and editors must not prefetch or render remote images or active Markdown.
+- Full-note view may render the tested Markdown subset and user-authored HTTPS inline image URLs from note content. Raw HTML remains escaped text. Note cards and editors must not prefetch or render remote images or active Markdown.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
 
 Forbidden for auth/session/key/note/draft/pending-write data:
@@ -112,7 +112,7 @@ Manual checks:
 - [ ] Confirm NIP-07 sign-in works when a compatible extension is available.
 - [ ] Confirm NIP-46 sign-in works with a real remote signer.
 - [ ] Load notes.
-- [ ] Confirm active-account profile text appears when available, and no remote profile images are fetched or rendered.
+- [ ] Confirm active-account profile text appears when available, and supported profile images render only in the signed-in account header with the same-origin placeholder fallback.
 - [ ] Create a note.
 - [ ] Edit the note.
 - [ ] Delete/tombstone the note.

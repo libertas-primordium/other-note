@@ -1,121 +1,90 @@
-# Web client architecture plan
+# Web Client Architecture
 
-This document is a design plan for a future Other Note web client. A Kotlin/JS web preview exists with NIP-07 public-key sign-in, NIP-46 `bunker://` remote-signer public-key sign-in with default session-only behavior and explicit opt-in remembered remote-signer reconnect, session-only direct `nsec` fallback sign-in, session-only fresh identity generation, read-only note loading, local in-memory note search/sort, selectable built-in themes, basic signer-backed or direct-key note create/edit/delete, session-only note relay selection with per-relay encrypted-event stats, text-only active-account profile metadata display, session-only kind `10002` write-relay import, best-effort relay-list publishing, bounded session-only encrypted note relay migration on relay changes, and manual session-only Sync/Migrate for current web note relays held in memory only. The only current browser-persisted web values are the generic theme ID under `on.web.theme` and the explicit remembered NIP-46 communication-session record under `on.web.nip46`; browser persistence for direct-key sessions, generated identities, note relay preferences, relay migration queues, note search/sort preferences, note caches, pending writes, and release deployment is not implemented. Android and Debian/Linux desktop remain the active tested targets.
+Other Note Web is a static Kotlin/JS client for encrypted Nostr notes. It preserves the native app security model: signing, encryption, decryption, note reduction, and Markdown rendering happen in the browser or through a user-approved signer. There is no server-side note processing.
 
-The first web client should be a fallback for users who cannot yet use a native Android, Linux, Windows, macOS, or iOS client. It must preserve the native app's core security model: signing, encryption, decryption, note reduction, and Markdown rendering happen on the client side.
+The web client supports:
 
-The native clients do not bundle a custom app font. Android sets the app font family to the platform `sans` family, which maps to Roboto on Android, and the Compose desktop client uses Material/Compose default sans text. To make the web preview render closer to Android and the Material default, the web client self-hosts Roboto WOFF2 files under `web/src/jsMain/resources/fonts/roboto/`. Those files are derived from Debian `fonts-roboto-unhinted` 2:0~20170802-4, whose upstream is <https://github.com/google/roboto>, and are licensed under Apache-2.0. The web app must load those font files from same-origin static resources only, with no Google Fonts, CDN fonts, remote font CSS, or external font hosts.
+- NIP-07 browser-extension sign-in.
+- NIP-46 `bunker://` remote-signer sign-in, with new pairings session-only by default.
+- Explicit opt-in remembered NIP-46 remote-signer reconnect under the generic storage key `on.web.nip46`.
+- Session-only direct `nsec` sign-in, with default-off browser/password-manager form hints controlled by the user.
+- Session-only generated identities with explicit `nsec` recovery acknowledgements.
+- Encrypted kind `30078` note read/create/edit/delete when the active signer can encrypt, decrypt, and sign.
+- In-memory note search and sort.
+- Built-in themes, with only the generic selected theme ID persisted under `on.web.theme`.
+- Active-account profile display with a safe thumbnail fallback.
+- Session-only note relay settings, NIP-65 relay-list import/publish, relay migration, manual Sync/Migrate, and per-relay encrypted-event stats.
+- Full-note-only Markdown rendering, safe links, Markdown images, and bare HTTPS image URLs with supported extensions.
 
-## Non-negotiable security rules
+The native clients do not bundle a custom app font. Android sets the app font family to the platform `sans` family, which maps to Roboto on Android, and the Compose desktop client uses Material/Compose default sans text. To make Other Note Web render closer to Android and Material defaults, the web client self-hosts Roboto WOFF2 files under `web/src/jsMain/resources/fonts/roboto/`. Those files are derived from Debian `fonts-roboto-unhinted` 2:0~20170802-4, whose upstream is <https://github.com/google/roboto>, and are licensed under Apache-2.0. The web app loads those font files from same-origin static resources only, with no Google Fonts, CDN fonts, remote font CSS, or external font hosts.
 
-- MUST keep Nostr signing client-side.
-- MUST keep note encryption client-side.
-- MUST keep note decryption client-side.
-- MUST NOT send plaintext notes to a server.
-- MUST NOT send `nsec` values or private keys to a server.
-- MUST NOT store `nsec` values or private keys in `localStorage`.
-- MUST NOT store `nsec` values or private keys in IndexedDB.
-- MUST NOT store `nsec` values or private keys in cookies.
-- MUST NOT store `nsec` values or private keys in server sessions.
-- MUST NOT log `nsec` values, private keys, bunker tokens, signer secrets, decrypted notes, decrypted payload JSON, or raw decrypted NIP-44 payloads.
+## Security Rules
+
+- MUST keep Nostr signing client-side or signer-delegated.
+- MUST keep note encryption client-side or signer-delegated.
+- MUST keep note decryption client-side or signer-delegated.
+- MUST NOT send plaintext notes to an Other Note server.
+- MUST NOT send `nsec` values or private keys to an Other Note server.
+- MUST NOT store direct `nsec` values, generated identity keys, or user private keys in `localStorage`, sessionStorage, IndexedDB, cookies, Cache Storage, or server sessions.
+- MUST NOT log `nsec` values, private keys, bunker tokens, signer secrets, decrypted notes, decrypted payload JSON, full event JSON, raw decrypted NIP-44 payloads, or full sensitive URLs.
 - MUST NOT add analytics or telemetry that can capture note text, keys, signer payloads, relay payloads, account secrets, or sensitive diagnostics.
-- MUST treat direct `nsec` paste and generated web identities as session-only unless a future explicitly approved design changes that.
-- MUST prefer NIP-07 browser extensions and NIP-46 remote signers for normal web sign-in.
-- MUST keep NIP-46 signer transport relays separate from note write/fetch relays.
+- MUST keep NIP-46 signer transport relays separate from note fetch/publish relays.
+- MUST keep direct `nsec` paste and generated web identities session-only from Other Note app storage.
 
-## Supported web sign-in strategy
+## Sign-In
 
 Recommended priority:
 
-1. Phase 1: NIP-07 browser extension signer.
-2. Phase 1 or 2: NIP-46 remote signer/bunker.
-3. Fallback: direct `nsec` paste for the current browser session only.
-4. Deliberate recovery flow: fresh generated identity for the current browser session only.
+1. NIP-07 browser extension signer.
+2. NIP-46 remote signer/bunker.
+3. Direct `nsec` paste for the current browser session only.
+4. Fresh generated identity for the current browser session only.
 
-Explicitly unsupported initially:
+For NIP-07, the browser extension owns the private key and performs signing. Any NIP-44 encrypt/decrypt support uses the extension only if it exposes the needed APIs safely; otherwise encrypted note operations are unavailable through that signer.
 
-- Storing a user `nsec` or private key in browser durable storage.
-- Creating a web-managed saved `nsec` identity.
-- Server-side auth sessions for encrypted notes.
-- Android NIP-55. NIP-55 is Android-native signer delegation and does not apply to a static web app.
+For NIP-46, the remote signer owns the user's private key. Other Note uses a local NIP-46 communication key for encrypted kind `24133` request/response traffic. Web persistence of that communication key is default-off and allowed only when the user explicitly checks "Remember this remote signer on this browser." The remembered record is sensitive because it can request signer actions from the remote signer until revoked or forgotten, but it is not the user's private key and remains separate from note relays and note content. The remote signer may see plaintext note payloads during signer-mediated NIP-44 encrypt/decrypt operations by design.
 
-UX requirements for the first web sign-in surface:
+For direct `nsec` fallback, the private key exists only in browser memory for the active session. It may be used to sign events and perform NIP-44 encrypt/decrypt locally, then is discarded on logout, refresh, tab close, or process end as far as browser behavior allows. Users may explicitly opt in to form/autocomplete semantics that let a compatible browser or password manager offer to save/fill the field. That storage is user-controlled external browser/password-manager storage, not Other Note app-controlled storage.
 
-- Detect whether `window.nostr` is available before offering NIP-07 as the recommended action.
-- Explain clearly when no extension signer is available.
-- Offer a remote signer/bunker option where feasible.
-- Keep direct `nsec` paste lower emphasis and session-only.
-- Keep browser/password-manager save/fill behavior for direct `nsec` paste default-off, explicit, and clearly separate from Other Note app storage.
-- Keep fresh identity generation lower emphasis, explicit, and session-only.
-- Clear direct `nsec` input after successful login or logout.
-- Show generated `nsec` only inside the generated-identity acknowledgement flow, then clear it on cancel, session use, logout, refresh, or session replacement.
-- Ensure logout clears session-only secrets and authenticated in-memory state.
+Generated identities are a separate deliberate flow. The generated `nsec` is displayed only until the user cancels or acknowledges recovery risk and uses it for the current session. Other Note Web cannot recover the key after the generated-key state is cleared.
 
-## Client-side cryptography boundary
+## Browser Storage
 
-For NIP-07, the browser extension owns the private key and performs signing. Any NIP-44 encrypt/decrypt support must use the extension only if the extension exposes the needed APIs safely; otherwise the web client must not pretend that encrypted note operations are available through that signer.
+The web client persists only two records:
 
-For NIP-46, the remote signer owns the user's private key. Other Note may use a local NIP-46 communication key for encrypted kind `24133` request/response traffic. Web persistence of that communication key is default-off and allowed only when the user explicitly checks "Remember this remote signer on this browser." The remembered record is sensitive because it can request signer actions from the remote signer until revoked or forgotten, but it is not the user's private key and must remain separate from note relays and note content. The remote signer may see plaintext note payloads during signer-mediated NIP-44 encrypt/decrypt operations by design.
+- `on.web.theme`: a generic selected theme ID.
+- `on.web.nip46`: an explicit opt-in remembered NIP-46 communication-session record.
 
-For direct `nsec` fallback, the private key may exist only in browser memory for the active session. It may be used to sign events and perform NIP-44 encrypt/decrypt locally, then must be discarded on logout, refresh, tab close, or process end as far as browser behavior allows.
+The remembered NIP-46 record may store only version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps. It must not store the original bunker token secret, user private key, direct `nsec`, generated identity key, note data, note relay settings, relay stats, profile data, search/sort state, or pending writes.
 
-Current direct-key implementation status: the web runtime can decode a valid `nsec`, generate a fresh key through browser secure random, derive the account pubkey, encrypt/decrypt NIP-44 payloads to self, sign and validate kind `30078` note events, and clear the in-memory key bytes on logout/session replacement. The signed-out UI exposes pasted `nsec` only as a lower-emphasis session-only fallback below NIP-07 and NIP-46. The direct input is password-style, uses browser-assistance suppression by default, clears the draft on every submit attempt, avoids putting the raw value in DOM attributes or URLs, and explains that refresh/logout forgets the session. Users may explicitly opt in to form/autocomplete semantics that let a compatible browser or password manager offer to save/fill the field. That storage is user-controlled external browser/password-manager storage, not Other Note app-controlled storage; Other Note still does not write direct `nsec` values, private keys, direct-key auth state, or direct-key sessions to browser storage. Fresh identity generation is a separate deliberate flow that displays the generated `nsec` only until the user cancels or acknowledges recovery risk and uses it for the current session.
+Everything else is memory-only:
 
-Decrypted note text may exist in browser memory and UI state only. It must not be sent to an Other Note server, written to logs, stored in durable browser storage, or captured by analytics.
+- Active auth state.
+- Direct-key and generated-identity sessions.
+- Notes and decrypted payloads.
+- Drafts and pending writes.
+- Note relay choices and relay migration state.
+- Relay stats.
+- Profile metadata.
+- Search and sort state.
+- Rendered Markdown output.
+- Link and image URLs.
 
-The web implementation should reuse existing note event and reducer semantics where practical: kind `30078`, the `other-note:note:<note_id>` `d` tag, encrypted note payload schema, latest-event/tombstone materialization, and display-only Markdown rendering.
+Direct `nsec` fallback must not write the key to `localStorage`, sessionStorage, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs.
 
-## Relay communication strategy
+## Notes And Relays
 
-The first web design should connect directly from the browser to public Nostr relays over WebSocket where possible. Do not use an Other Note relay proxy for normal operation in the first implementation.
+Other Note Web uses the same encrypted note event semantics as the native clients: kind `30078`, the `other-note:note:<note_id>` `d` tag, encrypted note payload schema, latest-event/tombstone materialization, and display-only Markdown rendering.
 
-Expected relay risks:
+Note relay settings manage relays used to fetch and publish encrypted kind `30078` Other Note events. NIP-46 signer transport relays carry encrypted kind `24133` app/signer traffic and must remain separate from note relays. The note relay settings screen must not show, edit, import, or publish NIP-46 signer transport relays.
 
-- Some relays may not behave consistently with browser WebSocket clients.
-- Browser connection limits and mobile browser lifecycle behavior may interrupt long syncs.
-- Public relays may purge old events or reject writes.
-- Error surfaces must distinguish note relay fetch/publish failures from signer transport failures.
+Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for identity display. The signed-in account header may render the active profile's supported HTTPS `picture` as a small thumbnail with a bundled placeholder fallback; remote `banner` URLs remain inert strings.
 
-Relay-list behavior should mirror native semantics where feasible:
+Full-note rendering may render the tested Markdown subset, linkify safe `http`/`https` URLs, and render supported HTTPS note-content image URLs only after the user opens the full-note view. Raw HTML is not rendered. Note cards and editors keep Markdown, URLs, and image references inert/raw and must not prefetch remote images.
 
-- Note relay settings manage relays used to fetch and publish encrypted kind `30078` Other Note events.
-- Public kind `10002` relay-list import/publish should preserve unrelated relay categories where practical.
-- NIP-46 signer transport relays carry encrypted kind `24133` app/signer traffic and must remain separate from note relays.
-- The note relay settings screen must not show, edit, import, or publish NIP-46 signer transport relays.
-- Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for identity display. The signed-in account header may render the active profile's supported HTTPS `picture` as a small thumbnail with a bundled placeholder fallback; remote `banner` URLs remain inert strings.
-- Full-note rendering may render the tested Markdown subset, linkify safe `http`/`https` URLs, and render supported HTTPS note-content image URLs only after the user opens the full-note view. The subset covers paragraphs, line breaks, headings, bold, italic, bold italic, inline code, fenced code blocks, blockquotes, unordered and ordered lists, horizontal rules, Markdown links/images, bare URLs, and bare image URLs. Raw HTML is not rendered. Note cards, previews, and editors must keep Markdown, URLs, and image references inert/raw and must not prefetch remote images.
+## Deployment
 
-## Storage policy
-
-Initial web storage should be conservative. The implementation currently persists only the generic selected theme ID under `on.web.theme` and the explicit opt-in remembered NIP-46 communication-session record under `on.web.nip46`. All direct-key, generated-identity, note, note relay, profile, search, sort, draft, migration, stats, and pending-write state remains in memory only.
-
-Allowed browser storage, if needed:
-
-- Non-secret UI preferences such as selected theme.
-- Explicit remembered NIP-46 communication-session metadata: version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps.
-
-Forbidden browser storage:
-
-- `nsec` values or private keys.
-- NIP-46 client communication private keys except inside the explicit remembered remote-signer record under `on.web.nip46`.
-- Bunker pairing secrets.
-- Signer secrets or tokens.
-- Decrypted note body text.
-- Decrypted payload JSON.
-- Raw decrypted NIP-44 payloads.
-- Raw sensitive diagnostics.
-- Browser-persisted profile metadata or profile image caches.
-- Browser-persisted note image caches, rendered note output, link URLs, or image URLs.
-- Browser-persisted search queries or sort preferences in the current web preview.
-- Browser-persisted note relay settings, relay stats, note events, relay events, pending writes, or migration queues.
-
-Direct `nsec` fallback must not write the key to `localStorage`, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs. If browser durable storage is introduced later for non-secret data, it must be audited so secrets cannot be accidentally routed into it.
-
-The web direct `nsec` field may expose a default-off option that changes only browser form/autocomplete hints so a user's own browser or password manager may offer save/fill behavior. Other Note must not use Credential Management APIs, hidden username fields, localStorage/sessionStorage/IndexedDB/cookie/Cache Storage, or any app-controlled persistence for direct `nsec` values. Browser/password-manager prompts vary by product, so the UI should describe this as best-effort and safe only in trusted browser profiles or password managers.
-
-## Deployment model
-
-Use a static site or PWA-style deployment model with no server-side note processing.
+Use static hosting with no server-side note processing.
 
 Deployment requirements:
 
@@ -123,123 +92,30 @@ Deployment requirements:
 - Strong Content Security Policy.
 - No third-party analytics.
 - No third-party script injection.
+- No third-party font hosts.
 - No server-side signing, encryption, decryption, or plaintext note processing.
 - No server logs containing note text, `nsec` values, private keys, bunker tokens, signer payloads, or sensitive relay payloads.
 - Immutable/static assets where practical.
-- Service worker support only after a separate cache/security design is reviewed.
+- No service worker or offline cache without a separate reviewed cache/security design.
 
-Served JavaScript has a larger trust surface than native binaries because the code can change at deploy time. Any public web deployment must treat build provenance, asset integrity, CSP, and dependency review as release blockers.
+Served JavaScript has a larger trust surface than native binaries because the code can change at deploy time. Any public web deployment must treat build provenance, asset integrity, CSP, and dependency review as release blockers. The concrete static hosting header template and web smoke checklist live in [web-deployment-security.md](web-deployment-security.md).
 
-The concrete static hosting header template and web smoke checklist live in [web-deployment-security.md](web-deployment-security.md).
+## Shared And Web-Specific Code
 
-## Code sharing plan
+Shared common code covers note models, encrypted payload schema, Nostr event helpers, relay URL validation, note reducer behavior, Markdown parsing, search/sort helpers, theme definitions, profile metadata parsing, and protocol-level NIP-46 helpers where browser-compatible.
 
-Likely shared common code:
+Web-specific code covers the NIP-07 signer adapter, browser WebSocket relay client, browser storage adapter for the two allowed records, browser platform service factory, browser clipboard/link handling, browser-safe diagnostics/error copy, static hosting, CSP, and deployment configuration.
 
-- Note model and encrypted payload schema.
-- Nostr event model and serialization helpers.
-- Note event reducer and tombstone materialization.
-- Relay URL validation and note relay settings rules.
-- Markdown parser/renderer model for the practical supported subset.
-- Local note search and note list sort/filter helpers.
-- Theme definitions.
-- Profile metadata parsing.
-- NIP-46 protocol payloads and token parsing where browser-compatible.
+## Limitations
 
-Likely web-specific code:
-
-- NIP-07 signer adapter for `window.nostr`.
-- Browser WebSocket relay client if the Android OkHttp and desktop JVM clients cannot be reused.
-- Browser storage adapter for non-secret preferences.
-- Browser platform service factory.
-- Browser clipboard/link handling.
-- Browser-safe diagnostics and error copy.
-- Static hosting, CSP, and deployment configuration.
-
-Known unknowns:
-
-- Kotlin/Wasm versus Kotlin/JS target choice.
-- Compose Multiplatform web maturity for the current UI.
-- Quartz and other crypto dependency compatibility in the browser.
-- Browser WebSocket behavior across Chromium, Firefox, mobile browsers, and privacy modes.
-- Whether NIP-07 extensions expose enough NIP-44 support for encrypted notes.
-- Whether web NIP-46 remembered sessions need stronger browser-side protection than the current explicit opt-in bearer-capability record.
-
-## First implementation milestone proposal
-
-Future implementation branches should stay narrow:
-
-- `web-client-skeleton`
-  - Add a web target/build shell.
-  - Render a static app shell.
-  - Add no secret storage.
-  - Add no note sync yet.
-  - Current status: implemented as a standalone Kotlin/JS skeleton module because the native app `commonMain` still carries Android/JVM crypto dependencies that should not be pulled into the browser target without a later compatibility split.
-- `web-client-nip07-signin`
-  - Detect `window.nostr`.
-  - Request the account pubkey.
-  - Establish safe in-memory signed-in state.
-  - Add no note writes until signer capabilities are verified.
-  - Current status: implemented for public-key identity only, with no session persistence, note sync, or note writes.
-- `web-client-nip46-signin`
-  - Add remote signer token parsing and request flow if browser relay transport is ready.
-  - Keep new pairings session-only by default; allow explicit remembered remote-signer reconnect only through the reviewed `on.web.nip46` communication-session record.
-  - Current status: implemented for `bunker://` public-key identity, with in-memory transport keys by default, signer transport relays from the token, explicit opt-in remembered reconnect, and signer-backed note sync/write support when the signer grants the needed methods.
-- `web-client-note-read-only`
-  - Fetch encrypted note events from note relays.
-  - Decrypt through the selected signer path where supported.
-  - Reuse native reducer and Markdown display behavior.
-  - Current status: implemented as an in-memory read-only preview using session-selected note relays, signer-dependent NIP-44 decrypt support, local latest-event/tombstone reduction, and display-only Markdown rendering. It does not persist note events or decrypted notes.
-- `web-client-note-crud`
-  - Create, edit, and tombstone notes using existing kind `30078` event semantics.
-  - Publish only signed encrypted events to note relays.
-  - Keep pending write behavior bounded and visible.
-  - Current status: implemented as an in-memory preview using session-selected note relays and signer-backed NIP-44 encrypt plus `sign_event` capability. It does not persist drafts, note events, pending writes, direct-key browser sessions, or generated identities; only explicit remembered NIP-46 communication-session metadata is allowed for remote-signer reconnect.
-- `web-client-relay-settings`
-  - Let users add, remove, normalize, deduplicate, and restore session-only note relays for web fetch and publish.
-  - Keep NIP-46 signer transport relays separate from note relays.
-  - Current status: implemented as in-memory note relay selection with per-relay encrypted-event stats, session-only import of the active user's latest published kind `10002` write relays, best-effort kind `10002` relay-list publishing, bounded session-only encrypted note event migration when web note relays change, and manual session-only Sync/Migrate for the current web note relay list. It republishes already-signed encrypted kind `30078` events and does not persist relay preferences, decrypted notes, relay events, stats, or migration queues.
-- `web-client-profile-metadata`
-  - Fetch the active account's latest public kind `0` profile metadata from the current web note relays.
-  - Display safe text fields in the signed-in header.
-  - Current status: implemented as in-memory profile display with a small active-account thumbnail. It does not persist profile data or image URLs, unsupported or failing profile pictures fall back to a bundled placeholder, and remote `banner` images remain disabled. Full-note view can render user-authored HTTPS note-content images.
-
-## Risks and open questions
-
-- Browser XSS risk can expose in-memory keys, decrypted notes, signer payloads, and relay payloads.
-- CSP must be strict enough to block script injection and accidental third-party code execution.
-- Service worker caching can preserve stale vulnerable code or sensitive artifacts if designed poorly.
-- Browser durable storage has no OS keychain-equivalent security boundary.
-- NIP-07 extension compatibility varies, especially for NIP-44 encrypt/decrypt.
-- NIP-46 remembered web sessions are a bearer-capability record; users must opt in and retain an easy forget path.
-- Crypto library compatibility and randomness quality must be verified in the chosen browser target.
-- Browser WebSocket relay behavior may differ from Android and JVM clients.
-- Large note sets may need careful incremental fetch/reduction to avoid blocking the UI.
-- Mobile browser lifecycle behavior may interrupt sync, pending writes, and signer prompts.
-- iOS browser limitations may affect extension support and storage behavior.
-- Local-only mode on web needs a separate decision because browser refreshes can destroy in-memory notes and durable local storage may create privacy risks.
-
-## Web implementation acceptance checklist
-
-Future web implementation branches must verify:
-
-- [ ] No user `nsec` or private key is written to durable browser storage.
-- [ ] No plaintext note or decrypted payload is sent to a server.
-- [ ] No analytics or telemetry can capture secrets, note text, signer payloads, or relay payloads.
-- [ ] CSP is reviewed before any public deployment.
-- [ ] NIP-07 sign-in path is tested where implemented.
-- [ ] NIP-46 path is tested where implemented.
-- [ ] Direct `nsec` fallback is session-only.
-- [ ] Logout clears memory secrets and authenticated in-memory state.
-- [ ] Relay settings remain note-relay-only.
-- [ ] NIP-46 signer transport relays remain separate from note relays.
-- [ ] Note reducer behavior matches native latest-event/tombstone semantics.
-- [ ] Markdown rendering, local search, sort/filter, and theme behavior match native where practical.
-- [ ] No raw secrets, decrypted notes, raw signer payloads, or sensitive diagnostics appear in UI or logs.
-- [ ] Manual browser checks cover at least Chromium and Firefox when practical.
-
-## Relation to native clients
-
-Android and Debian/Linux remain the primary active native targets for now. The future web client should fill access gaps for users without a native client, especially before Windows, macOS, and iOS native targets are available.
-
-The web client must not weaken the native app security model. It should reuse shared behavior where that reduces drift, but it should remain conservative about browser-specific risk, especially around durable storage, served JavaScript, third-party scripts, CSP, and signer compatibility.
+- No durable web sessions except explicit opt-in remembered NIP-46 remote-signer communication sessions.
+- Direct `nsec` web flow is session-only from Other Note app storage.
+- Generated identities are session-only from Other Note app storage after the acknowledgement flow clears the generated key.
+- No service worker or offline mode.
+- No durable web note cache.
+- No persistent pending-write queue.
+- No durable web relay preferences.
+- No durable web search/sort preferences.
+- Web relay migration and manual Sync/Migrate are session-only and best-effort; there is no durable migration queue.
+- User-selected relay URLs require broad `wss:` connection allowance in CSP.
+- Remote profile and note images may fetch from their source URL only when rendered.

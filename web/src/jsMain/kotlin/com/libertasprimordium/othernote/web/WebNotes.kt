@@ -60,7 +60,7 @@ internal object WebNoteCopy {
     const val AllDecryptFailed = "Fetched encrypted notes, but none could be decrypted."
     const val NoNotes = "No notes found for this account."
     const val CrudCapabilityUnavailable =
-        "The active signer does not expose the encrypt and sign capabilities needed to save notes in this web preview."
+        "The active signer does not expose the encrypt and sign capabilities needed to save notes in Other Note Web."
     const val EncryptFailed = "Could not encrypt the note with the active signer."
     const val SignFailed = "Could not sign the encrypted note event with the active signer."
     const val EventValidationFailed = "The signer returned an invalid note event."
