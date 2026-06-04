@@ -78,6 +78,8 @@ Other Note Web uses the same encrypted note event semantics as the native client
 
 Note relay settings manage relays used to fetch and publish encrypted kind `30078` Other Note events. NIP-46 signer transport relays carry encrypted kind `24133` app/signer traffic and must remain separate from note relays. The note relay settings screen must not show, edit, import, or publish NIP-46 signer transport relays.
 
+Public relays are not guaranteed to retain encrypted note events forever. Other Note Web shows this directly in Relay Settings and recommends using multiple note relays, ideally including at least one personal relay the user controls.
+
 Web profile metadata reads may fetch the active account's public kind `0` profile event from the current note relays for identity display. The signed-in account header may render the active profile's supported HTTPS `picture` as a small thumbnail with a bundled placeholder fallback; remote `banner` URLs remain inert strings.
 
 Full-note rendering may render the tested Markdown subset, linkify safe `http`/`https` URLs, and render supported HTTPS note-content image URLs only after the user opens the full-note view. Raw HTML is not rendered. Note cards and editors keep Markdown, URLs, and image references inert/raw and must not prefetch remote images.

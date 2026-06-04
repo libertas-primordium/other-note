@@ -25,6 +25,7 @@ import com.libertasprimordium.othernote.ui.AndroidTextFieldAutofillPolicy
 import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.NoteCardAction
 import com.libertasprimordium.othernote.ui.NoteCardActionPresentation
+import com.libertasprimordium.othernote.ui.RelayRetentionWarningText
 import com.libertasprimordium.othernote.ui.SignInInfoTopic
 import com.libertasprimordium.othernote.ui.directNsecAutofillPolicy
 import com.libertasprimordium.othernote.ui.directNsecKeyboardOptions
@@ -118,6 +119,13 @@ class UtilityTests {
 
         assertEquals(DefaultRelays.map { it.url }, store.normalizedUrls())
         assertEquals(DefaultRelays.map { it.url }, RelaySettingsCodec.decodeOrNull(persistence.raw.orEmpty()))
+    }
+
+    @Test
+    fun relayRetentionWarningRecommendsMultipleRelaysAndPersonalRelay() {
+        assertTrue(RelayRetentionWarningText.contains("not guaranteed to retain"))
+        assertTrue(RelayRetentionWarningText.contains("Use multiple relays"))
+        assertTrue(RelayRetentionWarningText.contains("personal relay"))
     }
 
     @Test

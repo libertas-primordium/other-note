@@ -155,6 +155,13 @@ val webSecuritySourceCheck by tasks.registering {
         check(!webMainText.contains("event.asDynamic()")) {
             "Web DOM event handlers must use direct dynamic event properties; event.asDynamic() causes runtime failures in the Kotlin/JS bundle."
         }
+        check(
+            webMainText.contains("WebRelayRetentionWarningText") &&
+                webMainText.contains("not guaranteed to retain your notes forever") &&
+                webMainText.contains("relay-retention-warning"),
+        ) {
+            "Web Relay Settings must render the relay retention warning directly in the modal."
+        }
         listOf("Nip07", "Nip46", "RememberedNip46", "DirectNsec", "GeneratedIdentity").forEach { topic ->
             check(webMainText.contains("signInInfoButton(WebSignInInfoTopic.$topic)") || webMainText.contains("sectionTitleWithInfo(\"") && webMainText.contains("WebSignInInfoTopic.$topic")) {
                 "Signed-out login must expose an accessible info button for WebSignInInfoTopic.$topic."

@@ -144,6 +144,9 @@ internal fun nonCredentialTextAutofillPolicy(platform: AppPlatform): AndroidText
         AndroidTextFieldAutofillPolicy.Default
     }
 
+internal const val RelayRetentionWarningText =
+    "Public relays are not guaranteed to retain your notes forever. Use multiple relays at minimum. Ideally, include at least one personal relay that you control."
+
 private fun Modifier.withAndroidTextFieldAutofillPolicy(policy: AndroidTextFieldAutofillPolicy): Modifier =
     when (policy) {
         AndroidTextFieldAutofillPolicy.Default -> this
@@ -2020,6 +2023,18 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             Text("Other Note uses them for encrypted note events and your public write-relay list.", color = OtherNoteMuted)
             Spacer(Modifier.height(6.dp))
             Text("At least one readable and writable relay is needed for note sync.", color = OtherNoteMuted)
+            Spacer(Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = OtherNotePanel),
+                border = BorderStroke(1.dp, OtherNotePurple),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    RelayRetentionWarningText,
+                    color = OtherNoteText,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
             Spacer(Modifier.height(12.dp))
             AutofillScopedTextField(
                 policy = nonCredentialTextAutofillPolicy(appState.platform),

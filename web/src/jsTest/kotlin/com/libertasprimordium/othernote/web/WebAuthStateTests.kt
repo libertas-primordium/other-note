@@ -92,6 +92,13 @@ class WebAuthStateTests {
         assertEquals("password", Nip46TokenInputType)
         assertTrue(!Nip46TokenInputLabel.lowercase().contains("nsec"))
     }
+
+    @Test
+    fun webRelayRetentionWarningRecommendsMultipleRelaysAndPersonalRelay() {
+        assertTrue(WebRelayRetentionWarningText.contains("not guaranteed to retain"))
+        assertTrue(WebRelayRetentionWarningText.contains("Use multiple relays"))
+        assertTrue(WebRelayRetentionWarningText.contains("personal relay"))
+    }
 }
 
 class WebLayoutMenuStateTests {

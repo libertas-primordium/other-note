@@ -61,6 +61,7 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 - Profile metadata is not persisted. The signed-in account header may render the active account's supported HTTPS profile `picture` as a small thumbnail with a same-origin placeholder fallback; remote `banner` URLs remain inert.
 - Full-note view may render the tested Markdown subset and user-authored HTTPS inline image URLs from note content. Raw HTML remains escaped text. Note cards and editors must not prefetch or render remote images or active Markdown.
 - Drafts, pending writes, note relay preferences, relay stats, search/sort state, and loaded note events are not persisted.
+- Relay Settings warns users that public relays are not guaranteed to retain encrypted note events forever and recommends multiple note relays, ideally including a personal relay the user controls.
 
 Forbidden for auth/session/key/note/draft/pending-write data:
 
