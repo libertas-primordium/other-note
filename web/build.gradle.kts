@@ -252,6 +252,60 @@ val webSecuritySourceCheck by tasks.registering {
         check(!noteCardRenderer.contains("renderMarkdown(") && noteCardRenderer.contains("webNotePreview(note.bodyMarkdown)")) {
             "Web note cards must use raw preview text and must not render active Markdown."
         }
+        val appShellRenderer = Regex(
+            """private fun appShell\(state: WebAuthUiState\): WebElement\s*=(?<body>.*?)private fun appShellClass""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define appShell before appShellClass.")
+        check(appShellRenderer.contains("activeNoteOverlayPanel(signedIn.identity)?.let(::appendChild)")) {
+            "Web signed-in shell must use one note overlay slot for view/edit/delete flows."
+        }
+        val notesPanelRenderer = Regex(
+            """private fun notesPanel\(identity: WebAccountIdentity, notes: WebNoteLoadState\): WebElement\s*=(?<body>.*?)private fun noteListControlsPanel""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define notesPanel before noteListControlsPanel.")
+        check(!notesPanelRenderer.contains("noteEditorPanel(")) {
+            "Web note editor/delete confirmation must not render on the main page behind full-note overlays."
+        }
+        val noteDetailRenderer = Regex(
+            """private fun noteDetailPanel\(note: WebReadOnlyNote\): WebElement\s*=(?<body>.*?)private fun viewedNoteForCurrentState""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define noteDetailPanel before viewedNoteForCurrentState.")
+        check(noteDetailRenderer.contains("note-detail-header") && noteDetailRenderer.contains("note-detail-actions")) {
+            "Web full-note view must render a dedicated sticky action/header area."
+        }
+        listOf(
+            "buttonElement(text = \"Close\"",
+            "buttonElement(text = \"Edit\"",
+            "buttonElement(text = \"Delete\"",
+        ).forEach { action ->
+            check(noteDetailRenderer.contains(action)) {
+                "Web full-note action row must include $action."
+            }
+        }
+        check(noteDetailRenderer.contains("startEditNote(note)") && noteDetailRenderer.contains("confirmDeleteNote(note)") && noteDetailRenderer.contains("closeNoteDetail")) {
+            "Web full-note actions must target the viewed note and preserve Close/Edit/Delete behavior."
+        }
+        val activeNoteOverlayRenderer = Regex(
+            """private fun activeNoteOverlayPanel\(identity: WebAccountIdentity\): WebElement\?\s*\{(?<body>.*?)private fun openNoteDetail""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define activeNoteOverlayPanel before openNoteDetail.")
+        check(activeNoteOverlayRenderer.contains("noteEditorPanel(identity, crudSigner)") && activeNoteOverlayRenderer.contains("viewedNoteForCurrentState()?.let(::noteDetailPanel)")) {
+            "Web active note overlay must choose exactly one edit/delete or full-note view panel."
+        }
+        listOf("startCreateNote", "startEditNote", "confirmDeleteNote").forEach { transition ->
+            val transitionBody = Regex(
+                """private fun $transition\([^)]*\)\s*\{(?<body>.*?)private fun""",
+                setOf(RegexOption.DOT_MATCHES_ALL),
+            ).find(webMainText)?.groups?.get("body")?.value
+                ?: error("WebMain.kt must define $transition.")
+            check(transitionBody.contains("clearNoteDetail()")) {
+                "$transition must dismiss the full-note viewer before opening edit/delete overlay state."
+            }
+        }
         val noteEditorRenderer = Regex(
             """private fun noteEditorPanel\(identity: WebAccountIdentity, signer: WebNoteCrudSigner\?\): WebElement\s*=(?<body>.*?)private fun sectionTitleWithInfo""",
             setOf(RegexOption.DOT_MATCHES_ALL),
@@ -259,6 +313,11 @@ val webSecuritySourceCheck by tasks.registering {
             ?: error("WebMain.kt must define noteEditorPanel before sectionTitleWithInfo.")
         check(!noteEditorRenderer.contains("renderMarkdown(") && noteEditorRenderer.contains("textAreaElement(")) {
             "Web note editors must keep raw Markdown text in a textarea."
+        }
+        listOf("note-edit-backdrop", "note-edit-panel", "note-edit-header", "note-edit-actions", "note-delete-backdrop", "note-delete-panel", "note-delete-title", "note-delete-actions").forEach { overlayClass ->
+            check(noteEditorRenderer.contains(overlayClass)) {
+                "Web note edit/delete flow must render overlay class $overlayClass."
+            }
         }
         check(!Regex("""innerHTML\s*=\s*(markdown|note|body|raw|span)""").containsMatchIn(webMainText)) {
             "Web Markdown rendering must not route note content through innerHTML."
@@ -351,10 +410,10 @@ val webSecuritySourceCheck by tasks.registering {
             }
         }
 
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".note-detail-header", ".note-detail-heading", ".note-detail-body", ".note-edit-header", ".note-edit-panel .field-label", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
             requireCssDeclaration(selector, "max-width: 100%")
         }
-        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-body", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
+        listOf(".note-list", ".note-lane", ".notes-panel", ".note-list-controls", ".notes-results", ".notes-results-content", ".note-card", ".note-card-open", ".modal-panel", ".modal-header", ".modal-header .section-title", ".note-detail-panel", ".note-detail-header", ".note-detail-heading", ".note-detail-body", ".note-edit-panel", ".note-edit-header", ".note-edit-panel .field-label", ".note-delete-panel", ".markdown-view", ".markdown-code-block", ".markdown-list", ".markdown-list-item", ".markdown-rule").forEach { selector ->
             requireCssDeclaration(selector, "min-width: 0")
         }
         listOf(".note-card", ".note-title", ".note-snippet,\n        .note-meta", ".markdown-view", ".markdown-code-block", ".inline-code", ".markdown-link").forEach { selector ->
@@ -380,8 +439,19 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".note-snippet", "overflow: hidden")
         requireCssDeclaration(".modal-panel", "overflow-x: hidden")
         requireCssDeclaration(".modal-header .section-title", "overflow-wrap: anywhere")
+        requireCssDeclaration(".note-detail-backdrop", "padding: 10px")
+        requireCssDeclaration(".note-detail-panel", "width: min(1120px, calc(100vw - 20px))")
+        requireCssDeclaration(".note-detail-panel", "max-height: min(94vh, 980px)")
+        requireCssDeclaration(".note-detail-panel", "overflow-y: auto")
         requireCssDeclaration(".note-detail-panel", "overflow-x: hidden")
+        requireCssDeclaration(".note-detail-header", "position: sticky")
+        requireCssDeclaration(".note-detail-header", "top: 0")
+        requireCssDeclaration(".note-detail-header", "z-index: 2")
+        requireCssDeclaration(".note-detail-actions", "display: flex")
+        requireCssDeclaration(".note-detail-actions", "flex-wrap: wrap")
+        requireCssDeclaration(".note-detail-actions .danger-action", "color: var(--danger)")
         requireCssDeclaration(".note-detail-body", "overflow-x: hidden")
+        requireCssDeclaration(".note-detail-body", "width: 100%")
         requireCssDeclaration(".note-detail-body .markdown-view", "display: block")
         requireCssDeclaration(".note-detail-body .markdown-view", "overflow-x: hidden")
         requireCssDeclaration(".note-detail-body .markdown-heading,\n        .note-detail-body .markdown-paragraph,\n        .note-detail-body .markdown-quote,\n        .note-detail-body .markdown-code-block,\n        .note-detail-body .inline-code,\n        .note-detail-body .markdown-link", "overflow-wrap: anywhere")
@@ -423,6 +493,22 @@ val webSecuritySourceCheck by tasks.registering {
         requireCssDeclaration(".markdown-code-block", "word-break: break-word")
         requireCssDeclaration(".markdown-paragraph,\n        .markdown-quote", "white-space: pre-wrap")
         requireCssDeclaration(".inline-code", "word-break: break-word")
+        requireCssDeclaration(".note-edit-backdrop", "padding: 10px")
+        requireCssDeclaration(".note-edit-panel", "width: min(1120px, calc(100vw - 20px))")
+        requireCssDeclaration(".note-edit-panel", "max-height: min(94vh, 980px)")
+        requireCssDeclaration(".note-edit-panel", "overflow-y: auto")
+        requireCssDeclaration(".note-edit-panel", "overflow-x: hidden")
+        requireCssDeclaration(".note-edit-header", "position: sticky")
+        requireCssDeclaration(".note-edit-header", "flex-wrap: wrap")
+        requireCssDeclaration(".note-edit-actions", "display: flex")
+        requireCssDeclaration(".note-edit-actions", "flex-wrap: wrap")
+        requireCssDeclaration(".note-edit-panel .field-label", "flex-direction: column")
+        requireCssDeclaration(".note-edit-panel .note-editor-input", "width: 100%")
+        requireCssDeclaration(".note-edit-panel .note-editor-input", "min-height: min(62vh, 620px)")
+        requireCssDeclaration(".note-delete-panel", "width: min(460px, calc(100vw - 28px))")
+        requireCssDeclaration(".note-delete-panel", "max-height: min(86vh, 520px)")
+        requireCssDeclaration(".note-delete-title", "overflow-wrap: anywhere")
+        requireCssDeclaration(".note-delete-actions .danger-action", "color: var(--danger)")
 
         val deploymentDoc = deploymentSecurityDoc.asFile.readText()
         val expectedCspDirectives = listOf(
