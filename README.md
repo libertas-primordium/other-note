@@ -1,6 +1,25 @@
 # Other Note
 
-Other Note is a GPLv3 Nostr-powered notes app for private notes. The app targets Android, Debian/Linux desktop, and the web with a shared Kotlin Multiplatform and Compose architecture where practical.
+## What Is Other Note?
+
+Other Note is a private, Nostr-powered notes app for Android, Linux desktop, and the web. It stores notes as encrypted application-specific Nostr events, syncs through user-selected relays, and does not require a central Other Note server for note storage. The app is built around user-controlled identity: notes are signed and encrypted on the client device or through a user-approved signer.
+
+## Major Features
+
+- **Privacy and encryption:** encrypted Nostr note storage using kind `30078` application-specific events; client-side or signer-delegated signing, encryption, and decryption; no plaintext note publishing; create/edit/delete support through encrypted replacement/tombstone events.
+- **Identity and signing:** Android NIP-55 signer support; web NIP-07 browser-extension support; NIP-46 remote signer/bunker support; opt-in remembered NIP-46 remote-signer sessions on web; session-only direct `nsec` login; create-new-identity flow with required key-saving warnings; Linux desktop keyring support for saved identities where `secret-tool` is available; Android Keystore-backed secure direct-key storage when explicitly enabled.
+- **Relay sync and migration:** editable note relay settings; NIP-65 relay-list import/publish behavior; relay migration when relay settings change; manual Sync/Migrate; per-relay encrypted-event stats; visible relay-retention warning recommending multiple relays and ideally a personal relay the user controls.
+- **Notes and rendering:** note search and sort; built-in themes; profile metadata and profile thumbnail display; Markdown rendering in full-note view; hyperlinks and inline images in full-note view only, while note cards and editors keep raw text.
+- **Cross-platform clients:** shared Android and desktop Compose UI where practical, a Debian/Linux desktop package target, and a static web client with self-hosted Roboto fonts, NIP-07/NIP-46/direct-key sign-in, encrypted note CRUD, relay tools, themes, profile display, and full-note Markdown/link/image rendering.
+
+## Important Security Notes
+
+- Other Note cannot recover a lost private key. Save generated or pasted `nsec` values somewhere secure if you need long-term access to that identity.
+- Direct `nsec` sessions are session-only unless the user explicitly saves the key through a supported secure mechanism or an external password manager.
+- Public relays are not guaranteed to retain encrypted note events forever. Use multiple relays at minimum; ideally include at least one personal relay that you control.
+- The web client does not persist notes, note events, relay events, note relay settings, profile data, search/sort state, or direct-key sessions in browser storage. The only app-controlled browser persistence is the generic theme preference and an explicit opt-in remembered NIP-46 session record.
+- Remote profile images and full-note images may fetch from their source URLs when rendered.
+- See [docs/key-management.md](docs/key-management.md), [docs/web-client-architecture.md](docs/web-client-architecture.md), and [docs/web-deployment-security.md](docs/web-deployment-security.md) for detailed security boundaries.
 
 ## Status
 
