@@ -43,6 +43,8 @@ val webSecuritySourceCheck by tasks.registering {
             "sessionStorage",
             "console.log",
             "println",
+            "navigator.credentials",
+            "PasswordCredential",
             "analytics",
             "telemetry",
         )
@@ -117,6 +119,7 @@ val webSecuritySourceCheck by tasks.registering {
             "plaintext note payloads",
             "communication session record",
             "nsec is your private key",
+            "browser/password-manager saving",
             "Other Note cannot recover it",
         ).forEach { requiredCopy ->
             check(webAuthStateText.contains(requiredCopy)) {
@@ -134,14 +137,38 @@ val webSecuritySourceCheck by tasks.registering {
             setOf(RegexOption.DOT_MATCHES_ALL),
         ).find(webMainText)?.groups?.get("body")?.value
             ?: error("WebMain.kt must define directNsecSignInPanel for session-only direct nsec login.")
-        check(directNsecPanel.contains("DirectNsecInputType") && directNsecPanel.contains("DirectNsecInputAutocomplete")) {
-            "Direct nsec input must use the password-style input type and browser-assistance controls."
+        check(directNsecPanel.contains("DirectNsecInputType") && directNsecPanel.contains("directNsecAutocompleteFor(directNsecDraft)")) {
+            "Direct nsec input must use the password-style input type and explicit browser-assistance controls."
         }
         check(directNsecPanel.contains("Session-only fallback") && directNsecPanel.contains("Other Note will not save this key")) {
             "Direct nsec sign-in copy must clearly state the session-only, non-persistent boundary."
         }
+        check(
+            directNsecPanel.contains("DirectNsecPasswordManagerCheckboxLabel") &&
+                directNsecPanel.contains("directNsecInputNameFor(directNsecDraft)") &&
+                directNsecPanel.contains("setDirectNsecPasswordManagerAllowed") &&
+                directNsecPanel.contains("""setAttribute("autocomplete", if (directNsecDraft.allowPasswordManager) "on" else "off")"""),
+        ) {
+            "Direct nsec sign-in must expose a default-off browser/password-manager opt-in through form/input semantics only."
+        }
         check(!directNsecPanel.contains("render()")) {
             "Direct nsec typing must not call render(); replacing the active input on each character drops focus and risks stale DOM values."
+        }
+        val textInputRenderer = Regex(
+            """private fun textInputElement\((?<body>.*?)private fun textAreaElement""",
+            setOf(RegexOption.DOT_MATCHES_ALL),
+        ).find(webMainText)?.groups?.get("body")?.value
+            ?: error("WebMain.kt must define textInputElement before textAreaElement.")
+        listOf(
+            """input.setAttribute("autocomplete", autocomplete)""",
+            """inputName?.let { input.setAttribute("name", it) }""",
+            """input.setAttribute("autocapitalize", "off")""",
+            """input.setAttribute("autocorrect", "off")""",
+            """input.setAttribute("spellcheck", "false")""",
+        ).forEach { requiredInputAttribute ->
+            check(textInputRenderer.contains(requiredInputAttribute)) {
+                "Web direct nsec input helper must preserve safe browser/form attribute: $requiredInputAttribute"
+            }
         }
         val directNsecRequest = Regex(
             """private fun requestDirectNsecSession\(\)\s*\{(?<body>.*?)private fun failDirectNsecSignIn""",

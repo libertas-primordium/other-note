@@ -6,6 +6,9 @@ private const val WebDirectKeyGenerationAttempts = 8
 internal const val DirectNsecInputLabel = "Session-only nsec"
 internal const val DirectNsecInputType = "password"
 internal const val DirectNsecInputAutocomplete = "off"
+internal const val DirectNsecPasswordManagerAutocomplete = "current-password"
+internal const val DirectNsecPasswordManagerFieldName = "other-note-session-nsec"
+internal const val DirectNsecPasswordManagerCheckboxLabel = "Allow browser/password manager to offer saving this nsec"
 internal const val DirectNsecInputPlaceholder = "Paste session-only key"
 internal const val DirectNsecSubmitLabel = "Use for this session"
 internal const val GeneratedIdentitySubmitLabel = "Use for this session"
@@ -17,13 +20,23 @@ internal const val GeneratedIdentityLossAckLabel = "I understand losing this nse
 internal data class WebDirectNsecDraftState(
     val input: String = "",
     val message: String = "",
+    val allowPasswordManager: Boolean = false,
 )
 
 internal fun updateWebDirectNsecDraft(state: WebDirectNsecDraftState, input: String): WebDirectNsecDraftState =
     state.copy(input = input, message = "")
 
+internal fun updateWebDirectNsecPasswordManager(state: WebDirectNsecDraftState, allowed: Boolean): WebDirectNsecDraftState =
+    state.copy(allowPasswordManager = allowed, message = "")
+
 internal fun clearWebDirectNsecDraft(message: String = ""): WebDirectNsecDraftState =
     WebDirectNsecDraftState(message = message)
+
+internal fun directNsecAutocompleteFor(state: WebDirectNsecDraftState): String =
+    if (state.allowPasswordManager) DirectNsecPasswordManagerAutocomplete else DirectNsecInputAutocomplete
+
+internal fun directNsecInputNameFor(state: WebDirectNsecDraftState): String? =
+    if (state.allowPasswordManager) DirectNsecPasswordManagerFieldName else null
 
 internal class WebGeneratedIdentitySecret private constructor(
     private val nsecValue: String,

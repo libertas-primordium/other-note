@@ -776,34 +776,56 @@ private fun directNsecSignInPanel(state: WebAuthUiState): WebElement =
         appendChild(textElement("p", "eyebrow", "Session-only fallback"))
         appendChild(sectionTitleWithInfo("Use session-only nsec", WebSignInInfoTopic.DirectNsec))
         appendChild(textElement("p", "body", "Session-only. Other Note will not save this key."))
-        appendChild(textInputElement(
-            label = DirectNsecInputLabel,
-            value = directNsecDraft.input,
-            enabled = state.signInState !is WebSignInState.SigningIn,
-            inputType = DirectNsecInputType,
-            autocomplete = DirectNsecInputAutocomplete,
-            placeholder = DirectNsecInputPlaceholder,
-            onInput = { value ->
-                directNsecDraft = updateWebDirectNsecDraft(directNsecDraft, value)
-            },
-        ))
-        val failed = state.signInState as? WebSignInState.Failed
-        val message = directNsecDraft.message.takeIf { it.isNotBlank() }
-            ?: failed?.takeIf { it.method == WebAuthMethod.DirectNsec }?.message
-        if (message != null) {
-            appendChild(textElement("p", "body error small-gap", message))
-        }
-        appendChild(
-            buttonElement(
-                text = if (state.signInState is WebSignInState.SigningIn && state.signInState.method == WebAuthMethod.DirectNsec) {
-                    "Direct key sign-in pending"
-                } else {
-                    DirectNsecSubmitLabel
-                },
+        appendChild(element("form", "direct-nsec-form") {
+            setAttribute("autocomplete", if (directNsecDraft.allowPasswordManager) "on" else "off")
+            addEventListener("submit") { event ->
+                event.preventDefault()
+                requestDirectNsecSession()
+            }
+            appendChild(textInputElement(
+                label = DirectNsecInputLabel,
+                value = directNsecDraft.input,
                 enabled = state.signInState !is WebSignInState.SigningIn,
-                onClick = ::requestDirectNsecSession,
-            ),
-        )
+                inputType = DirectNsecInputType,
+                autocomplete = directNsecAutocompleteFor(directNsecDraft),
+                inputName = directNsecInputNameFor(directNsecDraft),
+                placeholder = DirectNsecInputPlaceholder,
+                onInput = { value ->
+                    directNsecDraft = updateWebDirectNsecDraft(directNsecDraft, value)
+                },
+            ))
+            appendChild(checkboxElement(
+                label = DirectNsecPasswordManagerCheckboxLabel,
+                checked = directNsecDraft.allowPasswordManager,
+                enabled = state.signInState !is WebSignInState.SigningIn,
+                onChange = ::setDirectNsecPasswordManagerAllowed,
+            ))
+            appendChild(textElement("p", "body muted small-gap", directNsecPasswordManagerCopy(directNsecDraft.allowPasswordManager)))
+            val failed = state.signInState as? WebSignInState.Failed
+            val message = directNsecDraft.message.takeIf { it.isNotBlank() }
+                ?: failed?.takeIf { it.method == WebAuthMethod.DirectNsec }?.message
+            if (message != null) {
+                appendChild(textElement("p", "body error small-gap", message))
+            }
+            appendChild(
+                buttonElement(
+                    text = if (state.signInState is WebSignInState.SigningIn && state.signInState.method == WebAuthMethod.DirectNsec) {
+                        "Direct key sign-in pending"
+                    } else {
+                        DirectNsecSubmitLabel
+                    },
+                    enabled = state.signInState !is WebSignInState.SigningIn,
+                    onClick = ::requestDirectNsecSession,
+                ),
+            )
+        })
+    }
+
+private fun directNsecPasswordManagerCopy(allowed: Boolean): String =
+    if (allowed) {
+        "Other Note still does not save this key. Your browser or password manager may offer to save or fill it; use only with a trusted browser profile."
+    } else {
+        "Browser/password-manager saving is off. If you do not save this nsec somewhere secure, refresh or logout still forgets this session."
     }
 
 private fun generatedIdentityPanel(state: WebAuthUiState): WebElement =
@@ -1009,6 +1031,11 @@ private fun requestRememberedNip46Session() {
 
 private fun setRememberNip46Session(remember: Boolean) {
     rememberNip46Session = remember
+    render()
+}
+
+private fun setDirectNsecPasswordManagerAllowed(allowed: Boolean) {
+    directNsecDraft = updateWebDirectNsecPasswordManager(directNsecDraft, allowed)
     render()
 }
 
@@ -1971,6 +1998,7 @@ private fun textInputElement(
     enabled: Boolean,
     inputType: String = Nip46TokenInputType,
     autocomplete: String = "off",
+    inputName: String? = null,
     placeholder: String = "bunker://...",
     onInput: (String) -> Unit,
 ): WebElement =
@@ -1981,6 +2009,7 @@ private fun textInputElement(
                 input.value = value
                 input.setAttribute("type", inputType)
                 input.setAttribute("autocomplete", autocomplete)
+                inputName?.let { input.setAttribute("name", it) }
                 input.setAttribute("autocapitalize", "off")
                 input.setAttribute("autocorrect", "off")
                 input.setAttribute("spellcheck", "false")

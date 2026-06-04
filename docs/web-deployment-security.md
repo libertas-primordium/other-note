@@ -56,7 +56,7 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 
 - Auth state is not durably restored after refresh.
 - NIP-46 sign-in remains session-only by default. If the user opts in, the remembered NIP-46 record may store only version, returned user pubkey, local NIP-46 communication private key, communication pubkey, remote signer pubkey, signer transport relay URLs, and timestamps. It must not store the original bunker token secret, user private key, direct `nsec`, generated identity key, note data, note relay settings, relay stats, profile data, search/sort state, or pending writes.
-- Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session.
+- Direct-key `nsec` sessions are exposed only as session-only fallback paths. Pasted keys are not saved by Other Note, generated keys are shown only in the explicit acknowledgement flow, direct-key drafts are cleared on submit/cancel/session replacement, and refresh/logout forgets the session. The direct `nsec` field may offer a default-off browser/password-manager opt-in that changes only form/autocomplete hints. If the user enables it, any save/fill behavior is controlled by the user's browser or password manager, not by Other Note app storage.
 - Decrypted note bodies and decrypted payload JSON are not persisted.
 - Profile metadata is not persisted. The signed-in account header may render the active account's supported HTTPS profile `picture` as a small thumbnail with a same-origin placeholder fallback; remote `banner` URLs remain inert.
 - Full-note view may render the tested Markdown subset and user-authored HTTPS inline image URLs from note content. Raw HTML remains escaped text. Cards, previews, and editors must not prefetch or render remote images or active Markdown.
@@ -65,6 +65,7 @@ Current web auth/session/note/relay state is memory-only except for two explicit
 Forbidden for auth/session/key/note/draft/pending-write data:
 
 - `localStorage`, except for the exact generic theme preference key `on.web.theme` and explicit remembered NIP-46 key `on.web.nip46`
+- sessionStorage
 - IndexedDB
 - cookies
 - Cache Storage
@@ -125,6 +126,7 @@ DevTools storage checks:
 
 - [ ] `localStorage` contains no Other Note auth/session/key/note data except the allowed `on.web.theme` value and explicit `on.web.nip46` remembered remote-signer record if the user opted in.
 - [ ] If `on.web.nip46` exists, it contains no direct `nsec`, generated identity key, user private key, bunker token secret, note content, note events, note relay settings, relay stats, profile data, search query, or sort preference.
+- [ ] If the direct `nsec` browser/password-manager option was enabled, confirm any offered save/fill behavior is browser/password-manager controlled and no additional Other Note storage key appears.
 - [ ] No Other Note auth/session/key/note data in IndexedDB.
 - [ ] No Other Note auth/session/key/note data in cookies.
 - [ ] No Other Note Cache Storage entries.

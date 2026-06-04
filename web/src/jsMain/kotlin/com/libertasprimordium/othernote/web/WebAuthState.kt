@@ -94,6 +94,8 @@ fun webSignInInfoCopy(topic: WebSignInInfoTopic): WebSignInInfoCopy =
             body = listOf(
                 "The nsec is your private key.",
                 "Other Note does not save it, and refreshing or logging out forgets this session.",
+                "If you explicitly allow browser/password-manager saving, that storage is controlled by your browser or password manager, not by Other Note.",
+                "Password-manager prompts vary by browser and should be used only with a trusted password manager or browser profile.",
                 "Use this only on trusted devices. Prefer NIP-07 or a remote signer on shared or untrusted browsers.",
             ),
         )
