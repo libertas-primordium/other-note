@@ -14,13 +14,13 @@ Important security status:
 - "Create new identity" generates a fresh Nostr private key and shows the resulting `nsec` so the user can save or import it. Other Note does not persist the generated plaintext `nsec`.
 - The login field hides pasted `nsec` text and clears it after successful validation or local-only entry.
 - Local-only mode is explicit. Notes can be created, viewed, edited, and deleted without a Nostr session.
-- Linux desktop saved-key support is opt-in through the desktop keyring/Secret Service path when `secret-tool` is available. Session-only remains the default, Android saved-key storage is not implemented, and there is no plaintext file fallback.
+- Linux desktop saved-key support is opt-in through the desktop keyring/Secret Service path when `secret-tool` is available. Android saved-key support is opt-in through Android Keystore-backed encrypted device storage. Session-only remains the default on both platforms, and there is no plaintext file fallback.
 - `ProductionNostrCryptoFactory` is enabled for direct session-only signing, NIP-44 v2 encryption/decryption, and relay-backed tests where a real relay client is wired. `NonProductionNostrCrypto` remains the safety fallback.
 - `NonProductionNostrCrypto` remains available and refuses secp256k1 signing and NIP-44 encryption/decryption so plaintext notes are not accidentally published.
-- Direct `nsec` and generated-identity use remains session-only unless the desktop user explicitly saves the key to the OS keyring. These sessions can encrypt/sign/publish/fetch when production crypto and a real relay client are available. Bounded desktop/JVM and Android WebSocket relay clients surface explicit per-relay status instead of fake success.
+- Direct `nsec` and generated-identity use remains session-only unless the user explicitly saves the key to supported OS-backed storage: Android Keystore-backed encrypted storage on Android or the OS keyring on Linux desktop. These sessions can encrypt/sign/publish/fetch when production crypto and a real relay client are available. Bounded desktop/JVM and Android WebSocket relay clients surface explicit per-relay status instead of fake success.
 - Desktop relay runtime is enabled by default when production crypto is available. It can fetch and publish encrypted note events through configured relays for session-only direct keys and signer-backed sessions.
 - Desktop relay runtime stores a local encrypted event cache and pending outbound write queue under `~/.local/share/other-note/`. These files contain signed encrypted Nostr events and relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
-- Android can detect generic NIP-55 external signer apps, request signer public identity, remember safe signer-session metadata, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`.
+- Android can detect generic NIP-55 external signer apps, request signer public identity, remember safe signer-session metadata, request a harmless local test-event signature, run a harmless local NIP-44 encrypt/decrypt round trip, build/verify an unpublished signer-backed kind `30078` note event, and create/edit/delete/fetch relay-backed signer notes from the normal editor without importing or storing `nsec`. Android direct `nsec` remains a lower-emphasis fallback: session-only by default, with an explicit Android Credential Manager password-save option and explicit Android Keystore-backed save/continue/forget actions when the user chooses them.
 - Android external-signer relay runtime stores a durable encrypted event cache and pending outbound write queue in app-private no-backup storage. These files contain signed encrypted Nostr events and safe relay metadata only, never `nsec` values, private keys, decrypted note bodies, decrypted payload JSON, or NIP-44 plaintext.
 - Android cloud backup and device-transfer extraction are explicitly disabled for app data through the manifest and backup-rule resources. This is privacy hardening, not a backup feature.
 - NIP-46 remote signer foundation support can parse `bunker://` tokens, create and save reusable NIP-46 communication sessions, request remote signer public keys, request NIP-44 encrypt/decrypt, request event signing, and validate returned signed events before relay publish. The account identity is the user pubkey returned by the remote signer, not the local NIP-46 transport pubkey.
@@ -86,9 +86,9 @@ Relay Settings also has a manual Sync/Migrate action for the current app relay l
 
 ## Key Management And nsec Safety
 
-Current direct `nsec` use is session-only by default. On Linux desktop, the user may explicitly save an identity to the desktop keyring/Secret Service path when available. Other Note does not persist `nsec` values or private keys in app files, relay settings, caches, pending-write stores, logs, or preferences. Desktop keyring storage is device-local convenience storage: it protects the key at rest and behind the desktop/keyring unlock boundary, but authorized local apps or keyring tools may be able to retrieve the saved key after the keyring is unlocked.
+Current direct `nsec` use is session-only by default. On Android, the user may explicitly request an Android Credential Manager password-save flow for the direct field, or explicitly save an identity to Android Keystore-backed encrypted device storage. On Linux desktop, the user may explicitly save an identity to the desktop keyring/Secret Service path when available. Other Note does not persist `nsec` values or private keys in plaintext app files, relay settings, caches, pending-write stores, logs, or preferences. Android secure storage and desktop keyring storage are device-local convenience storage, not backups.
 
-The sign-in screen can create a fresh Nostr identity. This generates a new private key, displays the `nsec` for the user to save in a secure password manager, OS credential store, or signer such as Amber, and requires explicit acknowledgement before the key is used for the current session. On Linux desktop, the generated identity can also be saved explicitly to the desktop keyring. When production crypto and a relay client are available, the generated session can encrypt, sign, publish, decrypt, edit, and delete encrypted `kind: 30078` notes. Losing the generated `nsec` means losing access to encrypted notes for that identity if no signer/keyring/password-manager copy exists. Other Note does not silently store or recover it.
+The sign-in screen can create a fresh Nostr identity. This generates a new private key, displays the `nsec` for the user to save in a secure password manager, OS credential store, or signer such as Amber, and requires explicit acknowledgement before the key is used for the current session. On Android and Linux desktop, the generated identity can also be saved explicitly to supported OS-backed secure storage. When production crypto and a relay client are available, the generated session can encrypt, sign, publish, decrypt, edit, and delete encrypted `kind: 30078` notes. Losing the generated `nsec` means losing access to encrypted notes for that identity if no signer/keyring/password-manager copy exists. Other Note does not silently store or recover it.
 
 The key-management policy is documented in [docs/key-management.md](docs/key-management.md). The sign-in screen prioritizes Android signer/NIP-55 first on Android, then NIP-46 remote signer/bunker when available, then session-only pasted `nsec`, with fresh identity generation as a lower-emphasis deliberate flow. Planned key paths prefer external signers first, then session-only pasted `nsec`, then saved-device `nsec` only through OS-backed credential storage. The future web app must keep signing, encryption, and decryption fully client-side; see [docs/web-client-architecture.md](docs/web-client-architecture.md) for the web planning document.
 
@@ -225,7 +225,7 @@ Desktop relay runtime is enabled by default when production crypto is available.
 OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1 ./gradlew :app:run
 ```
 
-The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. A pasted `nsec` is used only for the active process session unless the desktop user explicitly saves it to the OS keyring. Saved desktop identities are loaded from the keyring by account pubkey and are shown on the sign-in screen using safe metadata only. Other Note does not write plaintext keys to local files, relay settings, cache, logs, preferences, or test output.
+The equivalent JVM property is `-Dothernote.devRelayRuntime=true`. A pasted `nsec` is used only for the active process session unless the user explicitly saves it to supported OS-backed storage. Saved Android identities are loaded from Android Keystore-backed encrypted storage, and saved desktop identities are loaded from the keyring by account pubkey. Both are shown on the sign-in screen using safe metadata only. Other Note does not write plaintext keys to local files, relay settings, cache, logs, preferences, or test output.
 
 Desktop relay runtime keeps a local durability layer at `~/.local/share/other-note/`:
 
@@ -242,7 +242,7 @@ Android external-signer relay runtime keeps the same durable encrypted event and
 - `pending-writes/` stores already signed encrypted events plus target relay URLs, accepted/failed relay status, retry counts, safe error strings, and timestamps.
 - `relay-settings.json` stores only the local app relay URL list.
 - The files are used only after Android signer login for the same public key. Loading the encrypted event cache does not require network or signer access, but decrypting cached events still requires signer-mediated NIP-44 decrypt for the active session.
-- Direct `nsec` fallback remains session-only unless explicitly saved to the Linux desktop keyring. When production crypto and a relay client are available it can publish/recover encrypted notes; otherwise it remains local/offline and must not emit plaintext. Android saved-device key storage remains future work and must use OS-backed secure storage when implemented.
+- Direct `nsec` fallback remains session-only unless explicitly saved to Android Keystore-backed encrypted storage or the Linux desktop keyring. When production crypto and a relay client are available it can publish/recover encrypted notes; otherwise it remains local/offline and must not emit plaintext.
 
 Normal UI shows compact relay status only. To show verbose safe relay diagnostics while debugging, launch with:
 
@@ -298,7 +298,7 @@ Runtime troubleshooting:
 - Partial relay failures are expected on public relays. Retry refresh or remove consistently slow relays from the editable relay list.
 - Current desktop and Android relay recovery uses direct NIP-01 filtered fetch: first author/kind/`#t`, then author/kind fallback with local Other Note filtering. NIP-77/negentropy is planned later after encrypted local event cache/index support exists; it learns event IDs and still requires `EVENT`/`REQ` transfer for event bodies.
 
-Saved-device Android key storage, non-Linux desktop keyring backends, richer client-initiated NIP-46 pairing UI, and remote profile banner rendering are intentionally future work. Full-note view can render the tested Markdown subset, safe links, and supported HTTPS inline note images; the signed-in identity line can render a safe profile thumbnail; note cards and editors keep Markdown, URLs, and image references as raw text.
+Non-Linux desktop keyring backends, richer client-initiated NIP-46 pairing UI, and remote profile banner rendering are intentionally future work. Full-note view can render the tested Markdown subset, safe links, and supported HTTPS inline note images; the signed-in identity line can render a safe profile thumbnail; note cards and editors keep Markdown, URLs, and image references as raw text.
 
 If Gradle reports missing plugin artifacts, run with network access so it can fetch GPL-compatible open-source dependencies from Google Maven, Maven Central, and the Gradle Plugin Portal.
 
@@ -363,7 +363,7 @@ The real crypto round-trip tests live under `desktopTest`. They generate throwaw
 - Sends `CLOSE` after bounded fetches.
 - Falls back to author/kind filtering if tag filtering does not return usable events.
 
-The desktop client is wired into the normal Debian/desktop runtime when production crypto is available. The legacy `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` and `-Dothernote.devRelayRuntime=true` switches are still accepted as compatibility markers but are no longer required for relay fetch/publish. The Android client remains wired for Android external-signer, NIP-46, and production-crypto direct session-only identities. Direct `nsec` fallback remains session-only unless explicitly saved to the Linux desktop keyring; it falls back to local/offline only if production crypto is unavailable.
+The desktop client is wired into the normal Debian/desktop runtime when production crypto is available. The legacy `OTHER_NOTE_ENABLE_DEV_RELAY_RUNTIME=1` and `-Dothernote.devRelayRuntime=true` switches are still accepted as compatibility markers but are no longer required for relay fetch/publish. The Android client remains wired for Android external-signer, NIP-46, and production-crypto direct identities. Direct `nsec` fallback remains session-only unless explicitly saved to Android Keystore-backed encrypted storage or the Linux desktop keyring; it falls back to local/offline only if production crypto is unavailable.
 
 ## Architecture
 
@@ -385,7 +385,7 @@ Platform code:
 ## Known Limitations And TODOs
 
 - Keep the production crypto adapter covered by offline generated-key tests before expanding runtime relay sync.
-- Implement Android encrypted key storage and broaden desktop keyring support beyond Linux Secret Service where needed.
+- Broaden desktop keyring support beyond Linux Secret Service where needed.
 - Keep remote profile image loading limited to the active-account thumbnail; profile banners and profile image caching remain disabled.
 - Keep the practical Markdown renderer focused on the tested subset; tables, task lists, raw HTML rendering, math, diagrams, syntax highlighting, video, and richer embeds remain future work.
 

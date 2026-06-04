@@ -56,6 +56,24 @@ object UnavailableExternalUrlOpener : ExternalUrlOpener {
     override fun open(url: String): Boolean = false
 }
 
+sealed interface DirectNsecCredentialSaveResult {
+    data object Saved : DirectNsecCredentialSaveResult
+    data object Canceled : DirectNsecCredentialSaveResult
+    data object Unavailable : DirectNsecCredentialSaveResult
+    data class Failed(val safeMessage: String) : DirectNsecCredentialSaveResult
+}
+
+interface DirectNsecCredentialSaver {
+    suspend fun saveDirectNsecCredential(accountIdentifier: String, nsec: String): DirectNsecCredentialSaveResult
+}
+
+object UnavailableDirectNsecCredentialSaver : DirectNsecCredentialSaver {
+    override suspend fun saveDirectNsecCredential(
+        accountIdentifier: String,
+        nsec: String,
+    ): DirectNsecCredentialSaveResult = DirectNsecCredentialSaveResult.Unavailable
+}
+
 sealed interface NoteImageLoadResult {
     data class Loaded(val image: ImageBitmap) : NoteImageLoadResult
     data object Failed : NoteImageLoadResult
@@ -91,6 +109,7 @@ data class AppServices(
     val themePreferenceStore: ThemePreferenceStore = NoopThemePreferenceStore,
     val noteListPreferenceStore: NoteListPreferenceStore = NoopNoteListPreferenceStore,
     val externalUrlOpener: ExternalUrlOpener = UnavailableExternalUrlOpener,
+    val directNsecCredentialSaver: DirectNsecCredentialSaver = UnavailableDirectNsecCredentialSaver,
     val noteImageLoader: NoteImageLoader = UnavailableNoteImageLoader,
     val notes: InMemoryNoteRepository = InMemoryNoteRepository(),
     val relaySettings: RelaySettingsStore = RelaySettingsStore(

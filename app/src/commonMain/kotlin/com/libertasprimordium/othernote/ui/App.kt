@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -59,20 +60,30 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.autofill.ContentDataType
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.autofill.contentType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.sensitiveContent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.contentDataType
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -104,6 +115,88 @@ sealed class Screen {
     data class Edit(val note: Note?) : Screen()
     data object Settings : Screen()
 }
+
+internal enum class AndroidTextFieldAutofillPolicy {
+    Default,
+    DirectNsecPasswordCredential,
+    NonCredential,
+    NonCredentialSensitive,
+}
+
+internal fun directNsecAutofillPolicy(platform: AppPlatform): AndroidTextFieldAutofillPolicy =
+    if (platform == AppPlatform.Android) {
+        AndroidTextFieldAutofillPolicy.DirectNsecPasswordCredential
+    } else {
+        AndroidTextFieldAutofillPolicy.Default
+    }
+
+internal fun remoteSignerBunkerTokenAutofillPolicy(platform: AppPlatform): AndroidTextFieldAutofillPolicy =
+    if (platform == AppPlatform.Android) {
+        AndroidTextFieldAutofillPolicy.NonCredentialSensitive
+    } else {
+        AndroidTextFieldAutofillPolicy.Default
+    }
+
+internal fun nonCredentialTextAutofillPolicy(platform: AppPlatform): AndroidTextFieldAutofillPolicy =
+    if (platform == AppPlatform.Android) {
+        AndroidTextFieldAutofillPolicy.NonCredential
+    } else {
+        AndroidTextFieldAutofillPolicy.Default
+    }
+
+private fun Modifier.withAndroidTextFieldAutofillPolicy(policy: AndroidTextFieldAutofillPolicy): Modifier =
+    when (policy) {
+        AndroidTextFieldAutofillPolicy.Default -> this
+        AndroidTextFieldAutofillPolicy.DirectNsecPasswordCredential ->
+            this.contentType(ContentType.Password).sensitiveContent()
+        AndroidTextFieldAutofillPolicy.NonCredential ->
+            this.semantics(mergeDescendants = true) {
+                contentDataType = ContentDataType.None
+            }
+        AndroidTextFieldAutofillPolicy.NonCredentialSensitive ->
+            this.semantics(mergeDescendants = true) {
+                contentDataType = ContentDataType.None
+            }.sensitiveContent()
+    }
+
+@Composable
+private fun AutofillScopedTextField(
+    policy: AndroidTextFieldAutofillPolicy,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Box(modifier.withAndroidTextFieldAutofillPolicy(policy)) {
+        content()
+    }
+}
+
+private object NonCredentialSecretVisualTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText =
+        TransformedText(
+            AnnotatedString("*".repeat(text.text.length)),
+            OffsetMapping.Identity,
+        )
+}
+
+private fun secretVisualTransformation(
+    platform: AppPlatform,
+    credentialAutofillEnabled: Boolean,
+): VisualTransformation =
+    if (platform == AppPlatform.Android && !credentialAutofillEnabled) {
+        NonCredentialSecretVisualTransformation
+    } else {
+        PasswordVisualTransformation()
+    }
+
+internal fun directNsecKeyboardOptions(policy: AndroidTextFieldAutofillPolicy): KeyboardOptions =
+    when (policy) {
+        AndroidTextFieldAutofillPolicy.DirectNsecPasswordCredential ->
+            KeyboardOptions(keyboardType = KeyboardType.Password)
+        AndroidTextFieldAutofillPolicy.Default,
+        AndroidTextFieldAutofillPolicy.NonCredential,
+        AndroidTextFieldAutofillPolicy.NonCredentialSensitive,
+        -> KeyboardOptions.Default
+    }
 
 @Composable
 fun OtherNoteApp(services: AppServices = defaultAppServices()) {
@@ -141,6 +234,8 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val savedAndroidSigners by appState.savedAndroidSignerState.collectAsState()
     val scope = rememberCoroutineScope()
     var nsec by remember { mutableStateOf("") }
+    var offerNsecPasswordManagerSave by remember { mutableStateOf(false) }
+    var directNsecCredentialSaveInProgress by remember { mutableStateOf(false) }
     var bunkerToken by remember { mutableStateOf("") }
     var infoTopic by remember { mutableStateOf<SignInInfoTopic?>(null) }
     val signInOptions = appState.signInOptions
@@ -148,9 +243,10 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     val remoteSignerOption = signInOptions.firstOrNull { it.kind == SignInOptionKind.RemoteSigner }
     val nsecOption = signInOptions.first { it.kind == SignInOptionKind.ExistingNsec }
     val generatedIdentityOption = signInOptions.first { it.kind == SignInOptionKind.CreateIdentity }
-    LaunchedEffect(mode) {
+    LaunchedEffect(mode, directNsecCredentialSaveInProgress) {
         when (mode) {
             AppMode.Authenticated -> {
+                if (directNsecCredentialSaveInProgress) return@LaunchedEffect
                 onLoggedIn()
                 val authMethod = appState.session.value?.authMethod
                 if (appState.directRelayRuntimeAvailable ||
@@ -183,6 +279,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                 else -> savedIdentities.identities.forEach { identity ->
                     SavedIdentityRow(
                         identity = identity,
+                        storageLabel = KeyringSaveWarningCopy.labelFor(appState.platform),
                         onContinue = {
                             scope.launch {
                                 appState.loginWithSavedIdentity(identity.accountPubkey)
@@ -272,15 +369,23 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
                 SignInSupportingText(appState.savedRemoteSignerStatus)
             }
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = bunkerToken,
-                onValueChange = { bunkerToken = it },
-                label = { Text("Paste bunker:// token") },
-                singleLine = true,
-                enabled = !remoteSignerPairing.inProgress,
-                visualTransformation = PasswordVisualTransformation(),
+            AutofillScopedTextField(
+                policy = remoteSignerBunkerTokenAutofillPolicy(appState.platform),
                 modifier = Modifier.fillMaxWidth(),
-            )
+            ) {
+                OutlinedTextField(
+                    value = bunkerToken,
+                    onValueChange = { bunkerToken = it },
+                    label = { Text("Paste bunker:// token") },
+                    singleLine = true,
+                    enabled = !remoteSignerPairing.inProgress,
+                    visualTransformation = secretVisualTransformation(
+                        platform = appState.platform,
+                        credentialAutofillEnabled = false,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = {
@@ -300,37 +405,98 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
         SignInSectionHeader("Existing nsec", SignInInfoTopic.ExistingNsec) { infoTopic = it }
         SignInSupportingText("Session-only")
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = nsec,
-            onValueChange = { nsec = it },
-            label = { Text("Paste nsec for this session") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
+        val nsecAutofillPolicy = directNsecAutofillPolicy(appState.platform)
+        AutofillScopedTextField(
+            policy = nsecAutofillPolicy,
             modifier = Modifier.fillMaxWidth(),
-        )
+        ) {
+            OutlinedTextField(
+                value = nsec,
+                onValueChange = { nsec = it },
+                label = { Text("Paste nsec for this session") },
+                singleLine = true,
+                visualTransformation = secretVisualTransformation(
+                    platform = appState.platform,
+                    credentialAutofillEnabled = true,
+                ),
+                keyboardOptions = directNsecKeyboardOptions(nsecAutofillPolicy),
+                enabled = !directNsecCredentialSaveInProgress,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .withAndroidTextFieldAutofillPolicy(nsecAutofillPolicy),
+            )
+        }
+        if (appState.platform == AppPlatform.Android) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth()
+                    .clickable(
+                        role = Role.Checkbox,
+                        enabled = !directNsecCredentialSaveInProgress,
+                        onClick = { offerNsecPasswordManagerSave = !offerNsecPasswordManagerSave },
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = offerNsecPasswordManagerSave,
+                    onCheckedChange = { offerNsecPasswordManagerSave = it },
+                    enabled = !directNsecCredentialSaveInProgress,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Offer to save this nsec in Android Password Manager",
+                    color = OtherNoteText,
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            SignInSupportingText(
+                if (offerNsecPasswordManagerSave) {
+                    "Other Note will not store this key unless you separately choose Save to this device. Android or your password manager may save the public npub with the nsec."
+                } else {
+                    "Off by default. Session-only use is forgotten when you log out or the app process is cleared."
+                },
+            )
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = {
-                if (appState.login(nsec)) {
-                    nsec = ""
+                scope.launch {
+                    directNsecCredentialSaveInProgress = true
+                    submitDirectNsecLogin(
+                        appState = appState,
+                        rawNsec = nsec,
+                        offerPasswordManagerSave = offerNsecPasswordManagerSave,
+                        clearDraft = { nsec = "" },
+                    )
+                    directNsecCredentialSaveInProgress = false
                 }
             },
+            enabled = !directNsecCredentialSaveInProgress,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(nsecOption.label)
+            Text(if (directNsecCredentialSaveInProgress) "Signing in..." else nsecOption.label)
         }
-        if (appState.platform == AppPlatform.Desktop) {
+        if (appState.platform == AppPlatform.Desktop || appState.platform == AppPlatform.Android) {
             Spacer(Modifier.height(8.dp))
             OutlinedButton(
                 onClick = {
                     appState.requestExistingNsecKeyringSaveConfirmation()
                 },
-                enabled = nsec.isNotBlank() && appState.secureSecretStoreAvailable,
+                enabled = nsec.isNotBlank() && appState.secureSecretStoreAvailable && !directNsecCredentialSaveInProgress,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save to this device's keyring")
+                Text(KeyringSaveWarningCopy.saveButtonLabelFor(appState.platform))
             }
             if (!appState.secureSecretStoreAvailable) SignInSupportingText(appState.secureSecretStoreStatus)
+        }
+        if (appState.platform == AppPlatform.Android) {
+            Spacer(Modifier.height(8.dp))
+            SavedDirectIdentityList(
+                appState = appState,
+                savedIdentities = savedIdentities,
+                scope = scope,
+            )
         }
         Spacer(Modifier.height(12.dp))
         Text("Other options", color = OtherNoteText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -363,6 +529,7 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     }
     keyringSaveConfirmation.source?.let { source ->
         KeyringSaveConfirmationDialog(
+            platform = appState.platform,
             onCancel = { appState.cancelKeyringSaveConfirmation() },
             onConfirm = {
                 scope.launch {
@@ -387,9 +554,38 @@ fun LoginScreen(appState: AppState, onLoggedIn: () -> Unit) {
     }
 }
 
+internal suspend fun submitDirectNsecLogin(
+    appState: AppState,
+    rawNsec: String,
+    offerPasswordManagerSave: Boolean,
+    clearDraft: () -> Unit,
+): Boolean {
+    val signedIn = appState.login(rawNsec)
+    if (!signedIn) return false
+    if (appState.platform == AppPlatform.Android && offerPasswordManagerSave) {
+        val accountIdentifier = directNsecCredentialAccountIdentifier(appState)
+        val result = if (accountIdentifier != null) {
+            appState.saveDirectNsecCredentialWithPasswordManager(accountIdentifier, rawNsec)
+        } else {
+            DirectNsecCredentialSaveResult.Unavailable
+        }
+        appState.applyDirectNsecCredentialSaveResult(result)
+    }
+    clearDraft()
+    return true
+}
+
+internal fun directNsecCredentialAccountIdentifier(appState: AppState): String? {
+    val session = appState.session.value ?: return null
+    return session.npub
+        .takeIf { it.isNotBlank() && !it.contains("unavailable", ignoreCase = true) }
+        ?: session.publicKeyHex.takeIf { it.isNotBlank() && !it.equals("unavailable", ignoreCase = true) }
+}
+
 @Composable
 private fun SavedIdentityRow(
     identity: SavedNsecIdentity,
+    storageLabel: String,
     onContinue: () -> Unit,
     onForget: () -> Unit,
 ) {
@@ -404,7 +600,7 @@ private fun SavedIdentityRow(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(identity.safeDisplayName(), color = OtherNoteText, fontWeight = FontWeight.Bold)
-                Text("Desktop keyring", color = OtherNoteMuted, fontSize = 12.sp)
+                Text(identity.label?.takeIf { it.isNotBlank() } ?: storageLabel, color = OtherNoteMuted, fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
                 OtherNoteButton(onClick = onContinue) {
@@ -414,6 +610,39 @@ private fun SavedIdentityRow(
                     Text("Forget")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SavedDirectIdentityList(
+    appState: AppState,
+    savedIdentities: SavedIdentityState,
+    scope: kotlinx.coroutines.CoroutineScope,
+) {
+    Text("Saved direct identities", color = OtherNoteText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(6.dp))
+    when {
+        !appState.secureSecretStoreAvailable -> SignInSupportingText(appState.secureSecretStoreStatus)
+        savedIdentities.loading -> SignInSupportingText("Checking ${KeyringSaveWarningCopy.labelFor(appState.platform)}...")
+        savedIdentities.error != null -> SignInSupportingText(savedIdentities.error.orEmpty())
+        savedIdentities.identities.isEmpty() -> SignInSupportingText("No saved direct identities on this device yet.")
+        else -> savedIdentities.identities.forEach { identity ->
+            SavedIdentityRow(
+                identity = identity,
+                storageLabel = KeyringSaveWarningCopy.labelFor(appState.platform),
+                onContinue = {
+                    scope.launch {
+                        appState.loginWithSavedIdentity(identity.accountPubkey)
+                    }
+                },
+                onForget = {
+                    scope.launch {
+                        appState.forgetSavedIdentity(identity.accountPubkey)
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -587,7 +816,7 @@ private fun GeneratedIdentityExplanationDialog(
                 Spacer(Modifier.height(8.dp))
                 Text("Save the nsec in a secure password manager, OS credential store, or import it into a signer such as Amber. Other Note will not store the plaintext nsec.")
                 Spacer(Modifier.height(8.dp))
-                Text("Users who do not want to manage an nsec directly should use Android signer, remote signer, or future OS credential storage.")
+                Text("Users who do not want to manage an nsec directly should use Android signer, remote signer, or a trusted password manager.")
                 generatedIdentity.error?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, color = OtherNotePurple)
@@ -620,24 +849,41 @@ private fun GeneratedIdentityRevealDialog(
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("This nsec is your private key. Other Note will use it only for this session and will not store it.")
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = generatedIdentity.npub,
-                    onValueChange = {},
-                    label = { Text("Public key (npub)") },
-                    readOnly = true,
-                    singleLine = true,
+                AutofillScopedTextField(
+                    policy = nonCredentialTextAutofillPolicy(appState.platform),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    OutlinedTextField(
+                        value = generatedIdentity.npub,
+                        onValueChange = {},
+                        label = { Text("Public key (npub)") },
+                        readOnly = true,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = generatedIdentity.nsecForDisplay(),
-                    onValueChange = {},
-                    label = { Text("Private key (nsec)") },
-                    readOnly = true,
-                    singleLine = true,
-                    visualTransformation = if (generatedIdentity.nsecRevealed) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                AutofillScopedTextField(
+                    policy = nonCredentialTextAutofillPolicy(appState.platform),
                     modifier = Modifier.fillMaxWidth(),
-                )
+                ) {
+                    OutlinedTextField(
+                        value = generatedIdentity.nsecForDisplay(),
+                        onValueChange = {},
+                        label = { Text("Private key (nsec)") },
+                        readOnly = true,
+                        singleLine = true,
+                        visualTransformation = if (generatedIdentity.nsecRevealed) {
+                            VisualTransformation.None
+                        } else {
+                            secretVisualTransformation(
+                                platform = appState.platform,
+                                credentialAutofillEnabled = false,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 TextButton(onClick = { appState.toggleGeneratedIdentityNsecReveal() }) {
                     Text(if (generatedIdentity.nsecRevealed) "Hide nsec" else "Reveal nsec")
                 }
@@ -653,7 +899,7 @@ private fun GeneratedIdentityRevealDialog(
                     onCheckedChange = appState::acknowledgeGeneratedIdentityLossRisk,
                     text = "I understand losing this nsec means losing access to this identity's encrypted notes.",
                 )
-                if (appState.platform == AppPlatform.Desktop) {
+                if (appState.platform == AppPlatform.Desktop || appState.platform == AppPlatform.Android) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(
                         onClick = {
@@ -662,11 +908,11 @@ private fun GeneratedIdentityRevealDialog(
                         enabled = generatedIdentity.canUseForSession && appState.secureSecretStoreAvailable,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Save to desktop keyring")
+                        Text(KeyringSaveWarningCopy.saveButtonLabelFor(appState.platform))
                     }
                     Text(
                         if (appState.secureSecretStoreAvailable) {
-                            KeyringSaveWarningCopy.description
+                            KeyringSaveWarningCopy.descriptionFor(appState.platform)
                         } else {
                             appState.secureSecretStoreStatus
                         },
@@ -694,20 +940,21 @@ private fun GeneratedIdentityRevealDialog(
 
 @Composable
 private fun KeyringSaveConfirmationDialog(
+    platform: AppPlatform,
     onCancel: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text(KeyringSaveWarningCopy.title) },
+        title = { Text(KeyringSaveWarningCopy.titleFor(platform)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(KeyringSaveWarningCopy.body)
+                Text(KeyringSaveWarningCopy.bodyFor(platform))
             }
         },
         confirmButton = {
             OtherNoteButton(onClick = onConfirm) {
-                Text("Save to keyring")
+                Text(KeyringSaveWarningCopy.confirmButtonLabelFor(platform))
             }
         },
         dismissButton = {
@@ -816,23 +1063,28 @@ fun NotesListScreen(
             Spacer(Modifier.height(10.dp))
             OtherNoteButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("New note") }
             Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                label = { Text("Search notes") },
-                singleLine = true,
+            AutofillScopedTextField(
+                policy = nonCredentialTextAutofillPolicy(appState.platform),
                 modifier = Modifier.fillMaxWidth(),
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(
-                            onClick = { searchQuery = "" },
-                            modifier = Modifier.semantics { contentDescription = "Clear note search" },
-                        ) {
-                            Text("X")
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Search notes") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.semantics { contentDescription = "Clear note search" },
+                            ) {
+                                Text("X")
+                            }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
             Spacer(Modifier.height(6.dp))
             Row(
                 Modifier.fillMaxWidth(),
@@ -998,7 +1250,7 @@ private fun AboutOtherNoteDialog(onDismiss: () -> Unit) {
                 Text("GPLv3 Nostr-backed encrypted notes app for Android and Debian/Linux desktop.")
                 Spacer(Modifier.height(10.dp))
                 Text("Key safety", fontWeight = FontWeight.Bold)
-                Text("Android NIP-55 keeps the private key in the signer app. NIP-46 keeps the private key in the remote signer. Desktop keyring identities are saved only after explicit confirmation. Session-only nsec sign-in is not persisted.")
+                Text("Android NIP-55 keeps the private key in the signer app. NIP-46 keeps the private key in the remote signer. Direct nsec sign-in is session-only unless you explicitly save it to OS-backed secure storage.")
                 Spacer(Modifier.height(10.dp))
                 Text("Platform status", fontWeight = FontWeight.Bold)
                 Text("Android and Debian/Linux desktop are the active tested targets. Windows, macOS, iOS, and web are future work.")
@@ -1680,18 +1932,23 @@ fun NoteEditScreen(appState: AppState, note: Note?, onDone: () -> Unit) {
                     Text(saveState.message, color = OtherNoteMuted, modifier = Modifier.padding(bottom = 8.dp))
                 }
             }
-            OutlinedTextField(
-                value = markdown,
-                onValueChange = {
-                    markdown = it
-                    if (saveState.error != null) {
-                        appState.clearEditorSaveState()
-                    }
-                },
+            AutofillScopedTextField(
+                policy = nonCredentialTextAutofillPolicy(appState.platform),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                label = { Text("Markdown") },
-                enabled = !saveState.inProgress,
-            )
+            ) {
+                OutlinedTextField(
+                    value = markdown,
+                    onValueChange = {
+                        markdown = it
+                        if (saveState.error != null) {
+                            appState.clearEditorSaveState()
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    label = { Text("Markdown") },
+                    enabled = !saveState.inProgress,
+                )
+            }
         }
     }
 }
@@ -1764,17 +2021,22 @@ fun RelaySettingsScreen(appState: AppState, onBack: () -> Unit) {
             Spacer(Modifier.height(6.dp))
             Text("At least one readable and writable relay is needed for note sync.", color = OtherNoteMuted)
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = relayToAdd,
-                onValueChange = {
-                    relayToAdd = it
-                    relayError = null
-                },
-                label = { Text("Add note relay") },
-                singleLine = true,
+            AutofillScopedTextField(
+                policy = nonCredentialTextAutofillPolicy(appState.platform),
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !relayAddState.inProgress,
-            )
+            ) {
+                OutlinedTextField(
+                    value = relayToAdd,
+                    onValueChange = {
+                        relayToAdd = it
+                        relayError = null
+                    },
+                    label = { Text("Add note relay") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !relayAddState.inProgress,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Column(Modifier.fillMaxWidth()) {
                 OtherNoteButton(

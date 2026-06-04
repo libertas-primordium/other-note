@@ -186,6 +186,50 @@ object KeyringSaveWarningCopy {
     const val description: String =
         "Stores this nsec in your desktop keyring. This is device-local convenience storage, not a backup. " +
             "Apps or tools allowed to access your unlocked keyring may be able to retrieve it."
+
+    fun titleFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android -> "Save this key to Android secure storage?"
+        AppPlatform.Desktop -> title
+        AppPlatform.Generic -> "Save this key to secure storage?"
+    }
+
+    fun bodyFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android ->
+            "Other Note will encrypt this nsec with an Android Keystore-backed key and store only the encrypted record on this device. " +
+                "This is device-local convenience storage, not a backup. If this device is lost, reset, or the secure key becomes unavailable, you still need a separate secure copy or signer import. " +
+                "Android signer or a trusted password manager is preferred for many users. " +
+                "Only save this key on a device you trust. Logout stops using the saved identity, and Forget removes it from Other Note's secure storage."
+        AppPlatform.Desktop -> body
+        AppPlatform.Generic ->
+            "Other Note will store this nsec only through OS-backed secure storage. This is device-local convenience storage, not a backup. " +
+                "Keep a separate secure copy of the nsec or import it into a signer."
+    }
+
+    fun descriptionFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android ->
+            "Stores this nsec as an Android Keystore-encrypted device-local record. This is convenience storage, not a backup."
+        AppPlatform.Desktop -> description
+        AppPlatform.Generic ->
+            "Stores this nsec through OS-backed secure storage. This is device-local convenience storage, not a backup."
+    }
+
+    fun labelFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android -> "Android secure storage"
+        AppPlatform.Desktop -> "Desktop keyring"
+        AppPlatform.Generic -> "Secure storage"
+    }
+
+    fun saveButtonLabelFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android -> "Save this identity to this device"
+        AppPlatform.Desktop -> "Save to this device's keyring"
+        AppPlatform.Generic -> "Save to secure storage"
+    }
+
+    fun confirmButtonLabelFor(platform: AppPlatform): String = when (platform) {
+        AppPlatform.Android -> "Save to Android secure storage"
+        AppPlatform.Desktop -> "Save to keyring"
+        AppPlatform.Generic -> "Save"
+    }
 }
 
 data class RelayAddTestState(
@@ -418,7 +462,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         services.nip55SessionStore.unavailableReason ?: "Saved Android signer sessions available"
     val secureSecretStoreAvailable: Boolean = services.secureSecretStore.isAvailable
     val secureSecretStoreStatus: String =
-        services.secureSecretStore.unavailableReason ?: "Desktop keyring available"
+        services.secureSecretStore.unavailableReason ?: "${KeyringSaveWarningCopy.labelFor(platform)} available"
     val remoteSignerStatus: String = when {
         services.remoteSigner == null -> "NIP-46 remote signer unavailable in this runtime"
         services.remoteSigner.isAvailable -> "NIP-46 remote signer available"
@@ -536,6 +580,25 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 _message.value = decoded.reason
                 false
             }
+        }
+    }
+
+    suspend fun saveDirectNsecCredentialWithPasswordManager(
+        accountIdentifier: String,
+        rawNsec: String,
+    ): DirectNsecCredentialSaveResult =
+        services.directNsecCredentialSaver.saveDirectNsecCredential(accountIdentifier, rawNsec.trim())
+
+    fun applyDirectNsecCredentialSaveResult(result: DirectNsecCredentialSaveResult) {
+        _message.value = when (result) {
+            DirectNsecCredentialSaveResult.Saved ->
+                "Password-manager save was accepted. nsec active for this session only."
+            DirectNsecCredentialSaveResult.Canceled ->
+                "Password-manager save was canceled. nsec active for this session only."
+            DirectNsecCredentialSaveResult.Unavailable ->
+                "Android Password Manager save is unavailable. nsec active for this session only."
+            is DirectNsecCredentialSaveResult.Failed ->
+                result.safeMessage.toUserFacingMessage()
         }
     }
 
@@ -671,7 +734,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     fun requestExistingNsecKeyringSaveConfirmation() {
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available. You can still sign in for this session."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still sign in for this session."
             return
         }
         _keyringSaveConfirmationState.value =
@@ -681,11 +744,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     fun requestGeneratedIdentityKeyringSaveConfirmation() {
         val current = _generatedIdentityState.value
         if (!current.canUseForSession || current.secret == null) {
-            _message.value = "Save the generated nsec and acknowledge the recovery warning before saving it to the keyring."
+            _message.value = "Save the generated nsec and acknowledge the recovery warning before saving it to secure storage."
             return
         }
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available. You can still use this identity for this session."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still use this identity for this session."
             return
         }
         _keyringSaveConfirmationState.value =
@@ -712,11 +775,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun saveNsecToKeyring(rawNsec: String): Boolean {
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available. You can still sign in for this session."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still sign in for this session."
             return false
         }
         val validated = validateNsecForSavedIdentity(rawNsec).getOrElse {
-            _message.value = it.message?.toUserFacingMessage() ?: "Could not save this identity to the desktop keyring."
+            _message.value = it.message?.toUserFacingMessage() ?: "Could not save this identity to ${KeyringSaveWarningCopy.labelFor(platform)}."
             return false
         }
         val result = withContext(Dispatchers.IO) {
@@ -728,15 +791,15 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                 ensureSavedIdentityVisible(validated.publicKey)
                 activateValidatedNsecSession(
                     validated,
-                    "Identity saved to the desktop keyring and signed in. This device keyring is not a backup.",
+                    "Identity saved to ${KeyringSaveWarningCopy.labelFor(platform)} and signed in. This device storage is not a backup.",
                 ).also { signedIn ->
                     if (!signedIn) {
-                        _message.value = "Identity saved to the desktop keyring, but Other Note could not sign in. Use the saved identity to try again."
+                        _message.value = "Identity saved to ${KeyringSaveWarningCopy.labelFor(platform)}, but Other Note could not sign in. Use the saved identity to try again."
                     }
                 }
             }
             SecureSecretStoreResult.Unavailable -> {
-                _message.value = "Desktop keyring is not available. You can still sign in for this session."
+                _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still sign in for this session."
                 false
             }
             is SecureSecretStoreResult.Failed -> {
@@ -747,7 +810,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             is SecureSecretStoreResult.Listed,
             is SecureSecretStoreResult.Loaded,
             -> {
-                _message.value = "Could not save this identity to the desktop keyring."
+                _message.value = "Could not save this identity to ${KeyringSaveWarningCopy.labelFor(platform)}."
                 false
             }
         }
@@ -757,11 +820,11 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         val current = _generatedIdentityState.value
         val secret = current.secret
         if (!current.canUseForSession || secret == null) {
-            _message.value = "Save the generated nsec and acknowledge the recovery warning before saving it to the keyring."
+            _message.value = "Save the generated nsec and acknowledge the recovery warning before saving it to secure storage."
             return false
         }
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available. You can still use this identity for this session."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still use this identity for this session."
             return false
         }
         val result = withContext(Dispatchers.IO) {
@@ -777,17 +840,17 @@ class AppState(private val services: AppServices = defaultAppServices()) {
                         privateKey = NostrPrivateKey(secret.privateKeyHex),
                         publicKey = NostrPublicKey(secret.publicKeyHex, secret.npub),
                     ),
-                    "Identity saved to the desktop keyring and signed in. This device keyring is not a backup.",
+                    "Identity saved to ${KeyringSaveWarningCopy.labelFor(platform)} and signed in. This device storage is not a backup.",
                 ).also { signedIn ->
                     if (signedIn) {
                         _generatedIdentityState.value = GeneratedIdentityState()
                     } else {
-                        _message.value = "Identity saved to the desktop keyring, but Other Note could not sign in. Use the saved identity to try again."
+                        _message.value = "Identity saved to ${KeyringSaveWarningCopy.labelFor(platform)}, but Other Note could not sign in. Use the saved identity to try again."
                     }
                 }
             }
             SecureSecretStoreResult.Unavailable -> {
-                _message.value = "Desktop keyring is not available. You can still use this identity for this session."
+                _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still use this identity for this session."
                 false
             }
             is SecureSecretStoreResult.Failed -> {
@@ -798,7 +861,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             is SecureSecretStoreResult.Listed,
             is SecureSecretStoreResult.Loaded,
             -> {
-                _message.value = "Could not save this identity to the desktop keyring."
+                _message.value = "Could not save this identity to ${KeyringSaveWarningCopy.labelFor(platform)}."
                 false
             }
         }
@@ -806,7 +869,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     suspend fun loginWithSavedIdentity(accountPubkey: String): Boolean {
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available. You can still sign in for this session."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still sign in for this session."
             return false
         }
         val result = withContext(Dispatchers.IO) {
@@ -815,7 +878,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         val nsec = when (result) {
             is SecureSecretStoreResult.Loaded -> result.nsec
             SecureSecretStoreResult.Unavailable -> {
-                _message.value = "Desktop keyring is not available. You can still sign in for this session."
+                _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available. You can still sign in for this session."
                 return false
             }
             is SecureSecretStoreResult.Failed -> {
@@ -846,14 +909,14 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             authMethod = SessionAuthMethod.SessionOnlyNsec,
         )
         _mode.value = AppMode.Authenticated
-        _message.value = "Signed in with a saved desktop key."
+        _message.value = "Signed in with a saved identity from ${KeyringSaveWarningCopy.labelFor(platform)}."
         startProfileLoad()
         return true
     }
 
     suspend fun forgetSavedIdentity(accountPubkey: String): Boolean {
         if (!services.secureSecretStore.isAvailable) {
-            _message.value = "Desktop keyring is not available."
+            _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available."
             return false
         }
         val result = withContext(Dispatchers.IO) {
@@ -863,15 +926,19 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             SecureSecretStoreResult.Deleted -> {
                 refreshSavedIdentities()
                 removeSavedIdentityFromState(accountPubkey)
-                _message.value = if (_session.value?.publicKeyHex.equals(accountPubkey, ignoreCase = true)) {
-                    "Saved key removed. Current session remains active until logout."
+                val activeSavedIdentity = _session.value?.publicKeyHex.equals(accountPubkey, ignoreCase = true)
+                if (activeSavedIdentity && platform == AppPlatform.Android) {
+                    logout()
+                    _message.value = "Saved key removed from Android secure storage. Current direct-key session was cleared."
+                } else if (activeSavedIdentity) {
+                    _message.value = "Saved key removed. Current session remains active until logout."
                 } else {
-                    "Saved key removed from this device."
+                    _message.value = "Saved key removed from this device."
                 }
                 true
             }
             SecureSecretStoreResult.Unavailable -> {
-                _message.value = "Desktop keyring is not available."
+                _message.value = "${KeyringSaveWarningCopy.labelFor(platform)} is not available."
                 false
             }
             is SecureSecretStoreResult.Failed -> {
@@ -972,7 +1039,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     private fun validateNsecForSavedIdentity(rawNsec: String): Result<ValidatedNsec> = runCatching {
         if (!crypto.productionReady) {
-            throw IllegalStateException("Desktop keyring sign-in requires production Nostr crypto.")
+            throw IllegalStateException("Saved direct-key sign-in requires production Nostr crypto.")
         }
         val trimmed = rawNsec.trim()
         val privateKey = when (val decoded = crypto.decodeNsec(trimmed)) {
@@ -1041,7 +1108,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             identities = current.identities + SavedNsecIdentity(
                 accountPubkey = publicKey.hex,
                 npub = publicKey.npub,
-                label = "Desktop keyring identity",
+                label = "${KeyringSaveWarningCopy.labelFor(platform)} identity",
             ),
         )
     }
