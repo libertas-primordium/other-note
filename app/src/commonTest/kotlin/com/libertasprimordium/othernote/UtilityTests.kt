@@ -21,15 +21,20 @@ import com.libertasprimordium.othernote.sync.mergeRelayListTags
 import com.libertasprimordium.othernote.sync.parseRelayListEvent
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.selectLatestSignedEncryptedNoteEvents
+import com.libertasprimordium.othernote.ui.AndroidTextFieldAutofillPolicy
 import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.NoteCardAction
 import com.libertasprimordium.othernote.ui.NoteCardActionPresentation
 import com.libertasprimordium.othernote.ui.SignInInfoTopic
+import com.libertasprimordium.othernote.ui.directNsecAutofillPolicy
+import com.libertasprimordium.othernote.ui.directNsecKeyboardOptions
 import com.libertasprimordium.othernote.ui.mainMenuButtonLabel
+import com.libertasprimordium.othernote.ui.nonCredentialTextAutofillPolicy
 import com.libertasprimordium.othernote.ui.noteCardActionPresentation
 import com.libertasprimordium.othernote.ui.noteCardActionMenuText
 import com.libertasprimordium.othernote.ui.noteCardActionItems
 import com.libertasprimordium.othernote.ui.noteDeleteConfirmationText
+import com.libertasprimordium.othernote.ui.remoteSignerBunkerTokenAutofillPolicy
 import com.libertasprimordium.othernote.ui.signInInfoCopy
 import com.libertasprimordium.othernote.ui.noteGridColumnCount
 import com.libertasprimordium.othernote.ui.userFacingErrorFor
@@ -44,6 +49,7 @@ import com.libertasprimordium.othernote.util.markdownSpans
 import com.libertasprimordium.othernote.util.normalizeRelayUrl
 import com.libertasprimordium.othernote.util.noteCardPreview
 import com.libertasprimordium.othernote.util.truncateMarkdown
+import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -145,6 +151,38 @@ class UtilityTests {
     fun mainMenuButtonUsesExplicitDesktopLabelAndCompactAndroidLabel() {
         assertEquals("Menu", mainMenuButtonLabel(AppPlatform.Desktop))
         assertEquals("...", mainMenuButtonLabel(AppPlatform.Android))
+    }
+
+    @Test
+    fun androidDirectNsecCredentialAutofillIsExplicitAndScoped() {
+        val androidPolicy = directNsecAutofillPolicy(AppPlatform.Android)
+
+        assertEquals(AndroidTextFieldAutofillPolicy.DirectNsecPasswordCredential, androidPolicy)
+        assertEquals(
+            AndroidTextFieldAutofillPolicy.Default,
+            directNsecAutofillPolicy(AppPlatform.Desktop),
+        )
+        assertEquals(KeyboardType.Password, directNsecKeyboardOptions(androidPolicy).keyboardType)
+    }
+
+    @Test
+    fun androidBunkerAndOtherTextFieldsDoNotAdvertiseCredentialAutofill() {
+        assertEquals(
+            AndroidTextFieldAutofillPolicy.NonCredentialSensitive,
+            remoteSignerBunkerTokenAutofillPolicy(AppPlatform.Android),
+        )
+        assertEquals(
+            AndroidTextFieldAutofillPolicy.NonCredential,
+            nonCredentialTextAutofillPolicy(AppPlatform.Android),
+        )
+        assertEquals(
+            AndroidTextFieldAutofillPolicy.Default,
+            remoteSignerBunkerTokenAutofillPolicy(AppPlatform.Desktop),
+        )
+        assertEquals(
+            AndroidTextFieldAutofillPolicy.Default,
+            nonCredentialTextAutofillPolicy(AppPlatform.Desktop),
+        )
     }
 
     @Test
@@ -271,6 +309,23 @@ class UtilityTests {
         assertFalse(error.message.contains("must-not-appear"))
         assertFalse(error.message.contains("nsec1leak"))
         assertFalse(error.message.contains("privateKey"))
+    }
+
+    @Test
+    fun androidSecureStorageFailuresMapToReadableUserFacingCopy() {
+        val unavailable = userFacingErrorFor("Android secure storage is not available. secret=must-not-appear nsec1leak privateKey=leak")
+        val saveFailed = userFacingErrorFor("Could not save this identity to Android secure storage. secret=must-not-appear nsec1leak privateKey=leak")
+
+        assertEquals("Android secure storage unavailable", unavailable.title)
+        assertEquals("Android secure storage is not available. You can still sign in for this session.", unavailable.message)
+        assertEquals("Could not save identity", saveFailed.title)
+        assertEquals("Could not save this identity to Android secure storage.", saveFailed.message)
+        listOf(unavailable, saveFailed).forEach { error ->
+            assertPrimaryErrorCopyIsReadable(error.message)
+            assertFalse(error.message.contains("must-not-appear"))
+            assertFalse(error.message.contains("nsec1leak"))
+            assertFalse(error.message.contains("privateKey"))
+        }
     }
 
     @Test

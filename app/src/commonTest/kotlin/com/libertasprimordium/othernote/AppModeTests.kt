@@ -5,6 +5,8 @@ import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
 import com.libertasprimordium.othernote.ui.AppServices
 import com.libertasprimordium.othernote.ui.AppState
+import com.libertasprimordium.othernote.ui.DirectNsecCredentialSaveResult
+import com.libertasprimordium.othernote.ui.DirectNsecCredentialSaver
 import com.libertasprimordium.othernote.ui.GeneratedIdentityStep
 import com.libertasprimordium.othernote.ui.KeyringSaveConfirmationSource
 import com.libertasprimordium.othernote.ui.KeyringSaveWarningCopy
@@ -13,6 +15,8 @@ import com.libertasprimordium.othernote.ui.RelaySettingsRefreshResult
 import com.libertasprimordium.othernote.ui.SignInOptionEmphasis
 import com.libertasprimordium.othernote.ui.SignInOptionKind
 import com.libertasprimordium.othernote.ui.buildSignInOptions
+import com.libertasprimordium.othernote.ui.directNsecCredentialAccountIdentifier
+import com.libertasprimordium.othernote.ui.submitDirectNsecLogin
 import com.libertasprimordium.othernote.nostr.NonProductionNostrCrypto
 import com.libertasprimordium.othernote.nostr.Nip19
 import com.libertasprimordium.othernote.nostr.NostrClient
@@ -80,6 +84,7 @@ class AppModeTests {
             listOf(
                 "Android NIP-55",
                 "NIP-46 remote signer",
+                "Android secure storage nsec",
                 "Desktop keyring nsec",
                 "Session-only nsec",
                 "Generated identity",
@@ -91,6 +96,8 @@ class AppModeTests {
         assertEquals("deletes only NIP-55 session metadata", matrix.single { it.mode == "Android NIP-55" }.forget)
         assertEquals("saved reusable remote-signer session remains", matrix.single { it.mode == "NIP-46 remote signer" }.logout)
         assertEquals("deletes only NIP-46 session state", matrix.single { it.mode == "NIP-46 remote signer" }.forget)
+        assertEquals("clears active session only", matrix.single { it.mode == "Android secure storage nsec" }.logout)
+        assertEquals("deletes only selected Android secure storage identity", matrix.single { it.mode == "Android secure storage nsec" }.forget)
         assertEquals("clears active session only", matrix.single { it.mode == "Session-only nsec" }.logout)
         assertEquals("no saved session to forget", matrix.single { it.mode == "Local-only" }.forget)
         assertTrue(matrix.all { it.storesUserPrivateKey == false })
@@ -214,6 +221,155 @@ class AppModeTests {
     }
 
     @Test
+    fun androidDirectNsecSubmitOffersCredentialManagerSaveOnlyWhenPasswordManagerOptionIsEnabled() = runBlocking {
+        val credentialSaver = RecordingDirectNsecCredentialSaver()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                directNsecCredentialSaver = credentialSaver,
+            ),
+        )
+        val nsec = testNsecForPrivateKey("31".repeat(32))
+        val expectedNpub = "npub-test-${"31".repeat(32).reversed().take(16)}"
+        var draftCleared = false
+
+        assertTrue(
+            submitDirectNsecLogin(
+                appState = state,
+                rawNsec = nsec,
+                offerPasswordManagerSave = true,
+                clearDraft = { draftCleared = true },
+            ),
+        )
+
+        assertEquals(listOf(expectedNpub to nsec), credentialSaver.savedCredentials)
+        assertTrue(draftCleared)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertTrue(state.message.value.contains("Password-manager save was accepted"))
+        assertFalse(state.message.value.contains(nsec))
+    }
+
+    @Test
+    fun androidDirectNsecSubmitDoesNotOfferCredentialManagerSaveWhenPasswordManagerOptionIsDisabled() = runBlocking {
+        val credentialSaver = RecordingDirectNsecCredentialSaver()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                directNsecCredentialSaver = credentialSaver,
+            ),
+        )
+        var draftCleared = false
+
+        assertTrue(
+            submitDirectNsecLogin(
+                appState = state,
+                rawNsec = testNsecForPrivateKey("32".repeat(32)),
+                offerPasswordManagerSave = false,
+                clearDraft = { draftCleared = true },
+            ),
+        )
+
+        assertTrue(credentialSaver.savedCredentials.isEmpty())
+        assertTrue(draftCleared)
+        assertEquals(AppMode.Authenticated, state.mode.value)
+    }
+
+    @Test
+    fun directNsecSubmitDoesNotOfferCredentialManagerSaveOrClearDraftAfterFailedLogin() = runBlocking {
+        val credentialSaver = RecordingDirectNsecCredentialSaver()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                directNsecCredentialSaver = credentialSaver,
+            ),
+        )
+        var draftCleared = false
+
+        assertFalse(
+            submitDirectNsecLogin(
+                appState = state,
+                rawNsec = "not-a-valid-nsec",
+                offerPasswordManagerSave = true,
+                clearDraft = { draftCleared = true },
+            ),
+        )
+
+        assertTrue(credentialSaver.savedCredentials.isEmpty())
+        assertFalse(draftCleared)
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertFalse(state.message.value.contains("not-a-valid-nsec"))
+    }
+
+    @Test
+    fun directNsecCredentialAccountIdentifierUsesSafePublicSessionIdentityOnly() {
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+            ),
+        )
+        val nsec = testNsecForPrivateKey("33".repeat(32))
+
+        assertNull(directNsecCredentialAccountIdentifier(state))
+        assertTrue(state.login(nsec))
+
+        val identifier = directNsecCredentialAccountIdentifier(state) ?: error("Missing credential account identifier")
+        assertTrue(identifier.startsWith("npub-test-"))
+        assertFalse(identifier.contains(nsec))
+        assertFalse(identifier.contains("nsec"))
+    }
+
+    @Test
+    fun directNsecCredentialManagerCancelUnavailableAndFailureDoNotFailLoginOrLeakSecret() = runBlocking {
+        val nsec = testNsecForPrivateKey("34".repeat(32))
+        val results = listOf(
+            DirectNsecCredentialSaveResult.Canceled,
+            DirectNsecCredentialSaveResult.Unavailable,
+            DirectNsecCredentialSaveResult.Failed("Password-manager save failed. nsec-redacted"),
+        )
+
+        results.forEach { result ->
+            val credentialSaver = RecordingDirectNsecCredentialSaver(result = result)
+            val state = AppState(
+                AppServices(
+                    mode = AppRuntimeMode.Offline,
+                    platform = AppPlatform.Android,
+                    crypto = GeneratedIdentityTestCrypto(),
+                    client = OfflineNostrClient(),
+                    directNsecCredentialSaver = credentialSaver,
+                ),
+            )
+            var draftCleared = false
+
+            assertTrue(
+                submitDirectNsecLogin(
+                    appState = state,
+                    rawNsec = nsec,
+                    offerPasswordManagerSave = true,
+                    clearDraft = { draftCleared = true },
+                ),
+            )
+
+            assertEquals(AppMode.Authenticated, state.mode.value)
+            assertTrue(draftCleared)
+            assertEquals(1, credentialSaver.savedCredentials.size)
+            assertFalse(state.message.value.contains(nsec))
+            assertFalse(state.message.value.contains("34".repeat(32)))
+        }
+    }
+
+    @Test
     fun externalSignerUnavailableIsSurfacedWithoutChangingSessionMode() {
         val state = AppState(
             AppServices(
@@ -329,6 +485,108 @@ class AppModeTests {
         assertTrue(assertListedNip55Sessions(nip55Store).isEmpty())
         assertTrue(assertListedNip46Sessions(nip46Store).isEmpty())
         assertTrue(keyring.safeDiagnostics.none { it.startsWith("saved account") || it.contains(nsec) })
+    }
+
+    @Test
+    fun androidDirectNsecSaveRequiresExplicitConfirmationAndUsesSecureStorage() = runBlocking {
+        val persistentSecureStore = linkedMapOf<String, String>()
+        val privateKeyHex = "11".repeat(32)
+        val nsec = testNsecForPrivateKey(privateKeyHex)
+        val expectedPubkey = privateKeyHex.reversed()
+        val firstState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentSecureStore),
+            ),
+        )
+
+        assertEquals("Android secure storage available", firstState.secureSecretStoreStatus)
+        assertTrue(firstState.login(nsec))
+        assertFalse(persistentSecureStore.containsKey(expectedPubkey))
+        firstState.logout()
+
+        firstState.requestExistingNsecKeyringSaveConfirmation()
+        assertEquals(KeyringSaveConfirmationSource.ExistingNsec, firstState.keyringSaveConfirmationState.value.source)
+        assertTrue(firstState.confirmExistingNsecKeyringSave(nsec))
+
+        assertTrue(persistentSecureStore.containsKey(expectedPubkey))
+        assertEquals(expectedPubkey, firstState.savedIdentityState.value.identities.single().accountPubkey)
+        assertTrue(firstState.message.value.contains("Android secure storage"))
+        assertFalse(firstState.message.value.contains(nsec))
+
+        val restartedState = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = FakeSecureSecretStore(saved = persistentSecureStore),
+            ),
+        )
+        assertTrue(restartedState.refreshSavedIdentities())
+        assertTrue(restartedState.loginWithSavedIdentity(expectedPubkey))
+        assertEquals(SessionAuthMethod.SessionOnlyNsec, restartedState.session.value?.authMethod)
+        assertEquals(expectedPubkey, restartedState.session.value?.publicKeyHex)
+    }
+
+    @Test
+    fun androidGeneratedIdentityCanBeSavedOnlyAfterAcknowledgements() = runBlocking {
+        val store = FakeSecureSecretStore()
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.generateFreshIdentity())
+        state.requestGeneratedIdentityKeyringSaveConfirmation()
+        assertFalse(state.keyringSaveConfirmationState.value.visible)
+
+        state.acknowledgeGeneratedIdentitySaved(true)
+        state.acknowledgeGeneratedIdentityLossRisk(true)
+        val nsec = state.generatedIdentityState.value.nsecForDisplay()
+        state.requestGeneratedIdentityKeyringSaveConfirmation()
+        assertEquals(KeyringSaveConfirmationSource.GeneratedIdentity, state.keyringSaveConfirmationState.value.source)
+        assertTrue(state.confirmGeneratedIdentityKeyringSave())
+
+        assertEquals(AppMode.Authenticated, state.mode.value)
+        assertTrue(state.message.value.contains("Android secure storage"))
+        assertFalse(state.message.value.contains(nsec))
+        assertFalse(store.safeDiagnostics.any { it.contains(nsec) })
+    }
+
+    @Test
+    fun forgettingActiveAndroidSavedDirectIdentityClearsCurrentSession() = runBlocking {
+        val privateKeyHex = "12".repeat(32)
+        val accountPubkey = privateKeyHex.reversed()
+        val store = FakeSecureSecretStore()
+        store.seed(accountPubkey, testNsecForPrivateKey(privateKeyHex))
+        val state = AppState(
+            AppServices(
+                mode = AppRuntimeMode.Offline,
+                platform = AppPlatform.Android,
+                crypto = GeneratedIdentityTestCrypto(),
+                client = OfflineNostrClient(),
+                secureSecretStore = store,
+            ),
+        )
+
+        assertTrue(state.loginWithSavedIdentity(accountPubkey))
+        assertEquals(AppMode.Authenticated, state.mode.value)
+
+        assertTrue(state.forgetSavedIdentity(accountPubkey))
+
+        assertEquals(AppMode.SignedOut, state.mode.value)
+        assertNull(state.session.value)
+        assertTrue(state.savedIdentityState.value.identities.isEmpty())
+        assertTrue(state.message.value.contains("Current direct-key session was cleared"))
     }
 
     @Test
@@ -1239,11 +1497,16 @@ class AppModeTests {
             KeyringSaveWarningCopy.title,
             KeyringSaveWarningCopy.body,
             KeyringSaveWarningCopy.description,
+            KeyringSaveWarningCopy.titleFor(AppPlatform.Android),
+            KeyringSaveWarningCopy.bodyFor(AppPlatform.Android),
+            KeyringSaveWarningCopy.descriptionFor(AppPlatform.Android),
         ).joinToString("\n")
 
         assertFalse(copy.contains(fixtureNsec))
         assertFalse(copy.contains("privateKey"))
         assertFalse(copy.contains("raw private"))
+        assertTrue(copy.contains("Android Keystore"))
+        assertTrue(copy.contains("not a backup"))
     }
 
     @Test
@@ -2330,6 +2593,13 @@ private fun signInLifecycleMatrix(): List<SignInLifecycleContract> = listOf(
         storesUserPrivateKey = false,
     ),
     SignInLifecycleContract(
+        mode = "Android secure storage nsec",
+        restart = "Android secure storage identity remains available",
+        logout = "clears active session only",
+        forget = "deletes only selected Android secure storage identity",
+        storesUserPrivateKey = false,
+    ),
+    SignInLifecycleContract(
         mode = "Desktop keyring nsec",
         restart = "keyring identity remains available",
         logout = "clears active session only",
@@ -2484,6 +2754,20 @@ private class GeneratedIdentityTestCrypto : NostrCrypto {
 
 private fun testNsecForPrivateKey(privateKeyHex: String): String =
     "nsec-test-$privateKeyHex"
+
+private class RecordingDirectNsecCredentialSaver(
+    private val result: DirectNsecCredentialSaveResult = DirectNsecCredentialSaveResult.Saved,
+) : DirectNsecCredentialSaver {
+    val savedCredentials = mutableListOf<Pair<String, String>>()
+
+    override suspend fun saveDirectNsecCredential(
+        accountIdentifier: String,
+        nsec: String,
+    ): DirectNsecCredentialSaveResult {
+        savedCredentials += accountIdentifier to nsec
+        return result
+    }
+}
 
 private class FakeSecureSecretStore(
     private val saveResult: SecureSecretStoreResult? = null,

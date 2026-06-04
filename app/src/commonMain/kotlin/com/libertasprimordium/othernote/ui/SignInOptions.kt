@@ -48,7 +48,7 @@ fun signInInfoCopy(topic: SignInInfoTopic): SignInInfoCopy =
         )
         SignInInfoTopic.ExistingNsec -> SignInInfoCopy(
             title = "Existing nsec",
-            body = "This uses the pasted nsec only for the current session. Other Note does not save it to app files. On desktop, saving to the keyring is a separate explicit action. Keep your nsec somewhere secure.",
+            body = "This uses the pasted nsec only for the current session by default. Other Note does not save it to app files unless you explicitly choose an OS-backed save option. On Android, the password-manager option uses Credential Manager and is external Android/password-manager behavior, not Other Note app storage. If enabled, Android or your password manager may store the public npub account identifier with the nsec. Keep your nsec somewhere secure and enable this only with a trusted device or password manager.",
         )
         SignInInfoTopic.CreateIdentity -> SignInInfoCopy(
             title = "Create identity",
@@ -59,8 +59,8 @@ fun signInInfoCopy(topic: SignInInfoTopic): SignInInfoCopy =
             body = "Local-only mode does not sync to relays and does not use a signer. It is useful for quick local notes, but it is not an encrypted Nostr account session.",
         )
         SignInInfoTopic.DesktopKeyring -> SignInInfoCopy(
-            title = "Desktop keyring",
-            body = KeyringSaveWarningCopy.description,
+            title = "Saved identity storage",
+            body = "Saved direct identities use OS-backed secure storage where this platform supports it. Android uses an Android Keystore-encrypted device-local record; Linux desktop uses the desktop keyring. This is convenience storage, not a backup.",
         )
     }
 

@@ -11,6 +11,7 @@ import com.libertasprimordium.othernote.security.AndroidExternalSignerProvider
 import com.libertasprimordium.othernote.security.AndroidNip55EventSigner
 import com.libertasprimordium.othernote.security.AndroidNip55Nip44Operator
 import com.libertasprimordium.othernote.security.AndroidNip55PublicKeyRequester
+import com.libertasprimordium.othernote.security.AndroidSecureSecretStore
 import com.libertasprimordium.othernote.security.nip46RemoteSigner
 import com.libertasprimordium.othernote.ui.AppPlatform
 import com.libertasprimordium.othernote.ui.AppRuntimeMode
@@ -49,14 +50,16 @@ class MainActivity : ComponentActivity() {
             localEventCache = AndroidLocalEventCache(this),
             pendingWriteStore = AndroidPendingWriteStore(this),
             relaySettings = RelaySettingsStore(persistence = AndroidRelaySettingsPersistence(this)),
+            secureSecretStore = AndroidSecureSecretStore(this),
             themePreferenceStore = AndroidThemePreferenceStore(this),
             noteListPreferenceStore = AndroidNoteListPreferenceStore(this),
             externalUrlOpener = AndroidExternalUrlOpener(this),
+            directNsecCredentialSaver = AndroidDirectNsecCredentialSaver(this),
             noteImageLoader = AndroidNoteImageLoader(),
             showRelayDiagnostics = showRelayDiagnostics(),
             showNip55Diagnostics = showNip55Diagnostics(),
             startupWarnings = if (crypto.productionReady) {
-                listOf("Android relay runtime enabled; direct nsec use is session-only and not persisted")
+                listOf("Android relay runtime enabled; direct nsec use is session-only unless explicitly saved to Android secure storage")
             } else {
                 listOf("Android signer relay runtime enabled; direct nsec fallback remains local-only")
             },

@@ -172,10 +172,24 @@ fun userFacingErrorFor(raw: String): UserFacingError {
                 technicalDetails = source.safeTechnicalDetails(),
             )
 
+        lower.contains("android secure storage is not available") ->
+            UserFacingError(
+                title = "Android secure storage unavailable",
+                message = "Android secure storage is not available. You can still sign in for this session.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
         lower.contains("could not unlock the desktop keyring") ->
             UserFacingError(
                 title = "Desktop keyring locked",
                 message = "Could not unlock the desktop keyring. Try again or use session-only sign-in.",
+                technicalDetails = source.safeTechnicalDetails(),
+            )
+
+        lower.contains("could not save this identity to android secure storage") ->
+            UserFacingError(
+                title = "Could not save identity",
+                message = "Could not save this identity to Android secure storage.",
                 technicalDetails = source.safeTechnicalDetails(),
             )
 
