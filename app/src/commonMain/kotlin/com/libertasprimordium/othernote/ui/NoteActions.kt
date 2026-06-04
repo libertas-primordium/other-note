@@ -62,3 +62,6 @@ fun noteCardActionPresentation(
         availableWidthDp < 220 -> NoteCardActionPresentation.LongPressMenu
         else -> NoteCardActionPresentation.VisibleButtons
     }
+
+fun mainMenuButtonLabel(platform: AppPlatform): String =
+    if (platform == AppPlatform.Desktop) "Menu" else "..."

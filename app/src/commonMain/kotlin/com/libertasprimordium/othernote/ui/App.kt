@@ -785,9 +785,14 @@ fun NotesListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Other Note") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = OtherNotePurpleDark, titleContentColor = OtherNoteText),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = OtherNotePurpleDark,
+                    titleContentColor = OtherNoteText,
+                    actionIconContentColor = OtherNoteText,
+                ),
                 actions = {
                     MainActionsMenu(
+                        platform = appState.platform,
                         onSync = { scope.launch { appState.sync() } },
                         onRelays = onSettings,
                         onTheme = { showThemePicker = true },
@@ -909,6 +914,7 @@ fun NotesListScreen(
 
 @Composable
 private fun MainActionsMenu(
+    platform: AppPlatform,
     onSync: () -> Unit,
     onRelays: () -> Unit,
     onTheme: () -> Unit,
@@ -917,11 +923,22 @@ private fun MainActionsMenu(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(
-            onClick = { expanded = true },
-            modifier = Modifier.semantics { contentDescription = "Main menu" },
-        ) {
-            Text("...", color = OtherNoteText, fontSize = 20.sp)
+        val label = mainMenuButtonLabel(platform)
+        if (platform == AppPlatform.Desktop) {
+            TextButton(
+                onClick = { expanded = true },
+                modifier = Modifier.semantics { contentDescription = "Main menu" },
+                colors = ButtonDefaults.textButtonColors(contentColor = OtherNoteText),
+            ) {
+                Text(label)
+            }
+        } else {
+            IconButton(
+                onClick = { expanded = true },
+                modifier = Modifier.semantics { contentDescription = "Main menu" },
+            ) {
+                Text(label, color = OtherNoteText, fontSize = 20.sp)
+            }
         }
         DropdownMenu(
             expanded = expanded,
