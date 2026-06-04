@@ -270,18 +270,50 @@ class WebDirectKeyFoundationTests {
         assertEquals("Session-only nsec", DirectNsecInputLabel)
         assertEquals("password", DirectNsecInputType)
         assertEquals("off", DirectNsecInputAutocomplete)
+        assertEquals("current-password", DirectNsecPasswordManagerAutocomplete)
+        assertEquals("other-note-session-nsec", DirectNsecPasswordManagerFieldName)
         assertTrue(!DirectNsecInputPlaceholder.lowercase().contains("nsec1"))
         assertEquals("Use for this session", DirectNsecSubmitLabel)
     }
 
     @Test
+    fun directNsecPasswordManagerOptionDefaultsOffAndSwitchesOnlyInputSemantics() {
+        val defaultState = WebDirectNsecDraftState(input = "sensitive test value")
+        val allowed = updateWebDirectNsecPasswordManager(defaultState, true)
+        val blockedAgain = updateWebDirectNsecPasswordManager(allowed, false)
+
+        assertTrue(!defaultState.allowPasswordManager)
+        assertEquals("off", directNsecAutocompleteFor(defaultState))
+        assertNull(directNsecInputNameFor(defaultState))
+        assertTrue(allowed.allowPasswordManager)
+        assertEquals("current-password", directNsecAutocompleteFor(allowed))
+        assertEquals("other-note-session-nsec", directNsecInputNameFor(allowed))
+        assertEquals(defaultState.input, allowed.input)
+        assertTrue(!blockedAgain.allowPasswordManager)
+        assertEquals(defaultState.input, blockedAgain.input)
+    }
+
+    @Test
+    fun clearingDirectNsecDraftAlsoClearsPasswordManagerOptInState() {
+        val state = updateWebDirectNsecPasswordManager(WebDirectNsecDraftState(input = "sensitive test value"), true)
+        val cleared = clearWebDirectNsecDraft(WebDirectKeyCopy.InvalidKey)
+
+        assertTrue(state.allowPasswordManager)
+        assertEquals("", cleared.input)
+        assertTrue(!cleared.allowPasswordManager)
+        assertNull(directNsecInputNameFor(cleared))
+        assertTrue(!cleared.message.contains(state.input))
+    }
+
+    @Test
     fun directNsecDraftUpdatesWithoutMessageAndClearsOnSubmitAttempt() {
         val raw = "nsec-like-sensitive-input"
-        val updated = updateWebDirectNsecDraft(WebDirectNsecDraftState(message = "old error"), raw)
+        val updated = updateWebDirectNsecDraft(WebDirectNsecDraftState(message = "old error", allowPasswordManager = true), raw)
         val cleared = clearWebDirectNsecDraft(WebDirectKeyCopy.InvalidKey)
 
         assertEquals(raw, updated.input)
         assertEquals("", updated.message)
+        assertTrue(updated.allowPasswordManager)
         assertEquals("", cleared.input)
         assertEquals(WebDirectKeyCopy.InvalidKey, cleared.message)
         assertTrue(!cleared.message.contains(raw))

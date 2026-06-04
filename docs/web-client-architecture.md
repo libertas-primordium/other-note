@@ -45,6 +45,7 @@ UX requirements for the first web sign-in surface:
 - Explain clearly when no extension signer is available.
 - Offer a remote signer/bunker option where feasible.
 - Keep direct `nsec` paste lower emphasis and session-only.
+- Keep browser/password-manager save/fill behavior for direct `nsec` paste default-off, explicit, and clearly separate from Other Note app storage.
 - Keep fresh identity generation lower emphasis, explicit, and session-only.
 - Clear direct `nsec` input after successful login or logout.
 - Show generated `nsec` only inside the generated-identity acknowledgement flow, then clear it on cancel, session use, logout, refresh, or session replacement.
@@ -58,7 +59,7 @@ For NIP-46, the remote signer owns the user's private key. Other Note may use a 
 
 For direct `nsec` fallback, the private key may exist only in browser memory for the active session. It may be used to sign events and perform NIP-44 encrypt/decrypt locally, then must be discarded on logout, refresh, tab close, or process end as far as browser behavior allows.
 
-Current direct-key implementation status: the web runtime can decode a valid `nsec`, generate a fresh key through browser secure random, derive the account pubkey, encrypt/decrypt NIP-44 payloads to self, sign and validate kind `30078` note events, and clear the in-memory key bytes on logout/session replacement. The signed-out UI exposes pasted `nsec` only as a lower-emphasis session-only fallback below NIP-07 and NIP-46. The direct input is password-style, uses browser-assistance suppression where practical, clears the draft on every submit attempt, avoids putting the raw value in DOM attributes or URLs, and explains that refresh/logout forgets the session. Fresh identity generation is a separate deliberate flow that displays the generated `nsec` only until the user cancels or acknowledges recovery risk and uses it for the current session.
+Current direct-key implementation status: the web runtime can decode a valid `nsec`, generate a fresh key through browser secure random, derive the account pubkey, encrypt/decrypt NIP-44 payloads to self, sign and validate kind `30078` note events, and clear the in-memory key bytes on logout/session replacement. The signed-out UI exposes pasted `nsec` only as a lower-emphasis session-only fallback below NIP-07 and NIP-46. The direct input is password-style, uses browser-assistance suppression by default, clears the draft on every submit attempt, avoids putting the raw value in DOM attributes or URLs, and explains that refresh/logout forgets the session. Users may explicitly opt in to form/autocomplete semantics that let a compatible browser or password manager offer to save/fill the field. That storage is user-controlled external browser/password-manager storage, not Other Note app-controlled storage; Other Note still does not write direct `nsec` values, private keys, direct-key auth state, or direct-key sessions to browser storage. Fresh identity generation is a separate deliberate flow that displays the generated `nsec` only until the user cancels or acknowledges recovery risk and uses it for the current session.
 
 Decrypted note text may exist in browser memory and UI state only. It must not be sent to an Other Note server, written to logs, stored in durable browser storage, or captured by analytics.
 
@@ -109,6 +110,8 @@ Forbidden browser storage:
 - Browser-persisted note relay settings, relay stats, note events, relay events, pending writes, or migration queues.
 
 Direct `nsec` fallback must not write the key to `localStorage`, IndexedDB, cookies, Cache Storage, server sessions, analytics, crash reports, or logs. If browser durable storage is introduced later for non-secret data, it must be audited so secrets cannot be accidentally routed into it.
+
+The web direct `nsec` field may expose a default-off option that changes only browser form/autocomplete hints so a user's own browser or password manager may offer save/fill behavior. Other Note must not use Credential Management APIs, hidden username fields, localStorage/sessionStorage/IndexedDB/cookie/Cache Storage, or any app-controlled persistence for direct `nsec` values. Browser/password-manager prompts vary by product, so the UI should describe this as best-effort and safe only in trusted browser profiles or password managers.
 
 ## Deployment model
 
