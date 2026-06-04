@@ -124,7 +124,7 @@ private fun appShell(state: WebAuthUiState): WebElement = element("main", appShe
         appendChild(signedInHeader(signedIn.identity, profileState))
         appendChild(notesPanel(signedIn.identity, noteState))
         activeMenuPanel(signedIn.identity)?.let(::appendChild)
-        viewedNoteForCurrentState()?.let { appendChild(noteDetailPanel(it)) }
+        activeNoteOverlayPanel(signedIn.identity)?.let(::appendChild)
         return@element
     }
 
@@ -382,7 +382,6 @@ private fun notesPanel(identity: WebAccountIdentity, notes: WebNoteLoadState): W
             appendChild(textElement("p", "body error small-gap", WebNoteCopy.CrudCapabilityUnavailable))
         }
         appendChild(noteListControlsPanel())
-        appendChild(noteEditorPanel(identity, crudSigner))
         appendChild(element("div", "notes-results") {
             setAttribute("id", WebNotesResultsContainerId)
             appendChild(notesResultsContent(notes, canCrud))
@@ -489,14 +488,22 @@ private fun noteCard(note: WebReadOnlyNote, canCrud: Boolean): WebElement =
     }
 
 private fun noteDetailPanel(note: WebReadOnlyNote): WebElement =
-    element("div", "modal-backdrop") {
+    element("div", "modal-backdrop note-detail-backdrop") {
         val preview = webNotePreview(note.bodyMarkdown)
         appendChild(element("section", "panel modal-panel note-detail-panel") {
-            appendChild(element("div", "modal-header") {
-                appendChild(textElement("h2", "section-title", preview.title))
-                appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeNoteDetail))
+            appendChild(element("div", "note-detail-header") {
+                appendChild(element("div", "note-detail-heading") {
+                    appendChild(textElement("h2", "section-title", preview.title))
+                    appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
+                })
+                appendChild(element("div", "note-detail-actions") {
+                    appendChild(buttonElement(text = "Close", enabled = true, onClick = ::closeNoteDetail))
+                    appendChild(buttonElement(text = "Edit", enabled = true, onClick = { startEditNote(note) }))
+                    appendChild(buttonElement(text = "Delete", enabled = true, onClick = { confirmDeleteNote(note) }).also { button ->
+                        button.className = "action-button danger-action"
+                    })
+                })
             })
-            appendChild(textElement("p", "note-meta", "Last edited ${formatWebNoteTimestamp(note.updatedAtMs)}"))
             appendChild(element("div", "note-detail-body") {
                 appendChild(renderMarkdown(note.bodyMarkdown))
             })
@@ -509,7 +516,16 @@ private fun viewedNoteForCurrentState(): WebReadOnlyNote? {
     return loaded.notes.firstOrNull { it.id == noteId }
 }
 
+private fun activeNoteOverlayPanel(identity: WebAccountIdentity): WebElement? {
+    val crudSigner = crudSignerFor(identity)
+    return when {
+        noteEditMode !is WebNoteEditMode.Idle -> noteEditorPanel(identity, crudSigner)
+        else -> viewedNoteForCurrentState()?.let(::noteDetailPanel)
+    }
+}
+
 private fun openNoteDetail(note: WebReadOnlyNote) {
+    cancelNoteEdit()
     noteDetailState = openWebNoteDetail(note.id)
     render()
 }
@@ -533,32 +549,44 @@ private fun noteEditorPanel(identity: WebAccountIdentity, signer: WebNoteCrudSig
         WebNoteEditMode.Idle -> element("div", "")
         WebNoteEditMode.Creating,
         is WebNoteEditMode.Editing,
-        -> element("section", "editor-panel") {
-            appendChild(textElement("h3", "section-title", if (mode is WebNoteEditMode.Editing) "Edit note" else "New note"))
-            if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
-            appendChild(textAreaElement(
-                label = "Raw Markdown",
-                value = noteEditBody,
-                enabled = signer != null,
-                onInput = { value -> noteEditBody = value },
-            ))
-            appendChild(element("div", "inline-actions") {
-                appendChild(buttonElement(text = "Save note", enabled = signer != null, onClick = { saveCurrentDraft(identity, signer) }))
-                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
+        -> element("div", "modal-backdrop note-edit-backdrop") {
+            appendChild(element("section", "panel modal-panel note-edit-panel") {
+                appendChild(element("div", "note-edit-header") {
+                    appendChild(textElement("h3", "section-title", if (mode is WebNoteEditMode.Editing) "Edit note" else "New note"))
+                    appendChild(element("div", "note-edit-actions") {
+                        appendChild(buttonElement(text = "Save note", enabled = signer != null, onClick = { saveCurrentDraft(identity, signer) }))
+                        appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
+                    })
+                })
+                if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error note-edit-message", noteEditMessage))
+                appendChild(textAreaElement(
+                    label = "Raw Markdown",
+                    value = noteEditBody,
+                    enabled = signer != null,
+                    onInput = { value -> noteEditBody = value },
+                ))
             })
         }
-        is WebNoteEditMode.ConfirmingDelete -> element("section", "editor-panel") {
-            appendChild(textElement("h3", "section-title", "Delete note?"))
-            appendChild(textElement("p", "body", "This publishes an encrypted tombstone event for the selected note."))
-            if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
-            appendChild(element("div", "inline-actions") {
-                appendChild(buttonElement(text = "Delete note", enabled = signer != null, onClick = { deleteConfirmedNote(identity, mode.note, signer) }))
-                appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
+        is WebNoteEditMode.ConfirmingDelete -> element("div", "modal-backdrop note-delete-backdrop") {
+            val preview = webNotePreview(mode.note.bodyMarkdown)
+            appendChild(element("section", "panel modal-panel note-delete-panel") {
+                appendChild(textElement("h3", "section-title", "Delete note?"))
+                appendChild(textElement("p", "body", "This publishes an encrypted tombstone event for the selected note."))
+                appendChild(textElement("p", "note-delete-title", preview.title))
+                if (noteEditMessage.isNotBlank()) appendChild(textElement("p", "body error", noteEditMessage))
+                appendChild(element("div", "inline-actions note-delete-actions") {
+                    appendChild(buttonElement(text = "Delete note", enabled = signer != null, onClick = { deleteConfirmedNote(identity, mode.note, signer) }).also { button ->
+                        button.className = "action-button danger-action"
+                    })
+                    appendChild(buttonElement(text = "Cancel", enabled = true, onClick = ::cancelNoteEditAndRender))
+                })
             })
         }
-        is WebNoteEditMode.Busy -> element("section", "editor-panel") {
-            appendChild(textElement("h3", "section-title", "Saving note"))
-            appendChild(textElement("p", "body", mode.message))
+        is WebNoteEditMode.Busy -> element("div", "modal-backdrop note-busy-backdrop") {
+            appendChild(element("section", "panel modal-panel note-delete-panel") {
+                appendChild(textElement("h3", "section-title", "Saving note"))
+                appendChild(textElement("p", "body", mode.message))
+            })
         }
     }
 
@@ -859,6 +887,7 @@ private fun requestNip07PublicKey() {
                 clearDirectKeySession()
                 resetLoadedNotes()
                 resetNoteListControlsState()
+                clearNoteDetail()
                 cancelNoteEdit()
                 resetProfile()
                 resetRelayListState()
@@ -1014,6 +1043,7 @@ private fun activateNip46SignedInSession(userPubkey: String) {
     clearDirectKeySession()
     resetLoadedNotes()
     resetNoteListControlsState()
+    clearNoteDetail()
     cancelNoteEdit()
     resetProfile()
     resetRelayListState()
@@ -1126,6 +1156,7 @@ private fun startDirectKeySession(rawNsec: String, onFailure: (String) -> Unit) 
             noteState = WebNoteLoadState.Idle
             resetLoadedNotes()
             resetNoteListControlsState()
+            clearNoteDetail()
             cancelNoteEdit()
             resetProfile()
             resetRelayListState()
@@ -1301,6 +1332,7 @@ private fun crudSignerFor(identity: WebAccountIdentity): WebNoteCrudSigner? =
     }
 
 private fun startCreateNote() {
+    clearNoteDetail()
     noteEditMode = WebNoteEditMode.Creating
     noteEditBody = ""
     noteEditMessage = ""
@@ -1308,6 +1340,7 @@ private fun startCreateNote() {
 }
 
 private fun startEditNote(note: WebReadOnlyNote) {
+    clearNoteDetail()
     noteEditMode = WebNoteEditMode.Editing(note)
     noteEditBody = note.bodyMarkdown
     noteEditMessage = ""
@@ -1315,6 +1348,7 @@ private fun startEditNote(note: WebReadOnlyNote) {
 }
 
 private fun confirmDeleteNote(note: WebReadOnlyNote) {
+    clearNoteDetail()
     noteEditMode = WebNoteEditMode.ConfirmingDelete(note)
     noteEditBody = ""
     noteEditMessage = ""
