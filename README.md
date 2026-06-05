@@ -12,6 +12,9 @@ Other Note is a private, Nostr-powered notes app for Android, Linux desktop, and
 - **Notes and rendering:** note search and sort; built-in themes; profile metadata and profile thumbnail display; Markdown rendering in full-note view; hyperlinks and inline images in full-note view only, while note cards and editors keep raw text.
 - **Cross-platform clients:** shared Android and desktop Compose UI where practical, a Debian/Linux desktop package target, and a static web client with self-hosted Roboto fonts, NIP-07/NIP-46/direct-key sign-in, encrypted note CRUD, relay tools, themes, profile display, and full-note Markdown/link/image rendering.
 
+## Donate
+If you like my work you can support me by donating via lightning to lprimordium@getalby.com
+
 ## Important Security Notes
 
 - Other Note cannot recover a lost private key. Save generated or pasted `nsec` values somewhere secure if you need long-term access to that identity.
