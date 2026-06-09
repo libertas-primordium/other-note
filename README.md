@@ -11,7 +11,7 @@ Other Note is a private, Nostr-powered notes app for Android, Linux desktop, and
 - **Relay sync and migration:** editable note relay settings; NIP-65 relay-list import/publish behavior; relay migration when relay settings change; manual Sync/Migrate; per-relay encrypted-event stats; visible relay-retention warning recommending multiple relays and ideally a personal relay the user controls.
 - **Notes and rendering:** note search and sort; built-in themes; profile metadata and profile thumbnail display; Markdown rendering in full-note view; hyperlinks and inline images in full-note view only, while note cards and editors keep raw text.
 - **Cross-platform clients:** shared Android and desktop Compose UI where practical, a Debian/Linux desktop package target, and a static web client with self-hosted Roboto fonts, NIP-07/NIP-46/direct-key sign-in, encrypted note CRUD, relay tools, themes, profile display, and full-note Markdown/link/image rendering.
-- Web app available at [https://othernote.app](othernote.app).
+- Web app available at [https://othernote.app](https://othernote.app).
 
 ## Donate
 If you like my work you can support me by donating via lightning to lprimordium@getalby.com
