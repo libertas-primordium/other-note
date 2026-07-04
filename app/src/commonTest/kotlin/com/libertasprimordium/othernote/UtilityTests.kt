@@ -52,6 +52,7 @@ import com.libertasprimordium.othernote.util.noteCardPreview
 import com.libertasprimordium.othernote.util.truncateMarkdown
 import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -864,6 +865,110 @@ class UtilityTests {
     }
 
     @Test
+    fun markdownSpansReturnOriginalContentForLongPathologicalText() = runBlocking {
+        val cases = listOf(
+            "a".repeat(40_000),
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".repeat(700),
+            """{"notes":["${"asdlkfhjqwpo;reiuhqearogh".repeat(1_500)}"],"url":"https://example.com/image.png"}""",
+            "npub1${"q".repeat(2_000)} note1${"p".repeat(2_000)} nevent1${"z".repeat(2_000)} nostr:nevent1${"x".repeat(2_000)}",
+        )
+
+        withTimeout(5_000) {
+            cases.forEach { markdown ->
+                val spans = markdownSpans(markdown)
+
+                assertEquals(markdown, spans.visibleMarkdownText())
+            }
+        }
+    }
+
+    @Test
+    fun markdownSpansHandleScreenshotImageUrlAndUrlPunctuation() = runBlocking {
+        withTimeout(5_000) {
+            val screenshotText = "Some text. asdlkfhjqwpo;reiuhqearogh https://i.nostr.build/NWD473iQ3GQVMYjy.jpg"
+            assertEquals(
+                listOf(
+                    MarkdownSpan.Text("Some text. asdlkfhjqwpo;reiuhqearogh "),
+                    MarkdownSpan.Image("", "https://i.nostr.build/NWD473iQ3GQVMYjy.jpg"),
+                ),
+                markdownSpans(screenshotText),
+            )
+
+            assertEquals(
+                listOf(
+                    MarkdownSpan.Text("See "),
+                    MarkdownSpan.Link("https://example.com/path", "https://example.com/path"),
+                    MarkdownSpan.Text(", then stop."),
+                ),
+                markdownSpans("See https://example.com/path, then stop."),
+            )
+            assertEquals(
+                listOf(
+                    MarkdownSpan.Text("See ("),
+                    MarkdownSpan.Link("https://example.com/path", "https://example.com/path"),
+                    MarkdownSpan.Text(") now"),
+                ),
+                markdownSpans("See (https://example.com/path) now"),
+            )
+        }
+    }
+
+    @Test
+    fun markdownSpansFallbackToPlainTextForMalformedLinksAndRepeatedDelimiters() = runBlocking {
+        val cases = listOf(
+            "[label](https://example.com",
+            "[[[[[[[[[(((((((",
+            "***************",
+            "___________",
+            "```````````",
+            "![alt](https://example.com/image.png",
+        )
+
+        withTimeout(5_000) {
+            cases.forEach { markdown ->
+                val spans = markdownSpans(markdown)
+
+                assertEquals(markdown, spans.visibleMarkdownText())
+            }
+        }
+    }
+
+    @Test
+    fun markdownSpansHandleManyUrlsWithoutOverlappingSpans() = runBlocking {
+        val urls = (0 until 250).joinToString(" ") { index -> "https://example.com/$index" }
+
+        withTimeout(5_000) {
+            val spans = markdownSpans(urls)
+            val links = spans.filterIsInstance<MarkdownSpan.Link>()
+
+            assertEquals(urls, spans.visibleMarkdownText())
+            assertEquals(250, links.size)
+            links.forEachIndexed { index, span ->
+                assertEquals("https://example.com/$index", span.url)
+                assertEquals(span.url, span.label)
+            }
+        }
+    }
+
+    @Test
+    fun markdownSpansRepeatedPathologicalRenderingCompletesQuickly() = runBlocking {
+        val cases = listOf(
+            "Some text. asdlkfhjqwpo;reiuhqearogh https://i.nostr.build/NWD473iQ3GQVMYjy.jpg",
+            "[label](https://example.com",
+            "[[[[[[[[[(((((((" + "a".repeat(8_000),
+            "https://example.com/${"a".repeat(5_000)}",
+        )
+
+        withTimeout(5_000) {
+            repeat(100) {
+                cases.forEach { markdown ->
+                    assertEquals(markdown, markdownSpans(markdown).visibleMarkdownText())
+                }
+            }
+        }
+    }
+
+    @Test
     fun noteGridColumnPolicyUsesTwoColumnsForNormalPhoneWidths() {
         assertEquals(1, noteGridColumnCount(300))
         assertEquals(2, noteGridColumnCount(336))
@@ -918,6 +1023,20 @@ private fun assertPrimaryErrorCopyIsReadable(message: String) {
         assertFalse(message.contains(key), "Primary error copy should not contain $key")
     }
 }
+
+private fun List<MarkdownSpan>.visibleMarkdownText(): String =
+    joinToString("") { span ->
+        when (span) {
+            is MarkdownSpan.Text -> span.text
+            is MarkdownSpan.Bold -> span.text
+            is MarkdownSpan.Italic -> span.text
+            is MarkdownSpan.BoldItalic -> span.text
+            is MarkdownSpan.Strike -> span.text
+            is MarkdownSpan.Code -> span.text
+            is MarkdownSpan.Link -> span.label
+            is MarkdownSpan.Image -> span.url
+        }
+    }
 
 private object AcceptingValidationCrypto : NostrCrypto {
     override val productionReady: Boolean = true

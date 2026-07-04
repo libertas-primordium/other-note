@@ -39,59 +39,91 @@ class SyncNotesUseCase(
         if (!crypto.productionReady) {
             return SyncState(warnings = listOf("Production Nostr crypto is not wired; relay sync is disabled"))
         }
+        val distinctRelays = relays.distinct()
+        logSafeSync("start account=${session.publicKeyHex.take(12)} relays=${distinctRelays.size} note_count_before=${notes.notes.value.size}")
         val aggregateEvents = mutableListOf<com.libertasprimordium.othernote.nostr.NostrEvent>()
         val aggregateStatuses = linkedMapOf<String, com.libertasprimordium.othernote.domain.RelayStatus>()
+        var lastAppliedEventIds = emptySet<String>()
+        var lastAppliedState: SyncState? = null
         val fetchStart = TimeSource.Monotonic.markNow()
+
+        suspend fun applyOrReuseFetchedEvents(final: Boolean): SyncState {
+            val statuses = aggregateStatuses.values.toList()
+            val uniqueEventIds = aggregateEvents.mapTo(linkedSetOf()) { it.id }
+            val previous = lastAppliedState
+            val shouldApply = previous == null ||
+                uniqueEventIds != lastAppliedEventIds ||
+                (previous.errors.isNotEmpty() && statuses.any { it.readable })
+            val state = if (shouldApply) {
+                applyFetchedEvents(
+                    session = session,
+                    events = aggregateEvents,
+                    statuses = statuses,
+                    fetchDurationMs = fetchStart.elapsedNow().inWholeMilliseconds,
+                    totalStart = totalStart,
+                    final = final,
+                ).also {
+                    lastAppliedEventIds = uniqueEventIds
+                    lastAppliedState = it
+                }
+            } else {
+                previous.withSameFetchedEvents(
+                    statuses = statuses,
+                    totalStart = totalStart,
+                    final = final,
+                ).also {
+                    lastAppliedState = it
+                }
+            }
+            logSafeSync(
+                "state final=$final applied=$shouldApply fetched_events=${uniqueEventIds.size} " +
+                    "note_count=${notes.notes.value.size} relay_statuses=${statuses.safeRelayLogSummary()}",
+            )
+            return state
+        }
+
         val cachedEvents = localEventCache.loadEvents(session.publicKeyHex)
         if (cachedEvents.isNotEmpty()) {
             aggregateEvents += cachedEvents
-            val cachedState = applyFetchedEvents(
-                session = session,
-                events = aggregateEvents,
-                statuses = emptyList(),
-                fetchDurationMs = 0,
-                totalStart = totalStart,
-                final = false,
-            )
+            logSafeSync("cache_load account=${session.publicKeyHex.take(12)} cached_events=${cachedEvents.distinctBy { it.id }.size}")
+            val cachedState = applyOrReuseFetchedEvents(final = false)
             onPartialState(cachedState.copy(warnings = listOf("Loaded cached notes") + cachedState.warnings))
         }
         if (pendingWriteStore.loadPendingWrites(session.publicKeyHex).isNotEmpty()) {
             onPartialState(SyncState(warnings = listOf("Retrying pending writes...")))
         }
         retryPendingWrites(session)
-        val fetch = nostr.fetchIncrementally(relays, session.publicKeyHex) { partial ->
+        val fetch = nostr.fetchIncrementally(distinctRelays, session.publicKeyHex) { partial ->
             aggregateEvents += partial.events
             partial.statuses.forEach { aggregateStatuses[it.url] = it }
-            localEventCache.upsertEvents(session.publicKeyHex, validatedCacheableEvents(session.publicKeyHex, partial.events))
-            val partialState = applyFetchedEvents(
-                session = session,
-                events = aggregateEvents,
-                statuses = aggregateStatuses.values.toList(),
-                fetchDurationMs = fetchStart.elapsedNow().inWholeMilliseconds,
-                totalStart = totalStart,
-                final = false,
+            val cacheablePartialEvents = validatedCacheableEvents(session.publicKeyHex, partial.events)
+            localEventCache.upsertEvents(session.publicKeyHex, cacheablePartialEvents)
+            logSafeSync(
+                "relay_result events=${partial.events.distinctBy { it.id }.size} cacheable_events=${cacheablePartialEvents.size} " +
+                    "statuses=${partial.statuses.safeRelayLogSummary()}",
             )
+            val partialState = applyOrReuseFetchedEvents(final = false)
             onPartialState(partialState)
         }
         aggregateEvents += fetch.events.filterNot { fetched -> aggregateEvents.any { it.id == fetched.id } }
         fetch.statuses.forEach { aggregateStatuses[it.url] = it }
-        val fetchDurationMs = fetchStart.elapsedNow().inWholeMilliseconds
-        val finalState = applyFetchedEvents(
-            session = session,
-            events = aggregateEvents,
-            statuses = aggregateStatuses.values.toList(),
-            fetchDurationMs = fetchDurationMs,
-            totalStart = totalStart,
-            final = true,
-        )
+        val finalState = applyOrReuseFetchedEvents(final = true)
         val cacheableEvents = validatedCacheableEvents(session.publicKeyHex, aggregateEvents)
         localEventCache.upsertEvents(session.publicKeyHex, cacheableEvents)
+        logSafeSync(
+            "cache_upsert final=true received_events=${aggregateEvents.distinctBy { it.id }.size} " +
+                "cacheable_events=${cacheableEvents.size}",
+        )
         notes.pendingEvents.value.forEach { pending ->
-            val publish = nostr.publishBestEffort(relays, pending, publishScope) {}
+            val publish = nostr.publishBestEffort(distinctRelays, pending, publishScope) {}
             publishScope.launchWhenComplete(publish.complete) { complete ->
                 if (complete.allSucceeded) notes.markPublished(pending.id)
             }
         }
+        logSafeSync(
+            "end account=${session.publicKeyHex.take(12)} relays=${distinctRelays.size} " +
+                "note_count_after=${notes.notes.value.size} relay_statuses=${finalState.relayStatuses.safeRelayLogSummary()}",
+        )
         return finalState
     }
 
@@ -222,5 +254,31 @@ class SyncNotesUseCase(
             if (statuses.any { !it.readable }) add("Partial relay read failure; local notes were preserved")
         }
         return SyncState(lastSyncMs = if (final) nowMs() else null, relayStatuses = statuses, warnings = warnings)
+    }
+
+    private fun SyncState.withSameFetchedEvents(
+        statuses: List<RelayStatus>,
+        totalStart: TimeSource.Monotonic.ValueTimeMark,
+        final: Boolean,
+    ): SyncState {
+        if (statuses.isNotEmpty() && statuses.none { it.readable }) {
+            return SyncState(
+                relayStatuses = statuses,
+                errors = listOf(
+                    "Sync ${if (final) "failed" else "waiting"}: all completed relays failed or timed out. fetched_events=0 valid_events=0 total_ms=${totalStart.elapsedNow().inWholeMilliseconds}; local notes were preserved",
+                ),
+            )
+        }
+        return copy(
+            lastSyncMs = if (final) nowMs() else null,
+            relayStatuses = statuses,
+            warnings = warnings.withPartialRelayReadWarning(statuses),
+            errors = emptyList(),
+        )
+    }
+
+    private fun List<String>.withPartialRelayReadWarning(statuses: List<RelayStatus>): List<String> {
+        val warning = "Partial relay read failure; local notes were preserved"
+        return if (statuses.any { !it.readable } && warning !in this) this + warning else this
     }
 }

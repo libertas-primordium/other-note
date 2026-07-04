@@ -1689,7 +1689,8 @@ private fun NoteDeleteConfirmationDialog(
 
 @Composable
 fun RenderMarkdown(markdown: String, appState: AppState) {
-    markdownBlocks(markdown).forEach { block ->
+    val blocks = remember(markdown) { markdownBlocks(markdown) }
+    blocks.forEach { block ->
         when (block) {
             is MarkdownBlock.Heading -> RenderInlineMarkdown(
                 markdown = block.text,
@@ -1762,46 +1763,75 @@ private fun RenderInlineMarkdown(
     style: TextStyle,
     modifier: Modifier = Modifier,
 ) {
-    val pendingTextSpans = mutableListOf<MarkdownSpan>()
+    val codeText = OtherNoteCodeText
+    val codeBackground = OtherNoteCodeBackground
+    val linkColor = OtherNotePurple
+    val chunks = remember(markdown, codeText, codeBackground, linkColor) {
+        inlineMarkdownRenderChunks(markdown, codeText, codeBackground, linkColor)
+    }
 
-    @Composable
-    fun FlushText() {
-        if (pendingTextSpans.isEmpty()) return
-        val codeText = OtherNoteCodeText
-        val codeBackground = OtherNoteCodeBackground
-        val linkColor = OtherNotePurple
-        val annotated = buildAnnotatedString {
-            pendingTextSpans.forEach { span ->
-                appendMarkdownTextSpan(span, codeText, codeBackground, linkColor)
+    Column(modifier) {
+        chunks.forEach { chunk ->
+            when (chunk) {
+                is InlineMarkdownRenderChunk.Text -> ClickableText(
+                    text = chunk.annotated,
+                    style = style,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { offset ->
+                        chunk.annotated.getStringAnnotations(MarkdownUrlAnnotationTag, offset, offset)
+                            .firstOrNull()
+                            ?.let { appState.openExternalUrl(it.item) }
+                    },
+                )
+                is InlineMarkdownRenderChunk.Image -> RemoteNoteImage(
+                    chunk.span,
+                    appState,
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                )
             }
         }
-        ClickableText(
-            text = annotated,
-            style = style,
-            modifier = Modifier.fillMaxWidth(),
-            onClick = { offset ->
-                annotated.getStringAnnotations(MarkdownUrlAnnotationTag, offset, offset)
-                    .firstOrNull()
-                    ?.let { appState.openExternalUrl(it.item) }
+    }
+}
+
+private const val MarkdownUrlAnnotationTag = "url"
+
+private sealed class InlineMarkdownRenderChunk {
+    data class Text(val annotated: AnnotatedString) : InlineMarkdownRenderChunk()
+    data class Image(val span: MarkdownSpan.Image) : InlineMarkdownRenderChunk()
+}
+
+private fun inlineMarkdownRenderChunks(
+    markdown: String,
+    codeText: Color,
+    codeBackground: Color,
+    linkColor: Color,
+): List<InlineMarkdownRenderChunk> {
+    val chunks = mutableListOf<InlineMarkdownRenderChunk>()
+    val pendingTextSpans = mutableListOf<MarkdownSpan>()
+
+    fun flushText() {
+        if (pendingTextSpans.isEmpty()) return
+        chunks += InlineMarkdownRenderChunk.Text(
+            buildAnnotatedString {
+                pendingTextSpans.forEach { span ->
+                    appendMarkdownTextSpan(span, codeText, codeBackground, linkColor)
+                }
             },
         )
         pendingTextSpans.clear()
     }
 
-    Column(modifier) {
-        markdownSpans(markdown).forEach { span ->
-            if (span is MarkdownSpan.Image) {
-                FlushText()
-                RemoteNoteImage(span, appState, Modifier.fillMaxWidth().padding(bottom = 8.dp))
-            } else {
-                pendingTextSpans += span
-            }
+    markdownSpans(markdown).forEach { span ->
+        if (span is MarkdownSpan.Image) {
+            flushText()
+            chunks += InlineMarkdownRenderChunk.Image(span)
+        } else {
+            pendingTextSpans += span
         }
-        FlushText()
     }
+    flushText()
+    return chunks
 }
-
-private const val MarkdownUrlAnnotationTag = "url"
 
 private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownTextSpan(
     span: MarkdownSpan,
