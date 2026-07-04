@@ -54,15 +54,18 @@ import com.libertasprimordium.othernote.sync.RelayListSyncUseCase
 import com.libertasprimordium.othernote.sync.SaveNoteUseCase
 import com.libertasprimordium.othernote.sync.SaveResult
 import com.libertasprimordium.othernote.sync.SyncNotesUseCase
+import com.libertasprimordium.othernote.sync.logSafeSync
 import com.libertasprimordium.othernote.sync.mergeReducedNotesWithCurrent
 import com.libertasprimordium.othernote.sync.planManualRelaySync
 import com.libertasprimordium.othernote.sync.queueRelayMigrationPendingWrites
 import com.libertasprimordium.othernote.sync.reduceNoteEvents
 import com.libertasprimordium.othernote.sync.reduceNoteEventsAsync
+import com.libertasprimordium.othernote.sync.safeRelayLogSummary
 import com.libertasprimordium.othernote.util.BuiltInNoteSortOptions
 import com.libertasprimordium.othernote.util.DefaultNoteSortOption
 import com.libertasprimordium.othernote.util.NoteSortOption
 import com.libertasprimordium.othernote.util.noteSortOptionForId
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -446,6 +449,7 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     val relayMigrationState: StateFlow<RelayMigrationUiState> = _relayMigrationState
     private var pendingRelayMigrationDecision: PendingRelayMigrationDecision? = null
     private var relayListImportedForPubkey: String? = null
+    private val syncMutex = Mutex()
 
     val showRelayDiagnostics: Boolean = services.showRelayDiagnostics
     val showNip55Diagnostics: Boolean = services.showNip55Diagnostics
@@ -2067,12 +2071,24 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     }
 
     suspend fun sync() {
+        if (!syncMutex.tryLock()) {
+            _message.value = "Sync already in progress."
+            return
+        }
+        try {
+            syncUnlocked()
+        } finally {
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncUnlocked() {
         val session = _session.value
         if (session?.isSignerBacked() == true) {
             syncWithExternalSigner(session)
             return
         }
-        if (_session.value == null || !directRelayRuntimeAvailable || _session.value?.hasSessionPrivateKey() != true) {
+        if (session == null || !directRelayRuntimeAvailable || !session.hasSessionPrivateKey()) {
             _syncState.value = SyncState(errors = listOf("Relay sync requires a validated nsec session"))
             _message.value = _syncState.value.summary
             return
@@ -2080,19 +2096,25 @@ class AppState(private val services: AppServices = defaultAppServices()) {
         _syncState.value = _syncState.value.copy(syncing = true)
         try {
             _syncState.value = withContext(Dispatchers.IO) {
-                val activeSession = _session.value
-                val relays = activeSession?.let { importPublishedRelayListIfNeeded(it) } ?: relaySettings.normalizedUrls()
-                syncNotes.sync(activeSession, relays) { partial ->
+                val relays = importPublishedRelayListIfNeeded(session)
+                syncNotes.sync(session, relays) { partial ->
                     _syncState.value = partial.copy(syncing = true)
                     _message.value = partial.toCompactMessage()
                     _diagnosticMessage.value = partial.toDiagnosticMessage()
                 }
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            val safeMessage = error.safeSyncFailureMessage()
+            logSafeSync("failed account=${session.publicKeyHex.take(12)} reason=$safeMessage")
+            _syncState.value = SyncState(errors = listOf(safeMessage))
+            _diagnosticMessage.value = safeMessage
         } finally {
             _syncState.value = _syncState.value.copy(syncing = false)
             _message.value = _syncState.value.toCompactMessage()
             _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
-            runCatching { loadProfile() }
+            refreshProfileAfterSync()
         }
     }
 
@@ -2100,6 +2122,16 @@ class AppState(private val services: AppServices = defaultAppServices()) {
 
     fun startProfileLoad(): Job = appScope.launch {
         loadProfile()
+    }
+
+    private suspend fun refreshProfileAfterSync() {
+        try {
+            loadProfile()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Profile refresh must not turn a terminal sync result back into an active sync state.
+        }
     }
 
     suspend fun loadProfile(): Boolean {
@@ -2208,36 +2240,100 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             _message.value = _syncState.value.summary
             return
         }
-        val relays = withContext(Dispatchers.IO) { importPublishedRelayListIfNeeded(session) }
+        val relays = withContext(Dispatchers.IO) { importPublishedRelayListIfNeeded(session) }.distinct()
         _syncState.value = _syncState.value.copy(syncing = true)
         _message.value = "Syncing..."
-        val aggregateEvents = mutableListOf<NostrEvent>()
-        val aggregateStatuses = linkedMapOf<String, RelayStatus>()
-        val cached = services.localEventCache.loadEvents(session.publicKeyHex)
-        if (cached.isNotEmpty()) {
-            aggregateEvents += cached
-            applySignerFetchedEvents(session, aggregateEvents, emptyList(), final = false)
+        logSafeSync("signer_start account=${session.publicKeyHex.take(12)} relays=${relays.size} note_count_before=${notes.notes.value.size}")
+        try {
+            withContext(Dispatchers.IO) {
+                val aggregateEvents = mutableListOf<NostrEvent>()
+                val aggregateStatuses = linkedMapOf<String, RelayStatus>()
+                var lastAppliedEventIds = emptySet<String>()
+                var lastAppliedState: SyncState? = null
+
+                suspend fun applyOrReuseSignerEvents(final: Boolean): SyncState {
+                    val statuses = aggregateStatuses.values.toList()
+                    val uniqueEventIds = aggregateEvents.mapTo(linkedSetOf()) { it.id }
+                    val previous = lastAppliedState
+                    val shouldApply = previous == null ||
+                        uniqueEventIds != lastAppliedEventIds ||
+                        (previous.errors.isNotEmpty() && statuses.any { it.readable })
+                    val state = if (shouldApply) {
+                        applySignerFetchedEvents(session, aggregateEvents, statuses, final).also {
+                            lastAppliedEventIds = uniqueEventIds
+                            lastAppliedState = it
+                        }
+                    } else {
+                        previous.withSameSignerFetchedEvents(statuses, final).also {
+                            lastAppliedState = it
+                        }
+                    }
+                    logSafeSync(
+                        "signer_state final=$final applied=$shouldApply fetched_events=${uniqueEventIds.size} " +
+                            "note_count=${notes.notes.value.size} relay_statuses=${statuses.safeRelayLogSummary()}",
+                    )
+                    return state
+                }
+
+                val cached = services.localEventCache.loadEvents(session.publicKeyHex)
+                if (cached.isNotEmpty()) {
+                    aggregateEvents += cached
+                    logSafeSync("signer_cache_load account=${session.publicKeyHex.take(12)} cached_events=${cached.distinctBy { it.id }.size}")
+                    val cachedState = applyOrReuseSignerEvents(final = false)
+                    _syncState.value = cachedState.copy(syncing = true)
+                    _message.value = cachedState.toCompactMessage()
+                    _diagnosticMessage.value = cachedState.toDiagnosticMessage()
+                }
+                if (services.pendingWriteStore.loadPendingWrites(session.publicKeyHex).isNotEmpty()) {
+                    _message.value = "Retrying pending writes..."
+                }
+                retrySignerPendingWrites(session)
+                val fetch = nostr.fetchIncrementally(relays, session.publicKeyHex) { partial ->
+                    aggregateEvents += partial.events
+                    partial.statuses.forEach { aggregateStatuses[it.url] = it }
+                    val cacheablePartialEvents = partial.events.filter { it.isSignerCacheable(session.publicKeyHex, verifier) }
+                    services.localEventCache.upsertEvents(session.publicKeyHex, cacheablePartialEvents)
+                    logSafeSync(
+                        "signer_relay_result events=${partial.events.distinctBy { it.id }.size} cacheable_events=${cacheablePartialEvents.size} " +
+                            "statuses=${partial.statuses.safeRelayLogSummary()}",
+                    )
+                    val partialState = applyOrReuseSignerEvents(final = false)
+                    _syncState.value = partialState.copy(syncing = true)
+                    _message.value = partialState.toCompactMessage()
+                    _diagnosticMessage.value = partialState.toDiagnosticMessage()
+                }
+                aggregateEvents += fetch.events.filterNot { fetched -> aggregateEvents.any { it.id == fetched.id } }
+                fetch.statuses.forEach { aggregateStatuses[it.url] = it }
+                val cacheableEvents = aggregateEvents.filter { it.isSignerCacheable(session.publicKeyHex, verifier) }
+                services.localEventCache.upsertEvents(session.publicKeyHex, cacheableEvents)
+                logSafeSync(
+                    "signer_cache_upsert final=true received_events=${aggregateEvents.distinctBy { it.id }.size} " +
+                        "cacheable_events=${cacheableEvents.size}",
+                )
+                _syncState.value = applyOrReuseSignerEvents(final = true).copy(syncing = false)
+                _message.value = _syncState.value.toCompactMessage()
+                _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            val safeMessage = error.safeSyncFailureMessage()
+            logSafeSync("signer_failed account=${session.publicKeyHex.take(12)} reason=$safeMessage")
+            _syncState.value = SyncState(errors = listOf(safeMessage))
+            _message.value = _syncState.value.toCompactMessage()
+            _diagnosticMessage.value = safeMessage
+        } finally {
+            if (_syncState.value.syncing) {
+                _syncState.value = _syncState.value.copy(syncing = false)
+                _message.value = _syncState.value.toCompactMessage()
+                _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
+            }
+            logSafeSync(
+                "signer_end account=${session.publicKeyHex.take(12)} relays=${relays.size} " +
+                    "note_count_after=${notes.notes.value.size} relay_statuses=${_syncState.value.relayStatuses.safeRelayLogSummary()}",
+            )
+            refreshProfileAfterSync()
         }
-        if (services.pendingWriteStore.loadPendingWrites(session.publicKeyHex).isNotEmpty()) {
-            _message.value = "Retrying pending writes..."
-        }
-        retrySignerPendingWrites(session)
-        val fetch = nostr.fetchIncrementally(relays, session.publicKeyHex) { partial ->
-            aggregateEvents += partial.events
-            partial.statuses.forEach { aggregateStatuses[it.url] = it }
-            services.localEventCache.upsertEvents(session.publicKeyHex, partial.events.filter { it.isSignerCacheable(session.publicKeyHex, verifier) })
-            val partialState = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = false)
-            _syncState.value = partialState.copy(syncing = true)
-            _message.value = partialState.toCompactMessage()
-            _diagnosticMessage.value = partialState.toDiagnosticMessage()
-        }
-        aggregateEvents += fetch.events.filterNot { fetched -> aggregateEvents.any { it.id == fetched.id } }
-        fetch.statuses.forEach { aggregateStatuses[it.url] = it }
-        services.localEventCache.upsertEvents(session.publicKeyHex, aggregateEvents.filter { it.isSignerCacheable(session.publicKeyHex, verifier) })
-        _syncState.value = applySignerFetchedEvents(session, aggregateEvents, aggregateStatuses.values.toList(), final = true).copy(syncing = false)
-        _message.value = _syncState.value.toCompactMessage()
-        _diagnosticMessage.value = _syncState.value.toDiagnosticMessage()
-        runCatching { loadProfile() }
     }
 
     private suspend fun importPublishedRelayListIfNeeded(session: UserSession): List<String> {
@@ -2463,6 +2559,23 @@ class AppState(private val services: AppServices = defaultAppServices()) {
             if (statuses.any { !it.readable }) add("Partial relay read failure; local notes were preserved")
         }
         return SyncState(lastSyncMs = if (final) com.libertasprimordium.othernote.util.nowMs() else null, relayStatuses = statuses, warnings = warnings)
+    }
+
+    private fun SyncState.withSameSignerFetchedEvents(statuses: List<RelayStatus>, final: Boolean): SyncState {
+        if (statuses.isNotEmpty() && statuses.none { it.readable }) {
+            return SyncState(relayStatuses = statuses, errors = listOf("Sync failed: no relays reachable"))
+        }
+        return copy(
+            lastSyncMs = if (final) com.libertasprimordium.othernote.util.nowMs() else null,
+            relayStatuses = statuses,
+            warnings = warnings.withPartialRelayReadWarning(statuses),
+            errors = emptyList(),
+        )
+    }
+
+    private fun List<String>.withPartialRelayReadWarning(statuses: List<RelayStatus>): List<String> {
+        val warning = "Partial relay read failure; local notes were preserved"
+        return if (statuses.any { !it.readable } && warning !in this) this + warning else this
     }
 
     private fun NostrEvent.isSignerCacheable(accountPubkey: String, verifier: com.libertasprimordium.othernote.nostr.NostrCrypto): Boolean =
@@ -2969,6 +3082,9 @@ class AppState(private val services: AppServices = defaultAppServices()) {
     private fun String.compactStatus(): String = lineSequence().firstOrNull().orEmpty().take(120)
 
     private fun String.abbreviatedId(): String = take(12)
+
+    private fun Throwable.safeSyncFailureMessage(): String =
+        "Sync failed: ${this::class.simpleName}"
 
     private fun Throwable.safePersistenceMessage(): String =
         toUserFacingPersistenceMessage()

@@ -25,7 +25,32 @@ data class NoteCardPreview(
     val snippet: String,
 )
 
+private const val MaxMarkdownParseChars = 32_768
+private const val MaxMarkdownSpans = 2_048
+private const val MaxMarkdownLinkLabelChars = 2_048
+private const val MaxUrlChars = 2_048
+private const val MaxMarkdownLoopIterations = MaxMarkdownParseChars * 2
+
+private val FencedCodeBlockRegex = Regex("```[\\s\\S]*?```")
+private val MarkdownSyntaxCharsRegex = Regex("""[#*_`~>\[\]()]""")
+private val WhitespaceRegex = Regex("""\s+""")
+private val HeadingPrefixRegex = Regex("""^#{1,6}\s+""")
+private val UnorderedListPrefixRegex = Regex("""^[-*]\s+""")
+private val OrderedListPrefixRegex = Regex("""^\d+\.\s+""")
+private val InlineCodeFencePrefixRegex = Regex("```.*$")
+private val BoldAsteriskPreviewRegex = Regex("""\*\*([^*]+)\*\*""")
+private val BoldUnderscorePreviewRegex = Regex("""__([^_]+)__""")
+private val BoldItalicAsteriskPreviewRegex = Regex("""\*\*\*([^*]+)\*\*\*""")
+private val ItalicAsteriskPreviewRegex = Regex("""\*([^*]+)\*""")
+private val ItalicUnderscorePreviewRegex = Regex("""_([^_]+)_""")
+private val DoubleStrikePreviewRegex = Regex("""~~([^~]+)~~""")
+private val StrikePreviewRegex = Regex("""~([^~]+)~""")
+private val InlineCodePreviewRegex = Regex("""`([^`]+)`""")
+
 fun markdownBlocks(markdown: String): List<MarkdownBlock> {
+    if (markdown.length > MaxMarkdownParseChars) {
+        return listOf(MarkdownBlock.Paragraph(markdown))
+    }
     val blocks = mutableListOf<MarkdownBlock>()
     val paragraph = mutableListOf<String>()
     val quote = mutableListOf<String>()
@@ -65,8 +90,8 @@ fun markdownBlocks(markdown: String): List<MarkdownBlock> {
     markdown.lines().forEach { line ->
         val trimmed = line.trim()
         val contentLine = line.trimStart()
-        val unorderedListMatch = Regex("""^[-*]\s+(.+)$""").matchEntire(contentLine)
-        val orderedListMatch = Regex("""^\d+\.\s+(.+)$""").matchEntire(contentLine)
+        val unorderedListItem = unorderedListItemText(contentLine)
+        val orderedListItem = orderedListItemText(contentLine)
         when {
             trimmed.startsWith("```") && !inCode -> {
                 flushTextBlocks()
@@ -79,7 +104,7 @@ fun markdownBlocks(markdown: String): List<MarkdownBlock> {
             }
             inCode -> code.appendLine(line)
             line.isBlank() -> flushTextBlocks()
-            trimmed.matches(Regex("""(-{3,}|\*{3,})""")) -> {
+            isHorizontalRule(trimmed) -> {
                 flushTextBlocks()
                 blocks += MarkdownBlock.HorizontalRule
             }
@@ -99,13 +124,13 @@ fun markdownBlocks(markdown: String): List<MarkdownBlock> {
                 flushList()
                 quote += contentLine.drop(1).removePrefix(" ").trimEnd()
             }
-            unorderedListMatch != null || orderedListMatch != null -> {
+            unorderedListItem != null || orderedListItem != null -> {
                 flushParagraph()
                 flushQuote()
-                val ordered = orderedListMatch != null
+                val ordered = orderedListItem != null
                 if (listOrdered != null && listOrdered != ordered) flushList()
                 listOrdered = ordered
-                listItems += (orderedListMatch ?: unorderedListMatch)?.groupValues?.get(1).orEmpty().trimEnd()
+                listItems += (orderedListItem ?: unorderedListItem).orEmpty().trimEnd()
             }
             else -> {
                 flushQuote()
@@ -119,17 +144,59 @@ fun markdownBlocks(markdown: String): List<MarkdownBlock> {
     return blocks
 }
 
+private fun unorderedListItemText(line: String): String? {
+    if (line.length < 3) return null
+    val marker = line[0]
+    return if ((marker == '-' || marker == '*') && line[1].isWhitespace()) {
+        line.drop(2).trimStart()
+    } else {
+        null
+    }
+}
+
+private fun orderedListItemText(line: String): String? {
+    var index = 0
+    while (index < line.length && line[index].isDigit()) index += 1
+    if (index == 0 || line.getOrNull(index) != '.' || line.getOrNull(index + 1)?.isWhitespace() != true) {
+        return null
+    }
+    return line.drop(index + 2).trimStart()
+}
+
+private fun isHorizontalRule(line: String): Boolean {
+    if (line.length < 3) return false
+    val marker = line[0]
+    if (marker != '-' && marker != '*') return false
+    return line.all { it == marker }
+}
+
 fun markdownSpans(markdown: String): List<MarkdownSpan> {
+    if (markdown.length > MaxMarkdownParseChars) {
+        return listOf(MarkdownSpan.Text(markdown))
+    }
     val spans = mutableListOf<MarkdownSpan>()
     var index = 0
+    var iterations = 0
 
     fun appendSpan(span: MarkdownSpan) {
         val last = spans.lastOrNull()
         if (last is MarkdownSpan.Text && span is MarkdownSpan.Text) {
             spans[spans.lastIndex] = MarkdownSpan.Text(last.text + span.text)
-        } else {
+        } else if (spans.size < MaxMarkdownSpans) {
             spans += span
+        } else {
+            val fallbackText = span.visibleFallbackText()
+            if (fallbackText.isEmpty()) return
+            if (last is MarkdownSpan.Text) {
+                spans[spans.lastIndex] = MarkdownSpan.Text(last.text + fallbackText)
+            } else {
+                spans += MarkdownSpan.Text(fallbackText)
+            }
         }
+    }
+
+    fun appendPlainText(text: String) {
+        if (text.isNotEmpty()) appendSpan(MarkdownSpan.Text(text))
     }
 
     fun appendText(text: String) {
@@ -137,20 +204,29 @@ fun markdownSpans(markdown: String): List<MarkdownSpan> {
     }
 
     while (index < markdown.length) {
+        iterations += 1
+        if (iterations > MaxMarkdownLoopIterations || spans.size >= MaxMarkdownSpans) {
+            appendPlainText(markdown.substring(index))
+            break
+        }
         parseEscapedMarkdownCharacter(markdown, index)?.let { parsed ->
             appendSpan(parsed.span)
             index = parsed.nextIndex
             continue
         }
         parseMarkdownImageSpan(markdown, index)?.let { parsed ->
-            spans += parsed.span
+            appendSpan(parsed.span)
             index = parsed.nextIndex
             continue
         }
         parseMarkdownLinkSpan(markdown, index)?.let { parsed ->
-            spans += parsed.span
+            appendSpan(parsed.span)
             index = parsed.nextIndex
             continue
+        }
+        if (isMalformedMarkdownImageStart(markdown, index) || isMalformedMarkdownLinkStart(markdown, index)) {
+            appendPlainText(markdown.substring(index))
+            break
         }
         parseBareUrlSpan(markdown, index)?.let { parsed ->
             appendSpan(parsed.span)
@@ -160,52 +236,43 @@ fun markdownSpans(markdown: String): List<MarkdownSpan> {
         }
         val marker = markdownMarkerAt(markdown, index)
         if (marker == null) {
-            val next = listOf(
-                markdown.indexOf("\\", index),
-                markdown.indexOf("![", index),
-                markdown.indexOf("[", index),
-                markdown.indexOf("https://", index),
-                markdown.indexOf("http://", index),
-                markdown.indexOf("`", index),
-                markdown.indexOf("___", index),
-                markdown.indexOf("***", index),
-                markdown.indexOf("**", index),
-                markdown.indexOf("__", index),
-                markdown.indexOf("~~", index),
-                markdown.indexOf("~", index),
-                markdown.indexOf("*", index),
-                markdown.indexOf("_", index),
-            ).filter { it >= 0 }.minOrNull() ?: markdown.length
-            appendText(markdown.substring(index, next))
-            index = next
+            val next = nextInlineMarkdownSpecialIndex(markdown, index + 1)
+            if (next <= index) {
+                appendPlainText(markdown[index].toString())
+                index += 1
+            } else {
+                appendText(markdown.substring(index, next))
+                index = next
+            }
             continue
         }
 
         if (!isValidOpeningMarkdownMarker(markdown, index, marker)) {
-            appendText(marker)
+            appendPlainText(marker)
             index += marker.length
             continue
         }
 
         val close = findClosingMarkdownMarker(markdown, index + marker.length, marker)
         if (close < 0) {
-            appendText(marker)
-            index += marker.length
-            continue
+            appendPlainText(markdown.substring(index))
+            break
         }
 
         val content = markdown.substring(index + marker.length, close)
         if (content.isEmpty()) {
             appendText(marker + marker)
         } else {
-            spans += when (marker) {
+            appendSpan(
+                when (marker) {
                 "`" -> MarkdownSpan.Code(content)
                 "***", "___" -> MarkdownSpan.BoldItalic(content)
                 "**", "__" -> MarkdownSpan.Bold(content)
                 "*", "_" -> MarkdownSpan.Italic(content)
                 "~", "~~" -> MarkdownSpan.Strike(content)
                 else -> MarkdownSpan.Text(marker + content + marker)
-            }
+                },
+            )
         }
         index = close + marker.length
     }
@@ -222,6 +289,31 @@ private data class ParsedBareUrlSpan(
     val trailingText: String,
     val nextIndex: Int,
 )
+
+private fun MarkdownSpan.visibleFallbackText(): String =
+    when (this) {
+        is MarkdownSpan.Text -> text
+        is MarkdownSpan.Bold -> text
+        is MarkdownSpan.Italic -> text
+        is MarkdownSpan.BoldItalic -> text
+        is MarkdownSpan.Strike -> text
+        is MarkdownSpan.Code -> text
+        is MarkdownSpan.Link -> label
+        is MarkdownSpan.Image -> url
+    }
+
+private fun nextInlineMarkdownSpecialIndex(markdown: String, startIndex: Int): Int {
+    var index = startIndex
+    while (index < markdown.length) {
+        when (markdown[index]) {
+            '\\', '[', '`', '*', '_', '~' -> return index
+            '!' -> if (markdown.getOrNull(index + 1) == '[') return index
+            'h' -> if (markdown.startsWith("https://", index) || markdown.startsWith("http://", index)) return index
+        }
+        index += 1
+    }
+    return markdown.length
+}
 
 private fun parseEscapedMarkdownCharacter(markdown: String, index: Int): ParsedMarkdownSpan? {
     if (!markdown.startsWith("\\", index)) return null
@@ -287,13 +379,12 @@ private fun Char?.isMarkdownWordCharacter(): Boolean = this != null && (isLetter
 
 private fun parseMarkdownImageSpan(markdown: String, index: Int): ParsedMarkdownSpan? {
     if (!markdown.startsWith("![", index)) return null
-    val labelEnd = markdown.indexOf("](", index + 2)
-    if (labelEnd < 0) return null
-    val urlEnd = markdown.indexOf(")", labelEnd + 2)
-    if (urlEnd < 0) return null
+    val labelEnd = findSequenceWithin(markdown, "](", index + 2, index + 2 + MaxMarkdownLinkLabelChars) ?: return null
+    val urlStart = labelEnd + 2
+    val urlEnd = findCharWithin(markdown, ')', urlStart, urlStart + MaxUrlChars) ?: return null
     val raw = markdown.substring(index, urlEnd + 1)
     val alt = markdown.substring(index + 2, labelEnd)
-    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val url = markdown.substring(urlStart, urlEnd).trim()
     val span = if (isSupportedRemoteImageUrl(url)) {
         MarkdownSpan.Image(alt, url)
     } else {
@@ -302,15 +393,18 @@ private fun parseMarkdownImageSpan(markdown: String, index: Int): ParsedMarkdown
     return ParsedMarkdownSpan(span, urlEnd + 1)
 }
 
+private fun isMalformedMarkdownImageStart(markdown: String, index: Int): Boolean =
+    markdown.startsWith("![", index) &&
+        findSequenceWithin(markdown, "](", index + 2, index + 2 + MaxMarkdownLinkLabelChars) != null
+
 private fun parseMarkdownLinkSpan(markdown: String, index: Int): ParsedMarkdownSpan? {
     if (!markdown.startsWith("[", index)) return null
-    val labelEnd = markdown.indexOf("](", index + 1)
-    if (labelEnd < 0) return null
-    val urlEnd = markdown.indexOf(")", labelEnd + 2)
-    if (urlEnd < 0) return null
+    val labelEnd = findSequenceWithin(markdown, "](", index + 1, index + 1 + MaxMarkdownLinkLabelChars) ?: return null
+    val urlStart = labelEnd + 2
+    val urlEnd = findCharWithin(markdown, ')', urlStart, urlStart + MaxUrlChars) ?: return null
     val raw = markdown.substring(index, urlEnd + 1)
     val label = markdown.substring(index + 1, labelEnd)
-    val url = markdown.substring(labelEnd + 2, urlEnd).trim()
+    val url = markdown.substring(urlStart, urlEnd).trim()
     val span = if (isSafeHttpUrl(url)) {
         MarkdownSpan.Link(label.ifBlank { url }, url)
     } else {
@@ -319,12 +413,30 @@ private fun parseMarkdownLinkSpan(markdown: String, index: Int): ParsedMarkdownS
     return ParsedMarkdownSpan(span, urlEnd + 1)
 }
 
+private fun isMalformedMarkdownLinkStart(markdown: String, index: Int): Boolean =
+    markdown.startsWith("[", index) &&
+        findSequenceWithin(markdown, "](", index + 1, index + 1 + MaxMarkdownLinkLabelChars) != null
+
 private fun parseBareUrlSpan(markdown: String, index: Int): ParsedBareUrlSpan? {
-    val match = Regex("""https?://[^\s<>()"]+""").find(markdown, index)
-        ?.takeIf { it.range.first == index }
-        ?: return null
-    val raw = match.value
-    val url = raw.trimEnd('.', ',', '!', '?', ';', ':', ')', ']')
+    if (!markdown.startsWith("https://", index) && !markdown.startsWith("http://", index)) return null
+    val scanLimit = minOf(markdown.length, index + MaxUrlChars)
+    var end = index
+    while (end < scanLimit && !markdown[end].isBareUrlTerminator()) {
+        end += 1
+    }
+    if (end == index) return null
+    if (end == scanLimit && end < markdown.length && !markdown[end].isBareUrlTerminator()) {
+        return ParsedBareUrlSpan(
+            span = MarkdownSpan.Text(markdown.substring(index, end)),
+            trailingText = "",
+            nextIndex = end,
+        )
+    }
+    val raw = markdown.substring(index, end)
+    val url = trimBareUrlTrailingPunctuation(raw)
+    if (url.isEmpty()) {
+        return ParsedBareUrlSpan(MarkdownSpan.Text(raw), trailingText = "", nextIndex = end)
+    }
     val trailing = raw.drop(url.length)
     val span = if (isSupportedRemoteImageUrl(url)) {
         MarkdownSpan.Image("", url)
@@ -333,42 +445,115 @@ private fun parseBareUrlSpan(markdown: String, index: Int): ParsedBareUrlSpan? {
     } else {
         MarkdownSpan.Text(url)
     }
-    return ParsedBareUrlSpan(span, trailing, match.range.last + 1)
+    return ParsedBareUrlSpan(span, trailing, end)
 }
 
 private fun linkifiedTextSpans(text: String): List<MarkdownSpan> {
     val spans = mutableListOf<MarkdownSpan>()
-    var lastIndex = 0
-    Regex("""https?://[^\s<>()"]+""").findAll(text).forEach { match ->
-        if (match.range.first > lastIndex) {
-            spans += MarkdownSpan.Text(text.substring(lastIndex, match.range.first))
-        }
-        val raw = match.value
-        val url = raw.trimEnd('.', ',', '!', '?', ';', ':', ')', ']')
-        val trailing = raw.drop(url.length)
-        if (isSupportedRemoteImageUrl(url)) {
-            spans += MarkdownSpan.Image("", url)
-        } else if (isSafeHttpUrl(url)) {
-            spans += MarkdownSpan.Link(url, url)
+    var index = 0
+    while (index < text.length && spans.size < MaxMarkdownSpans) {
+        val nextUrl = nextBareUrlStart(text, index)
+        if (nextUrl < 0) {
+            spans += MarkdownSpan.Text(text.substring(index))
+            index = text.length
         } else {
-            spans += MarkdownSpan.Text(url)
+            if (nextUrl > index) spans += MarkdownSpan.Text(text.substring(index, nextUrl))
+            val parsed = parseBareUrlSpan(text, nextUrl)
+            if (parsed == null || parsed.nextIndex <= nextUrl) {
+                spans += MarkdownSpan.Text(text[nextUrl].toString())
+                index = nextUrl + 1
+            } else {
+                spans += parsed.span
+                if (parsed.trailingText.isNotEmpty()) spans += MarkdownSpan.Text(parsed.trailingText)
+                index = parsed.nextIndex
+            }
         }
-        if (trailing.isNotEmpty()) spans += MarkdownSpan.Text(trailing)
-        lastIndex = match.range.last + 1
     }
-    if (lastIndex < text.length) {
-        spans += MarkdownSpan.Text(text.substring(lastIndex))
+    if (index < text.length) {
+        spans += MarkdownSpan.Text(text.substring(index))
     }
     return spans
 }
 
+private fun findSequenceWithin(text: String, sequence: String, startIndex: Int, rawEndExclusive: Int): Int? {
+    val endExclusive = minOf(text.length, rawEndExclusive)
+    var index = startIndex
+    while (index + sequence.length <= endExclusive) {
+        if (text.startsWith(sequence, index)) return index
+        index += 1
+    }
+    return null
+}
+
+private fun findCharWithin(text: String, target: Char, startIndex: Int, rawEndExclusive: Int): Int? {
+    val endExclusive = minOf(text.length, rawEndExclusive)
+    var index = startIndex
+    while (index < endExclusive) {
+        if (text[index] == target) return index
+        index += 1
+    }
+    return null
+}
+
+private fun nextBareUrlStart(text: String, startIndex: Int): Int {
+    var index = startIndex
+    while (index < text.length) {
+        if (text[index] == 'h' && (text.startsWith("https://", index) || text.startsWith("http://", index))) {
+            return index
+        }
+        index += 1
+    }
+    return -1
+}
+
+private fun Char.isBareUrlTerminator(): Boolean =
+    isWhitespace() || isISOControl() || this == '<' || this == '>' || this == '"'
+
+private fun trimBareUrlTrailingPunctuation(raw: String): String {
+    var end = raw.length
+    var openParen = 0
+    var closeParen = 0
+    var openBracket = 0
+    var closeBracket = 0
+    var openBrace = 0
+    var closeBrace = 0
+    raw.forEach { char ->
+        when (char) {
+            '(' -> openParen += 1
+            ')' -> closeParen += 1
+            '[' -> openBracket += 1
+            ']' -> closeBracket += 1
+            '{' -> openBrace += 1
+            '}' -> closeBrace += 1
+        }
+    }
+    while (end > 0) {
+        val char = raw[end - 1]
+        val shouldTrim = when (char) {
+            '.', ',', '!', '?', ';', ':' -> true
+            ')' -> closeParen > openParen
+            ']' -> closeBracket > openBracket
+            '}' -> closeBrace > openBrace
+            else -> false
+        }
+        if (!shouldTrim) break
+        when (char) {
+            ')' -> closeParen -= 1
+            ']' -> closeBracket -= 1
+            '}' -> closeBrace -= 1
+        }
+        end -= 1
+    }
+    return raw.take(end)
+}
+
 fun truncateMarkdown(markdown: String, maxChars: Int = 160): String {
     val plain = markdown
-        .replace(Regex("```[\\s\\S]*?```"), "[code]")
-        .replace(Regex("""[#*_`~>\[\]()]"""), "")
+        .replace(FencedCodeBlockRegex, "[code]")
+        .replace(MarkdownSyntaxCharsRegex, "")
         .lines()
         .joinToString(" ") { it.trim() }
-        .replace(Regex("\\s+"), " ")
+        .replace(WhitespaceRegex, " ")
         .trim()
     return if (plain.length <= maxChars) plain else plain.take(maxChars).trimEnd() + "..."
 }
@@ -411,22 +596,22 @@ private fun String.toNoteCardPreviewText(): String =
     trim()
         .removePrefix("> ")
         .removePrefix(">")
-        .replace(Regex("""^#{1,6}\s+"""), "")
-        .replace(Regex("""^[-*]\s+"""), "")
-        .replace(Regex("""^\d+\.\s+"""), "")
-        .replace(Regex("```.*$"), "")
-        .replace(Regex("""\*\*([^*]+)\*\*"""), "$1")
-        .replace(Regex("""__([^_]+)__"""), "$1")
-        .replace(Regex("""\*\*\*([^*]+)\*\*\*"""), "$1")
-        .replace(Regex("""\*([^*]+)\*"""), "$1")
-        .replace(Regex("""_([^_]+)_"""), "$1")
-        .replace(Regex("""~~([^~]+)~~"""), "$1")
-        .replace(Regex("""~([^~]+)~"""), "$1")
-        .replace(Regex("""`([^`]+)`"""), "$1")
+        .replace(HeadingPrefixRegex, "")
+        .replace(UnorderedListPrefixRegex, "")
+        .replace(OrderedListPrefixRegex, "")
+        .replace(InlineCodeFencePrefixRegex, "")
+        .replace(BoldAsteriskPreviewRegex, "$1")
+        .replace(BoldUnderscorePreviewRegex, "$1")
+        .replace(BoldItalicAsteriskPreviewRegex, "$1")
+        .replace(ItalicAsteriskPreviewRegex, "$1")
+        .replace(ItalicUnderscorePreviewRegex, "$1")
+        .replace(DoubleStrikePreviewRegex, "$1")
+        .replace(StrikePreviewRegex, "$1")
+        .replace(InlineCodePreviewRegex, "$1")
         .replace("""\*""", "*")
         .replace("""\[""", "[")
         .replace("""\]""", "]")
-        .replace(Regex("""\s+"""), " ")
+        .replace(WhitespaceRegex, " ")
         .trim()
 
 private fun String.compactPreviewText(maxChars: Int): String =
