@@ -60,8 +60,8 @@ android {
         applicationId = "com.libertasprimordium.othernote"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     compileOptions {
@@ -77,7 +77,7 @@ compose.desktop {
             targetFormats(TargetFormat.Deb)
             modules("java.desktop", "java.net.http")
             packageName = "Other Note"
-            packageVersion = "0.1.0"
+            packageVersion = "0.1.1"
             description = "GPLv3 Nostr-backed encrypted notes app"
             vendor = "Libertas Primordium"
             licenseFile.set(project.rootProject.file("LICENSE"))
