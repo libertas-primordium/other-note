@@ -574,6 +574,99 @@ class SyncSafetyTests {
     }
 
     @Test
+    fun partialRelayFailureIsTerminalAndRepeatedSyncStaysIdempotent() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val valid = signedEvent(crypto, note("partial", "fast relay note", updatedAtMs = 2), createdAt = 2)
+        val client = FakeClient(
+            incrementalResults = listOf(
+                RelayFetchResult(
+                    events = listOf(valid),
+                    statuses = listOf(RelayStatus("wss://fast.example.com", readable = true, message = "stage=fetch outcome=complete duration_ms=1 EOSE with 1 event(s)")),
+                ),
+                RelayFetchResult(
+                    events = emptyList(),
+                    statuses = listOf(RelayStatus("wss://failed.example.com", readable = false, message = "stage=fetch outcome=timeout duration_ms=5000")),
+                ),
+            ),
+        )
+        val sync = SyncNotesUseCase(notes, NostrRepository(crypto, client), crypto)
+
+        val first = sync.sync(session(), listOf("wss://fast.example.com", "wss://failed.example.com"))
+        val second = sync.sync(session(), listOf("wss://fast.example.com", "wss://failed.example.com"))
+
+        assertFalse(first.syncing)
+        assertFalse(second.syncing)
+        assertEquals(2, first.relayStatuses.size)
+        assertEquals(1, first.relayStatuses.count { it.readable })
+        assertTrue(first.warnings.any { it.contains("Partial relay read failure") })
+        assertEquals(listOf("partial"), notes.notes.value.map { it.id })
+        assertEquals("fast relay note", notes.notes.value.single().bodyMarkdown)
+        assertEquals(2, client.fetchIncrementalCalls)
+    }
+
+    @Test
+    fun repeatedSameRelayEventDoesNotCreateDuplicateLocalNotes() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val event = signedEvent(crypto, note("same-event", "single local note", updatedAtMs = 2), createdAt = 2)
+        val sync = SyncNotesUseCase(
+            notes,
+            NostrRepository(
+                crypto,
+                FakeClient(
+                    events = listOf(event, event),
+                    statuses = listOf(RelayStatus("wss://relay.example.com", readable = true, message = "ok")),
+                ),
+            ),
+            crypto,
+        )
+
+        sync.sync(session(), listOf("wss://relay.example.com"))
+        sync.sync(session(), listOf("wss://relay.example.com"))
+
+        assertEquals(listOf("same-event"), notes.notes.value.map { it.id })
+        assertEquals("single local note", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
+    fun sameEventFromTwoRelaysDoesNotCreateDuplicateLocalNotes() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val crypto = FakeCrypto(productionReady = true)
+        val event = signedEvent(crypto, note("multi-relay", "deduplicated", updatedAtMs = 2), createdAt = 2)
+        val client = FakeClient(
+            incrementalResults = listOf(
+                RelayFetchResult(
+                    events = listOf(event),
+                    statuses = listOf(RelayStatus("wss://one.example.com", readable = true, message = "ok")),
+                ),
+                RelayFetchResult(
+                    events = listOf(event),
+                    statuses = listOf(RelayStatus("wss://two.example.com", readable = true, message = "ok")),
+                ),
+            ),
+        )
+        val sync = SyncNotesUseCase(notes, NostrRepository(crypto, client), crypto)
+
+        sync.sync(session(), listOf("wss://one.example.com", "wss://two.example.com"))
+
+        assertEquals(listOf("multi-relay"), notes.notes.value.map { it.id })
+        assertEquals("deduplicated", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
+    fun replaceFromSyncCollapsesExistingDuplicateRowsAndKeepsLatestNote() = runBlocking {
+        val notes = InMemoryNoteRepository()
+        val older = note("duplicate", "older duplicate", updatedAtMs = 1).copy(sourceEventId = "event-b")
+        val newer = note("duplicate", "newer duplicate", updatedAtMs = 2).copy(sourceEventId = "event-a")
+
+        notes.replaceFromSync(listOf(older, newer, older))
+
+        assertEquals(listOf("duplicate"), notes.notes.value.map { it.id })
+        assertEquals("newer duplicate", notes.notes.value.single().bodyMarkdown)
+    }
+
+    @Test
     fun syncLoadsCachedEncryptedEventsBeforeFailedRelaysReturn() = runBlocking {
         val notes = InMemoryNoteRepository()
         val cache = InMemoryLocalEventCache()
@@ -985,6 +1078,7 @@ private class FakeClient(
     val published = mutableListOf<NostrEvent>()
     val publishRelayBatches = mutableListOf<List<String>>()
     var publishBestEffortCalls = 0
+    var fetchIncrementalCalls = 0
     private var pendingComplete: CompletableDeferred<RelayPublishResult>? = null
     private var pendingOnStatus: ((List<RelayStatus>) -> Unit)? = null
 
@@ -1025,6 +1119,7 @@ private class FakeClient(
         authorPubkey: String,
         onRelayResult: suspend (RelayFetchResult) -> Unit,
     ): RelayFetchResult {
+        fetchIncrementalCalls++
         if (incrementalResults.isEmpty()) {
             return fetchNotes(relays, authorPubkey).also { onRelayResult(it) }
         }
